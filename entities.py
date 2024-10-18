@@ -422,9 +422,9 @@ class Client:
             'Test Loss': [float(test_loss)]  # Explicitly convert to float
         })
         self.eval_test_df = pd.concat([self.eval_test_df, current_result], ignore_index=True)
-        file_name = get_file_name(self.server_split_ratio)+","+self.__str__()+"test_train_loss"
-        self.eval_test_df.to_csv(file_name+".csv")
-        plot_loss_per_client(average_loss_df= self.eval_test_df, filename=file_name,client_id = self.id_,server_split_ratio = self.server_split_ratio)
+        file_name = get_file_name(self.server_split_ratio)+","+self.__str__()+"test_train_loss.csv"
+        self.eval_test_df.to_csv(file_name)
+        #plot_loss_per_client(average_loss_df= self.eval_test_df, filename=file_name,client_id = self.id_,server_split_ratio = self.server_split_ratio)
 
     def add_train_loss_to_per_epoch(self,result_to_print, epoch,phase):
         # Create a new row with the current train loss and epoch details
@@ -441,39 +441,36 @@ class Client:
         # Append the new row to the train_df
         self.train_df = pd.concat([self.train_df, current_train_loss], ignore_index=True)
 
+
+
     def handle_data_per_epoch(self):
         # Save the current training data (self.train_df) to a CSV file
-        train_file_name = get_file_name(self.server_split_ratio) + "," + self.__str__() + ", train_loss_per_epoch.csv"
+        train_file_name = get_file_name(self.server_split_ratio) + "," + self.__str__() + ",train_loss_per_epoch.csv"
         self.train_df.to_csv(train_file_name, index=False)  # Ensure it's saved without the index
 
         # Plotting the Loss vs Epoch Count
         plt.figure(figsize=(10, 6))  # Set figure size
 
-        # Filter data for both phases
-        train_phase_data = self.train_df[self.train_df['Phase'] == "Train"]
-        eval_phase_data = self.train_df[self.train_df['Phase'] == "Evaluation"]
+        # Filter only training phase data
+        #train_phase_data = self.train_df[self.train_df['Phase'] == "Train"]
 
-        # Plot training loss over epochs with a specific color and marker
-        plt.plot(train_phase_data['Epoch Count'], train_phase_data['Loss'], label="Training Loss", marker='o',
-                 color='blue')
-
-        # Plot evaluation loss over epochs with a different color and marker
-        plt.plot(eval_phase_data['Epoch Count'], eval_phase_data['Loss'], label="Evaluation Loss", marker='x',
-                 color='orange')
+        # Plot training loss over epochs
+        plt.plot(self.train_df['Epoch Count'], self.train_df['Loss'], label="Training Loss", marker='o')
 
         # Add labels and title
         plt.xlabel('Epoch Count')
         plt.ylabel('Loss')
-        plt.title(f"Client {self.id_} - Loss vs Epoch Count (Server Data {self.server_split_ratio * 100}%)")
+        plt.title(f"Client {self.id_} - Training Loss vs Epoch Count (Server Data {self.server_split_ratio * 100}%)")
 
         # Add a grid and legend
         plt.grid(True)
         plt.legend()
 
         # Save the plot to a file
-        plot_file_name = get_file_name(self.server_split_ratio) + "," + self.__str__() + "_loss_per_epoch_plot.png"
+        plot_file_name = get_file_name(
+            self.server_split_ratio) + "," + self.__str__() + "_train_loss_per_epoch_plot.png"
         plt.savefig(plot_file_name)
-
+        yyy=3
         # Optionally show the plot (in case you want to view it during runtime)
-        # plt.show()
+        #plt.show()
 
