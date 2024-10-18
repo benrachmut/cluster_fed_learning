@@ -39,6 +39,8 @@ def get_test_set(test_set_size):
         transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5)),  # Normalize
     ])
     ans = torchvision.datasets.CIFAR10(root='./data', train=False, download=True, transform=test_transform)
+    if len(ans)<test_set_size:
+        test_set_size = len(ans)
     ans = cut_data(ans, test_set_size)
     return ans
 
@@ -47,6 +49,10 @@ def create_data():
     train_set = get_train_set()
     test_set_size = len(train_set) * percent_test_relative_to_train
     test_set = get_test_set(test_set_size)
+
+    print("train set size:",len(train_set))
+    print("test set size:",len(test_set))
+
     return train_set, test_set
 
 #### ----------------- SPLIT DATA BETWEEN SERVER AND CLIENTS ----------------- ####
@@ -90,42 +96,41 @@ def create_clients(client_data_sets,server_data,test_set):
     return ans,ids_list
 
 
-
-def create_mean_df(clients,file_name):
+def create_mean_df(clients, file_name):
     # List to hold the results for each iteration
     mean_results = []
 
     for t in range(iterations):
-        # Gather test losses for the current iteration from all clients
+        # Gather test and train losses for the current iteration from all clients
         test_losses = []
+        train_losses = []
+
         for c in clients:
             # Extract test losses for the current iteration
-            losses = c.results_df.loc[c.results_df['Iteration'] == t, 'Test Loss'].values
-            test_losses.extend(losses)  # Add the current client's losses
+            test_loss_values = c.eval_test_df.loc[c.eval_test_df['Iteration'] == t, 'Test Loss'].values
+            test_losses.extend(test_loss_values)  # Add the current client's test losses
 
-        # Calculate the mean of the test losses, ignoring NaNs
-        mean_loss = pd.Series(test_losses).mean()
+            # Extract train losses for the current iteration
+            train_loss_values = c.eval_test_df.loc[c.eval_test_df['Iteration'] == t, 'Train Loss'].values
+            train_losses.extend(train_loss_values)  # Add the current client's train losses
+
+        # Calculate the mean of the test and train losses, ignoring NaNs
+        mean_test_loss = pd.Series(test_losses).mean()
+        mean_train_loss = pd.Series(train_losses).mean()
 
         # Append a dictionary for this iteration to the list
-        mean_results.append({'Iteration': t, 'Average Test Loss': mean_loss})
+        mean_results.append({
+            'Iteration': t,
+            'Average Test Loss': mean_test_loss,
+            'Average Train Loss': mean_train_loss
+        })
 
     # Convert the list of dictionaries into a DataFrame
     average_loss_df = pd.DataFrame(mean_results)
-    average_loss_df.to_csv(file_name+".csv")
+
+    # Save the DataFrame to a CSV file
+    average_loss_df.to_csv(file_name + ".csv", index=False)
 
     return average_loss_df
 
 
-def plot_average_loss(average_loss_df, filename='average_loss_plot.png'):
-    plt.figure(figsize=(10, 6))  # Set the figure size
-    plt.plot(average_loss_df['Iteration'], average_loss_df['Average Test Loss'], marker='o', color='b')  # Plotting
-    plt.title('Average Client Loss Over Iterations')  # Title of the graph
-    plt.xlabel('Iteration')  # X-axis label
-    plt.ylabel('Average Test Loss')  # Y-axis label
-    plt.grid()  # Add grid for better readability
-    plt.xticks(range(len(average_loss_df['Iteration'])))  # Set x ticks for each iteration
-    plt.tight_layout()  # Adjust layout to fit into the figure area
-
-    # Save the figure to a file
-    plt.savefig(filename+".jpg")
-    plt.close()  # Close the figure to free memory

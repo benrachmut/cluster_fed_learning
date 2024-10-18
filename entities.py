@@ -11,6 +11,9 @@ from config import *
 
 # Define AlexNet for clients
 
+def get_file_name(server_split_ratio):
+    return f"data_server_{round(server_split_ratio,ndigits=2):.1f},data_use_"+str(percent_train_data_use)
+
 
 class AlexNet(nn.Module):
     def __init__(self, num_classes=10):
@@ -220,17 +223,21 @@ class Client:
         self.pseudo_label_to_send = None
         self.current_iteration = 0
         self.test_set = test_data
-        self.results_df = pd.DataFrame(columns=['Sever Data Percentage','Client','Iteration', 'Test Loss'])
-
+        self.eval_test_df = pd.DataFrame(columns=['Sever Data Percentage', 'Client', 'Iteration', 'Train Loss', 'Test Loss'])
+        self.train_df = pd.DataFrame(columns=['Sever Data Percentage', 'Client', 'Iteration', 'epoch', 'Loss','Phase','Epoch Count'])
+        self.epoch_count = 0
     def iterate(self, t,client_split_ratio):
+        self.server_split_ratio = round(1-client_split_ratio,2)
         self.current_iteration = t
         self.model = get_client_model()
         train_weights = self.train()
-        fine_tune_weights = self.fine_tune(train_weights)
+        fine_tune_weights,train_loss = self.fine_tune(train_weights)
         self.pseudo_label_to_send = self.evaluate(fine_tune_weights)
-        test_loss = self.evaluate_test_loss()
 
-        self.add_to_data_frame(test_loss,client_split_ratio)
+
+        test_loss = self.evaluate_test_loss()
+        self.add_to_data_frame(test_loss,train_loss)
+        self.handle_data_per_epoch()
 
 
     def __str__(self):
@@ -262,6 +269,7 @@ class Client:
             pseudo_targets_all = torch.argmax(self.pseudo_label_received, dim=1).to(device)
 
         for epoch in range(client_epochs_train):  # Loop over the number of epochs
+            self.epoch_count = self.epoch_count+1
             epoch_loss = 0  # Track the loss for this epoch
             start_idx = 0  # Initialize index for slicing pseudo labels
             end_idx = 0  # Initialize end_idx to avoid UnboundLocalError
@@ -299,9 +307,14 @@ class Client:
                 start_idx = end_idx
 
             # Print epoch loss or do any other logging if needed
-            print(f"Epoch [{epoch + 1}/{client_epochs_train}], Loss: {epoch_loss / len(server_loader):.4f}")
+
+            result_to_print = epoch_loss / len(server_loader)
+            self.add_train_loss_to_per_epoch(result_to_print,epoch,"Train")
+
+            print(f"Epoch [{epoch + 1}/{client_epochs_train}], Loss: {result_to_print:.4f}")
 
         # Return the model weights after training
+
         return self.model.state_dict()  # Return the model weights as a dictionary
 
     def fine_tune(self, train_weights):
@@ -319,6 +332,7 @@ class Client:
 
 
         for epoch in range(client_epochs_fine_tune):  # You can define separate epochs for fine-tuning if needed
+            self.epoch_count = self.epoch_count+1
             epoch_loss = 0
             for inputs, targets in fine_tune_loader:
                 inputs, targets = inputs.to(device), targets.to(device)  # Move to device
@@ -334,10 +348,14 @@ class Client:
                 epoch_loss += loss.item()
 
 
-            print(f"Epoch [{epoch + 1}/{client_epochs_fine_tune}], Loss: {epoch_loss / len(fine_tune_loader):.4f}")
+            result_to_print = epoch_loss / len(fine_tune_loader)
+
+            self.add_train_loss_to_per_epoch(result_to_print,epoch,"Evaluation")
+
+            print(f"Epoch [{epoch + 1}/{client_epochs_fine_tune}], Loss: {result_to_print:.4f}")
 
         # Return the model weights after fine-tuning
-        return self.model.state_dict()
+        return self.model.state_dict(),result_to_print
 
     def evaluate(self, fine_tune_weights):
         # Set the model to evaluation mode
@@ -395,11 +413,67 @@ class Client:
         # Return average loss
         return ans  # Avoid division by zero
 
-    def add_to_data_frame(self,test_loss,client_split_ratio):
+    def add_to_data_frame(self,test_loss,train_loss):
         current_result = pd.DataFrame({
-            'Sever Data Percentage': [1 - client_split_ratio],
+            'Sever Data Percentage': self.server_split_ratio,
             'Client': ["c" + str(self.id_)],
             'Iteration': [self.current_iteration],
+            'Train Loss': [float(train_loss)],
             'Test Loss': [float(test_loss)]  # Explicitly convert to float
         })
-        self.results_df = pd.concat([self.results_df, current_result], ignore_index=True)
+        self.eval_test_df = pd.concat([self.eval_test_df, current_result], ignore_index=True)
+        file_name = get_file_name(self.server_split_ratio)+","+self.__str__()+"test_train_loss"
+        self.eval_test_df.to_csv(file_name+".csv")
+        plot_loss_per_client(average_loss_df= self.eval_test_df, filename=file_name,client_id = self.id_,server_split_ratio = self.server_split_ratio)
+
+    def add_train_loss_to_per_epoch(self,result_to_print, epoch,phase):
+        # Create a new row with the current train loss and epoch details
+        current_train_loss = pd.DataFrame({
+            'Sever Data Percentage': [self.server_split_ratio],  # You might need to pass or save client_split_ratio
+            'Client': ["c" + str(self.id_)],
+            'Iteration': [self.current_iteration],
+            'epoch': [epoch],
+            'Loss': [result_to_print],  # This is the loss for the current epoch
+            'Phase': [phase],  # Indicate this is from the training phase
+            'Epoch Count':[self.epoch_count]
+        })
+
+        # Append the new row to the train_df
+        self.train_df = pd.concat([self.train_df, current_train_loss], ignore_index=True)
+
+    def handle_data_per_epoch(self):
+        # Save the current training data (self.train_df) to a CSV file
+        train_file_name = get_file_name(self.server_split_ratio) + "," + self.__str__() + ", train_loss_per_epoch.csv"
+        self.train_df.to_csv(train_file_name, index=False)  # Ensure it's saved without the index
+
+        # Plotting the Loss vs Epoch Count
+        plt.figure(figsize=(10, 6))  # Set figure size
+
+        # Filter data for both phases
+        train_phase_data = self.train_df[self.train_df['Phase'] == "Train"]
+        eval_phase_data = self.train_df[self.train_df['Phase'] == "Evaluation"]
+
+        # Plot training loss over epochs with a specific color and marker
+        plt.plot(train_phase_data['Epoch Count'], train_phase_data['Loss'], label="Training Loss", marker='o',
+                 color='blue')
+
+        # Plot evaluation loss over epochs with a different color and marker
+        plt.plot(eval_phase_data['Epoch Count'], eval_phase_data['Loss'], label="Evaluation Loss", marker='x',
+                 color='orange')
+
+        # Add labels and title
+        plt.xlabel('Epoch Count')
+        plt.ylabel('Loss')
+        plt.title(f"Client {self.id_} - Loss vs Epoch Count (Server Data {self.server_split_ratio * 100}%)")
+
+        # Add a grid and legend
+        plt.grid(True)
+        plt.legend()
+
+        # Save the plot to a file
+        plot_file_name = get_file_name(self.server_split_ratio) + "," + self.__str__() + "_loss_per_epoch_plot.png"
+        plt.savefig(plot_file_name)
+
+        # Optionally show the plot (in case you want to view it during runtime)
+        # plt.show()
+
