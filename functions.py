@@ -79,9 +79,11 @@ def split_clients_server_data(train_set):
 
 #### ----------------- CREATE CLIENTS ----------------- ####
 
-def create_clients(client_data_sets,server_data):
+def create_clients(client_data_sets,server_data,test_set):
     ans = []
+    ids_list = []
     for i in range(len(client_data_sets)):
+        ids_list.append(i)
         client_data = client_data_sets[i]
-        ans.append(Client(id_ =i,client_data = client_data,server_data=server_data))
-    return ans
+        ans.append(Client(id_ =i,client_data = client_data,server_data=server_data,test_data =test_set ))
+    return ans,ids_list
