@@ -220,19 +220,18 @@ class Client:
         self.pseudo_label_to_send = None
         self.current_iteration = 0
         self.test_set = test_data
-        self.results_df = pd.DataFrame(columns=['Client','Iteration', 'Test Loss'])
+        self.results_df = pd.DataFrame(columns=['Sever Data Percentage','Client','Iteration', 'Test Loss'])
 
-    def iterate(self, t):
+    def iterate(self, t,client_split_ratio):
         self.current_iteration = t
         self.model = get_client_model()
         train_weights = self.train()
         fine_tune_weights = self.fine_tune(train_weights)
         self.pseudo_label_to_send = self.evaluate(fine_tune_weights)
         test_loss = self.evaluate_test_loss()
-        print(f"Iteration [{self.current_iteration}], Test Loss: {test_loss:.4f}")
-        current_result = pd.DataFrame({'Client':["c"+str(self.id_)],'Iteration': [self.current_iteration], 'Test Loss': [test_loss]})
-        if not current_result.empty and not current_result.isna().all().any():
-            self.results_df = pd.concat([self.results_df, current_result], ignore_index=True)
+
+        self.add_to_data_frame(test_loss,client_split_ratio)
+
 
     def __str__(self):
         return "Client " + str(self.id_)
@@ -390,6 +389,17 @@ class Client:
                 # Accumulate the loss
                 total_loss += loss.item() * inputs.size(0)  # Multiply by batch size
                 total_samples += inputs.size(0)  # Count the number of samples
+        ans = total_loss / total_samples if total_samples > 0 else float('inf')
+        print(f"Iteration [{self.current_iteration}], Test Loss: {ans:.4f}")
 
         # Return average loss
-        return total_loss / total_samples if total_samples > 0 else float('inf')  # Avoid division by zero
+        return ans  # Avoid division by zero
+
+    def add_to_data_frame(self,test_loss,client_split_ratio):
+        current_result = pd.DataFrame({
+            'Sever Data Percentage': [1 - client_split_ratio],
+            'Client': ["c" + str(self.id_)],
+            'Iteration': [self.current_iteration],
+            'Test Loss': [float(test_loss)]  # Explicitly convert to float
+        })
+        self.results_df = pd.concat([self.results_df, current_result], ignore_index=True)
