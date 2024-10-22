@@ -7,7 +7,7 @@ class NetType(Enum):
     ALEXNET = "AlexNet"
     VGG = "VGG"
 
-with_server_net = False
+with_server_net = True
 epochs_num_input =2
 iterations = 50
 num_clients = 2

@@ -89,11 +89,14 @@ class Server:
         self.pseudo_label_to_send = None
         self.reset_clients_received_pl()
         self.train_df = pd.DataFrame(columns=['Sever Data Percentage', 'Client', 'Iteration', 'epoch', 'Loss','Phase','Epoch Count'])
-
+        self.epoch_count = 0
+        self.id_ = "server"
     def receive_single_pseudo_label(self, sender, info):
         self.received_pseudo_labels[sender] = info
 
     def iterate(self, t,client_split_ratio):
+        self.current_iteration = t
+        self.server_split_ratio = round(1-client_split_ratio,2)
         if with_server_net:
             mean_pseudo_labels = self.get_mean_pseudo_labels()  # #
             self.model = get_server_model()
@@ -120,79 +123,98 @@ class Server:
 
         return average_pseudo_labels
 
+    def initialize_weights(self, layer):
+        """Initialize weights for the model layers."""
+        if isinstance(layer, (nn.Linear, nn.Conv2d)):
+            nn.init.kaiming_normal_(layer.weight, mode='fan_out', nonlinearity='relu')
+            if layer.bias is not None:
+                nn.init.zeros_(layer.bias)
+
+    def __str__(self):
+        return "server"
     def train(self,mean_pseudo_labels):
-        print("*** " + self.__str__() + " train ***")
+        import torch.nn.functional as F
 
-        # Calculate the exact batch size to evenly divide the data size
+        print(f"*** {self.__str__()} train ***")
+
         data_size = len(self.server_data)
-        batch_size = server_batch_size_train
-
-        # Adjust batch size if it doesn't perfectly divide the data size
-        if data_size % batch_size != 0:
-            batch_size = data_size // (data_size // batch_size)
+        batch_size = client_batch_size_train
 
         # Create a DataLoader for the local data
-        server_loader = DataLoader(self.server_data, batch_size=batch_size, shuffle=False, num_workers=4)
+        server_loader = DataLoader(self.server_data, batch_size=batch_size, shuffle=False, num_workers=4,
+                                   drop_last=True)
 
-        # Set the model to training mode
+        # Initialize model weights
+        self.model.apply(self.initialize_weights)
+
         self.model.train()
+        criterion = nn.KLDivLoss(reduction='batchmean')
+        optimizer = torch.optim.Adam(self.model.parameters(), lr=client_learning_rate_train)
 
-        # Define your loss function and optimizer
-        criterion = nn.CrossEntropyLoss()  # Assuming a classification task
-        optimizer = torch.optim.Adam(self.model.parameters(), lr=server_learning_rate_train)
+        pseudo_targets_all = mean_pseudo_labels.to(device)
 
-        # Convert pseudo labels to class indices if they're not already
-        #if self.pseudo_label_received is not None:
-        pseudo_targets_all = torch.argmax(mean_pseudo_labels, dim=1).to(device)
+        for epoch in range(epochs_num_input):
+            self.epoch_count += 1
+            epoch_loss = 0
 
-        for epoch in range(epochs_num_input):  # Loop over the number of epochs
-            self.epoch_count = self.epoch_count+1
-            epoch_loss = 0  # Track the loss for this epoch
-            start_idx = 0  # Initialize index for slicing pseudo labels
-            end_idx = 0  # Initialize end_idx to avoid UnboundLocalError
+            for batch_idx, (inputs, _) in enumerate(server_loader):
+                inputs = inputs.to(device)
+                optimizer.zero_grad()
 
-            for inputs, targets in server_loader:
-                inputs, targets = inputs.to(device), targets.to(device)  # Move to device
-                optimizer.zero_grad()  # Zero the gradients
+                # Check for NaN or Inf in inputs
+                if torch.isnan(inputs).any() or torch.isinf(inputs).any():
+                    print(f"NaN or Inf found in inputs at batch {batch_idx}: {inputs}")
+                    continue
 
-                # Forward pass
                 outputs = self.model(inputs)
 
-                # Determine the target labels
-            #if self.pseudo_label_received is None:
-                # Use the true targets from local data
-            #    loss = criterion(outputs, targets)
-            #else:
-                # Use pseudo labels, and slice them to match the input batch size
-                end_idx = start_idx + inputs.size(0)  # Calculate the end index for slicing
-                pseudo_targets = pseudo_targets_all[start_idx:end_idx]  # Slice to match batch size
+                # Check for NaN or Inf in outputs
+                if torch.isnan(outputs).any() or torch.isinf(outputs).any():
+                    print(f"NaN or Inf found in model outputs at batch {batch_idx}: {outputs}")
+                    continue
 
+                # Convert model outputs to log probabilities
+                outputs_prob = F.log_softmax(outputs, dim=1)
+
+                # Slice pseudo_targets to match the input batch size
+                start_idx = batch_idx * batch_size
+                end_idx = start_idx + inputs.size(0)
+                pseudo_targets = pseudo_targets_all[start_idx:end_idx].to(device)
+
+                # Check if pseudo_targets size matches the input batch size
                 if pseudo_targets.size(0) != inputs.size(0):
-                    raise ValueError(
-                        f"Pseudo target size {pseudo_targets.size(0)} does not match input size {inputs.size(0)}")
+                    print(
+                        f"Skipping batch {batch_idx}: Expected pseudo target size {inputs.size(0)}, got {pseudo_targets.size(0)}")
+                    continue  # Skip the rest of the loop for this batch
 
-                loss = criterion(outputs, pseudo_targets)
+                # Check for NaN or Inf in pseudo targets
+                if torch.isnan(pseudo_targets).any() or torch.isinf(pseudo_targets).any():
+                    print(f"NaN or Inf found in pseudo targets at batch {batch_idx}: {pseudo_targets}")
+                    continue
 
-                # Backward pass and optimization
+                # Normalize pseudo targets to sum to 1
+                pseudo_targets = F.softmax(pseudo_targets, dim=1)
+
+                # Calculate the loss
+                loss = criterion(outputs_prob, pseudo_targets)
+
+                # Check if the loss is NaN or Inf
+                if torch.isnan(loss) or torch.isinf(loss):
+                    print(f"NaN or Inf loss encountered at batch {batch_idx}: {loss}")
+                    continue
+
                 loss.backward()
-                optimizer.step()
 
-                # Accumulate loss for this epoch
+                # Clip gradients
+                torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
+
+                optimizer.step()
                 epoch_loss += loss.item()
 
-                # Update start index for next batch
-                start_idx = end_idx
+            avg_loss = epoch_loss / len(server_loader)
+            print(f"Epoch [{epoch + 1}/{epochs_num_input}], Loss: {avg_loss:.4f}")
 
-            # Print epoch loss or do any other logging if needed
-
-            result_to_print = epoch_loss / len(server_loader)
-            self.add_train_loss_to_per_epoch(result_to_print,epoch,"Train")
-
-            print(f"Epoch [{epoch + 1}/{epochs_num_input}], Loss: {result_to_print:.4f}")
-
-        # Return the model weights after training
-
-        return self.model.state_dict()  # Return the model weights as a dictionary
+        return self.model.state_dict()
 
     def evaluate(self, weights_train):
         print("*** Server evaluation ***")
