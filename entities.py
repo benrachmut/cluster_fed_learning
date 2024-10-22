@@ -12,7 +12,7 @@ from config import *
 # Define AlexNet for clients
 
 def get_file_name(server_split_ratio):
-    return f"data_server_{round(server_split_ratio,ndigits=2):.1f},data_use_"+str(percent_train_data_use)+"_with_server_net_"+str(with_server_net)
+    return f"data_server_{round(server_split_ratio,ndigits=2):.1f},data_use_"+str(percent_train_data_use)+"_with_server_net_"+str(with_server_net)+"_epoch_num_"+str(epochs_num_input)
 
 
 class AlexNet(nn.Module):
