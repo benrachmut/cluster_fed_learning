@@ -272,81 +272,97 @@ class Client:
         return "Client " + str(self.id_)
 
     def train(self):
-        print("*** " + self.__str__() + " train ***")
-        if self.current_iteration == 0:
-            raise RuntimeError("should train client only at iteration>0")
+        import torch.nn.functional as F
 
-        # Calculate the exact batch size to evenly divide the data size
+        print(f"*** {self.__str__()} train ***")
+        if self.current_iteration == 0:
+            raise RuntimeError("Client should train only at iteration > 0")
+
         data_size = len(self.server_data)
         batch_size = client_batch_size_train
 
-        # Adjust batch size if it doesn't perfectly divide the data size
-        if data_size % batch_size != 0:
-            batch_size = data_size // (data_size // batch_size)
-
         # Create a DataLoader for the local data
-        server_loader = DataLoader(self.server_data, batch_size=batch_size, shuffle=False, num_workers=4)
+        server_loader = DataLoader(self.server_data, batch_size=batch_size, shuffle=False, num_workers=4,
+                                   drop_last=True)
 
-        # Set the model to training mode
+        # Initialize model weights
+        self.model.apply(self.initialize_weights)
+
         self.model.train()
-
-        # Define your loss function and optimizer
-        criterion = nn.KLDivLoss(reduction='batchmean')  # Use KL Divergence for probability distributions
+        criterion = nn.KLDivLoss(reduction='batchmean')
         optimizer = torch.optim.Adam(self.model.parameters(), lr=client_learning_rate_train)
 
-        # Ensure pseudo labels are on the correct device
-        pseudo_targets_all = self.pseudo_label_received.to(device)  # Keep as probability distributions
+        pseudo_targets_all = self.pseudo_label_received.to(device)
 
-        for epoch in range(epochs_num_input):  # Loop over the number of epochs
+        for epoch in range(epochs_num_input):
             self.epoch_count += 1
-            epoch_loss = 0  # Track the loss for this epoch
-            start_idx = 0  # Initialize index for slicing pseudo labels
+            epoch_loss = 0
 
-            for inputs, targets in server_loader:
-                inputs, targets = inputs.to(device), targets.to(device)  # Move to device
-                optimizer.zero_grad()  # Zero the gradients
+            for batch_idx, (inputs, _) in enumerate(server_loader):
+                inputs = inputs.to(device)
+                optimizer.zero_grad()
 
-                # Forward pass
-                outputs = self.model(inputs)  # outputs are typically logits
+                # Check for NaN or Inf in inputs
+                if torch.isnan(inputs).any() or torch.isinf(inputs).any():
+                    print(f"NaN or Inf found in inputs at batch {batch_idx}: {inputs}")
+                    continue
 
-                # Convert logits to probabilities
-                outputs_prob = torch.softmax(outputs, dim=1)  # Ensure outputs are probabilities
+                outputs = self.model(inputs)
+
+                # Check for NaN or Inf in outputs
+                if torch.isnan(outputs).any() or torch.isinf(outputs).any():
+                    print(f"NaN or Inf found in model outputs at batch {batch_idx}: {outputs}")
+                    continue
+
+                # Convert model outputs to log probabilities
+                outputs_prob = F.log_softmax(outputs, dim=1)
 
                 # Slice pseudo_targets to match the input batch size
-                end_idx = start_idx + inputs.size(0)  # Calculate the end index for slicing
-                pseudo_targets = pseudo_targets_all[start_idx:end_idx].to(device)  # Move to device
+                start_idx = batch_idx * batch_size
+                end_idx = start_idx + inputs.size(0)
+                pseudo_targets = pseudo_targets_all[start_idx:end_idx].to(device)
 
+                # Check if pseudo_targets size matches the input batch size
                 if pseudo_targets.size(0) != inputs.size(0):
-                    raise ValueError(
-                        f"Pseudo target size {pseudo_targets.size(0)} does not match input size {inputs.size(0)}"
-                    )
+                    print(
+                        f"Skipping batch {batch_idx}: Expected pseudo target size {inputs.size(0)}, got {pseudo_targets.size(0)}")
+                    continue  # Skip the rest of the loop for this batch
 
-                # Calculate loss using KL Divergence
-                # Use log probabilities for the output
-                loss = criterion(outputs_prob.log(), pseudo_targets)  # Using log probabilities
+                # Check for NaN or Inf in pseudo targets
+                if torch.isnan(pseudo_targets).any() or torch.isinf(pseudo_targets).any():
+                    print(f"NaN or Inf found in pseudo targets at batch {batch_idx}: {pseudo_targets}")
+                    continue
 
-                # Check for NaN loss
-                if torch.isnan(loss).any():
-                    print("Loss is NaN, stopping training")
-                    return self.model.state_dict()  # Return the model weights as a dictionary
+                # Normalize pseudo targets to sum to 1
+                pseudo_targets = F.softmax(pseudo_targets, dim=1)
 
-                # Backward pass and optimization
+                # Calculate the loss
+                loss = criterion(outputs_prob, pseudo_targets)
+
+                # Check if the loss is NaN or Inf
+                if torch.isnan(loss) or torch.isinf(loss):
+                    print(f"NaN or Inf loss encountered at batch {batch_idx}: {loss}")
+                    continue
+
                 loss.backward()
-                optimizer.step()
 
-                # Accumulate loss for this epoch
+                # Clip gradients
+                torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
+
+                optimizer.step()
                 epoch_loss += loss.item()
 
-                # Update start index for next batch
-                start_idx = end_idx
+            avg_loss = epoch_loss / len(server_loader)
+            print(f"Epoch [{epoch + 1}/{epochs_num_input}], Loss: {avg_loss:.4f}")
 
-            # Print epoch loss or do any other logging if needed
-            result_to_print = epoch_loss / len(server_loader)
-            self.add_train_loss_to_per_epoch(result_to_print, epoch, "Train")
-            print(f"Epoch [{epoch + 1}/{epochs_num_input}], Loss: {result_to_print:.4f}")
+        return self.model.state_dict()
 
-        # Return the model weights after training
-        return self.model.state_dict()  # Return the model weights as a dictionary
+    def initialize_weights(self, layer):
+        """Initialize weights for the model layers."""
+        if isinstance(layer, (nn.Linear, nn.Conv2d)):
+            nn.init.kaiming_normal_(layer.weight, mode='fan_out', nonlinearity='relu')
+            if layer.bias is not None:
+                nn.init.zeros_(layer.bias)
 
     def fine_tune(self, train_weights):
         print("*** " + self.__str__() + " fine-tune ***")
