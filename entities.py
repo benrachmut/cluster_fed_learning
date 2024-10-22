@@ -12,7 +12,7 @@ from config import *
 # Define AlexNet for clients
 
 def get_file_name(server_split_ratio):
-    return f"data_server_{round(server_split_ratio,ndigits=2):.1f},data_use_"+str(percent_train_data_use)
+    return f"data_server_{round(server_split_ratio,ndigits=2):.1f},data_use_"+str(percent_train_data_use)+"_with_server_net_"+str(with_server_net)
 
 
 class AlexNet(nn.Module):
@@ -87,23 +87,24 @@ class Server:
         self.received_pseudo_labels = {}
         self.clients_ids = clients_ids
         self.pseudo_label_to_send = None
-        self.reset_clients_ids()
+        self.reset_clients_received_pl()
+        self.train_df = pd.DataFrame(columns=['Sever Data Percentage', 'Client', 'Iteration', 'epoch', 'Loss','Phase','Epoch Count'])
 
     def receive_single_pseudo_label(self, sender, info):
         self.received_pseudo_labels[sender] = info
 
-    def iterate(self):
-        option1 = True
-        if option1:
-            self.pseudo_label_to_send = self.get_mean_pseudo_labels()
-        else:
-            mean_pseudo_labels = self.get_mean_pseudo_labels()# #
+    def iterate(self, t,client_split_ratio):
+        if with_server_net:
+            mean_pseudo_labels = self.get_mean_pseudo_labels()  # #
             self.model = get_server_model()
             weights_train = self.train(mean_pseudo_labels)
             self.pseudo_label_to_send = self.evaluate(weights_train)
-        self.reset_clients_ids()
+        else:
+            self.pseudo_label_to_send = self.get_mean_pseudo_labels()
 
-    def reset_clients_ids(self):
+        self.reset_clients_received_pl()
+
+    def reset_clients_received_pl(self):
         for id_ in self.clients_ids:
             self.received_pseudo_labels[id_] = None
 
@@ -120,7 +121,7 @@ class Server:
         return average_pseudo_labels
 
     def train(self,mean_pseudo_labels):
-        print("*** " + "server" + " train ***")
+        print("*** " + self.__str__() + " train ***")
 
         # Calculate the exact batch size to evenly divide the data size
         data_size = len(self.server_data)
@@ -141,9 +142,11 @@ class Server:
         optimizer = torch.optim.Adam(self.model.parameters(), lr=server_learning_rate_train)
 
         # Convert pseudo labels to class indices if they're not already
+        #if self.pseudo_label_received is not None:
         pseudo_targets_all = torch.argmax(mean_pseudo_labels, dim=1).to(device)
 
-        for epoch in range(server_epochs_train):  # Loop over the number of epochs
+        for epoch in range(epochs_num_input):  # Loop over the number of epochs
+            self.epoch_count = self.epoch_count+1
             epoch_loss = 0  # Track the loss for this epoch
             start_idx = 0  # Initialize index for slicing pseudo labels
             end_idx = 0  # Initialize end_idx to avoid UnboundLocalError
@@ -156,7 +159,10 @@ class Server:
                 outputs = self.model(inputs)
 
                 # Determine the target labels
-
+            #if self.pseudo_label_received is None:
+                # Use the true targets from local data
+            #    loss = criterion(outputs, targets)
+            #else:
                 # Use pseudo labels, and slice them to match the input batch size
                 end_idx = start_idx + inputs.size(0)  # Calculate the end index for slicing
                 pseudo_targets = pseudo_targets_all[start_idx:end_idx]  # Slice to match batch size
@@ -178,9 +184,14 @@ class Server:
                 start_idx = end_idx
 
             # Print epoch loss or do any other logging if needed
-            print(f"Epoch [{epoch + 1}/{server_epochs_train}], Loss: {epoch_loss / len(server_loader):.4f}")
+
+            result_to_print = epoch_loss / len(server_loader)
+            self.add_train_loss_to_per_epoch(result_to_print,epoch,"Train")
+
+            print(f"Epoch [{epoch + 1}/{epochs_num_input}], Loss: {result_to_print:.4f}")
 
         # Return the model weights after training
+
         return self.model.state_dict()  # Return the model weights as a dictionary
 
     def evaluate(self, weights_train):
@@ -213,6 +224,21 @@ class Server:
         return pseudo_labels
 
 
+    def add_train_loss_to_per_epoch(self,result_to_print, epoch,phase):
+        # Create a new row with the current train loss and epoch details
+        current_train_loss = pd.DataFrame({
+            'Sever Data Percentage': [self.server_split_ratio],  # You might need to pass or save client_split_ratio
+            'Client': ["c" + str(self.id_)],
+            'Iteration': [self.current_iteration],
+            'epoch': [epoch],
+            'Loss': [result_to_print],  # This is the loss for the current epoch
+            'Phase': [phase],  # Indicate this is from the training phase
+            'Epoch Count':[self.epoch_count]
+        })
+
+        # Append the new row to the train_df
+        self.train_df = pd.concat([self.train_df, current_train_loss], ignore_index=True)
+
 class Client:
     def __init__(self, id_, client_data, server_data,test_data):
         self.id_ = id_
@@ -226,11 +252,14 @@ class Client:
         self.eval_test_df = pd.DataFrame(columns=['Sever Data Percentage', 'Client', 'Iteration', 'Train Loss', 'Test Loss'])
         self.train_df = pd.DataFrame(columns=['Sever Data Percentage', 'Client', 'Iteration', 'epoch', 'Loss','Phase','Epoch Count'])
         self.epoch_count = 0
+
     def iterate(self, t,client_split_ratio):
         self.server_split_ratio = round(1-client_split_ratio,2)
         self.current_iteration = t
         self.model = get_client_model()
-        train_weights = self.train()
+        train_weights = None
+        if t>0:
+            train_weights = self.train()
         fine_tune_weights,train_loss = self.fine_tune(train_weights)
         self.pseudo_label_to_send = self.evaluate(fine_tune_weights)
 
@@ -239,12 +268,13 @@ class Client:
         self.add_to_data_frame(test_loss,train_loss)
         self.handle_data_per_epoch()
 
-
     def __str__(self):
         return "Client " + str(self.id_)
 
     def train(self):
         print("*** " + self.__str__() + " train ***")
+        if self.current_iteration == 0:
+            raise RuntimeError("should train client only at iteration>0")
 
         # Calculate the exact batch size to evenly divide the data size
         data_size = len(self.server_data)
@@ -261,40 +291,44 @@ class Client:
         self.model.train()
 
         # Define your loss function and optimizer
-        criterion = nn.CrossEntropyLoss()  # Assuming a classification task
+        criterion = nn.KLDivLoss(reduction='batchmean')  # Use KL Divergence for probability distributions
         optimizer = torch.optim.Adam(self.model.parameters(), lr=client_learning_rate_train)
 
-        # Convert pseudo labels to class indices if they're not already
-        if self.pseudo_label_received is not None:
-            pseudo_targets_all = torch.argmax(self.pseudo_label_received, dim=1).to(device)
+        # Ensure pseudo labels are on the correct device
+        pseudo_targets_all = self.pseudo_label_received.to(device)  # Keep as probability distributions
 
-        for epoch in range(client_epochs_train):  # Loop over the number of epochs
-            self.epoch_count = self.epoch_count+1
+        for epoch in range(epochs_num_input):  # Loop over the number of epochs
+            self.epoch_count += 1
             epoch_loss = 0  # Track the loss for this epoch
             start_idx = 0  # Initialize index for slicing pseudo labels
-            end_idx = 0  # Initialize end_idx to avoid UnboundLocalError
 
             for inputs, targets in server_loader:
                 inputs, targets = inputs.to(device), targets.to(device)  # Move to device
                 optimizer.zero_grad()  # Zero the gradients
 
                 # Forward pass
-                outputs = self.model(inputs)
+                outputs = self.model(inputs)  # outputs are typically logits
 
-                # Determine the target labels
-                if self.pseudo_label_received is None:
-                    # Use the true targets from local data
-                    loss = criterion(outputs, targets)
-                else:
-                    # Use pseudo labels, and slice them to match the input batch size
-                    end_idx = start_idx + inputs.size(0)  # Calculate the end index for slicing
-                    pseudo_targets = pseudo_targets_all[start_idx:end_idx]  # Slice to match batch size
+                # Convert logits to probabilities
+                outputs_prob = torch.softmax(outputs, dim=1)  # Ensure outputs are probabilities
 
-                    if pseudo_targets.size(0) != inputs.size(0):
-                        raise ValueError(
-                            f"Pseudo target size {pseudo_targets.size(0)} does not match input size {inputs.size(0)}")
+                # Slice pseudo_targets to match the input batch size
+                end_idx = start_idx + inputs.size(0)  # Calculate the end index for slicing
+                pseudo_targets = pseudo_targets_all[start_idx:end_idx].to(device)  # Move to device
 
-                    loss = criterion(outputs, pseudo_targets)
+                if pseudo_targets.size(0) != inputs.size(0):
+                    raise ValueError(
+                        f"Pseudo target size {pseudo_targets.size(0)} does not match input size {inputs.size(0)}"
+                    )
+
+                # Calculate loss using KL Divergence
+                # Use log probabilities for the output
+                loss = criterion(outputs_prob.log(), pseudo_targets)  # Using log probabilities
+
+                # Check for NaN loss
+                if torch.isnan(loss).any():
+                    print("Loss is NaN, stopping training")
+                    return self.model.state_dict()  # Return the model weights as a dictionary
 
                 # Backward pass and optimization
                 loss.backward()
@@ -307,21 +341,19 @@ class Client:
                 start_idx = end_idx
 
             # Print epoch loss or do any other logging if needed
-
             result_to_print = epoch_loss / len(server_loader)
-            self.add_train_loss_to_per_epoch(result_to_print,epoch,"Train")
-
-            print(f"Epoch [{epoch + 1}/{client_epochs_train}], Loss: {result_to_print:.4f}")
+            self.add_train_loss_to_per_epoch(result_to_print, epoch, "Train")
+            print(f"Epoch [{epoch + 1}/{epochs_num_input}], Loss: {result_to_print:.4f}")
 
         # Return the model weights after training
-
         return self.model.state_dict()  # Return the model weights as a dictionary
 
     def fine_tune(self, train_weights):
         print("*** " + self.__str__() + " fine-tune ***")
 
         # Load the weights into the model
-        self.model.load_state_dict(train_weights)
+        if train_weights is not None:
+            self.model.load_state_dict(train_weights)
         # Create a DataLoader for the local data
         fine_tune_loader = DataLoader(self.local_data, batch_size=client_batch_size_fine_tune, shuffle=True)
         # Set the model to training mode
@@ -331,7 +363,7 @@ class Client:
         optimizer = torch.optim.Adam(self.model.parameters(), lr=client_learning_rate_fine_tune)
 
 
-        for epoch in range(client_epochs_fine_tune):  # You can define separate epochs for fine-tuning if needed
+        for epoch in range(epochs_num_input):  # You can define separate epochs for fine-tuning if needed
             self.epoch_count = self.epoch_count+1
             epoch_loss = 0
             for inputs, targets in fine_tune_loader:
@@ -352,7 +384,7 @@ class Client:
 
             self.add_train_loss_to_per_epoch(result_to_print,epoch,"Evaluation")
 
-            print(f"Epoch [{epoch + 1}/{client_epochs_fine_tune}], Loss: {result_to_print:.4f}")
+            print(f"Epoch [{epoch + 1}/{epochs_num_input}], Loss: {result_to_print:.4f}")
 
         # Return the model weights after fine-tuning
         return self.model.state_dict(),result_to_print
@@ -440,8 +472,6 @@ class Client:
 
         # Append the new row to the train_df
         self.train_df = pd.concat([self.train_df, current_train_loss], ignore_index=True)
-
-
 
     def handle_data_per_epoch(self):
         # Save the current training data (self.train_df) to a CSV file

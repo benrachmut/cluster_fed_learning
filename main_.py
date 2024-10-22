@@ -23,10 +23,10 @@ if __name__ == '__main__':
             print("----------------------------iter number:"+str(t))
             for c in clients: c.iterate(t,client_split_ratio)
             for c in clients: server.receive_single_pseudo_label(c.id_,c.pseudo_label_to_send)
-            server.iterate()
+            server.iterate(t,client_split_ratio)
             for c in clients: c.pseudo_label_received = server.pseudo_label_to_send
 
-            file_name= get_file_name(round(1-client_split_ratio,2))+"__test_avg_loss"
+            file_name= get_file_name(round(1-client_split_ratio,2))+"_test_avg_loss"
             average_loss_df = create_mean_df(clients,file_name)
             plot_average_loss(average_loss_df=average_loss_df,filename = file_name)
 
