@@ -97,24 +97,26 @@ def create_clients(client_data_sets,server_data,test_set,server_split_ratio):
 
     return ans,ids_list
 
+
 def create_csv(clients, server):
     sheets_names = []
     dfs = []
     eval_clients_df = []
+
     for c in clients:
         df = c.train_df
         dfs.append(df)
-        sheets_names.append(c.id_+"_train")
+        sheets_names.append(c.id_ + "_train")
+
         df = c.eval_test_df
         dfs.append(df)
-        sheets_names.append(c.id_+"_eval")
+        sheets_names.append(c.id_ + "_eval")
         eval_clients_df.append(df)
-
-
 
     df = server.train_df
     dfs.append(df)
     sheets_names.append(server.id_ + "_train")
+
     df = server.eval_test_df
     dfs.append(df)
     sheets_names.append(server.id_ + "_eval")
@@ -122,18 +124,19 @@ def create_csv(clients, server):
     concatenated_df = pd.concat(eval_clients_df)
 
     # Ensure necessary columns exist
-    required_columns = ['server_split_ratio', 'with_server_net', 'with_prev_weights',
-                        'epoches_num', 'percent_train_data_use', 'Id',
-                        'Iteration', 'Train Loss', 'Test Loss']
+    required_columns = get_meta_data_text_keys()+[ 'Id', 'Iteration', 'Train Loss', 'Test Loss']
+
+
+
+    # Initialize averaged_df as an empty DataFrame by default
+    averaged_df = pd.DataFrame()
 
     # Check if all required columns are in the DataFrame
     if all(col in concatenated_df.columns for col in required_columns):
         # Group by the desired columns, calculating the mean for Train and Test Loss
         averaged_df = (
             concatenated_df.groupby(
-                ['server_split_ratio', 'with_server_net', 'with_prev_weights',
-                 'epoches_num', 'percent_train_data_use', 'Iteration']
-            )
+                get_meta_data_text_keys()+[ 'Iteration'] )
                 .agg({
                 'Train Loss': 'mean',
                 'Test Loss': 'mean'
@@ -145,9 +148,7 @@ def create_csv(clients, server):
     sheets_names.append("avg_eval")
 
     # Create a writer object and save each dataframe to a different sheet
-    with pd.ExcelWriter(file_name()+".xlsx", engine='xlsxwriter') as writer:
+    with pd.ExcelWriter(file_name() + ".xlsx", engine='xlsxwriter') as writer:
         for df, sheet in zip(dfs, sheets_names):
             df.to_excel(writer, sheet_name=sheet, index=False)
-
-
 

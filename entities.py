@@ -278,7 +278,8 @@ class FL_Entity:
         self.model.eval()  # Set the model to evaluation mode
         test_loader = DataLoader(self.test_set, batch_size=client_batch_size_evaluate, shuffle=True)
 
-        criterion = nn.CrossEntropyLoss()  # Define the loss function
+
+        criterion = nn.CrossEntropyLoss()
         total_loss = 0.0
         total_samples = 0
 
@@ -289,7 +290,10 @@ class FL_Entity:
                 # Get the model outputs
                 outputs = self.model(inputs)
                 # Calculate loss
+
+
                 loss = criterion(outputs, targets)
+
 
                 # Accumulate the loss
                 total_loss += loss.item() * inputs.size(0)  # Multiply by batch size
@@ -371,10 +375,6 @@ class Client(FL_Entity):
         #self.add_to_data_frame(test_loss,train_loss)
         #self.handle_data_per_epoch()
 
-
-
-
-
     def fine_tune(self):
         print("*** " + self.__str__() + " fine-tune ***")
 
@@ -386,35 +386,36 @@ class Client(FL_Entity):
 
         # Create a DataLoader for the local data
         fine_tune_loader = DataLoader(self.local_data, batch_size=client_batch_size_fine_tune, shuffle=True)
-        # Set the model to training mode
-        self.model.train()
-        # Define your loss function and optimizer
-        criterion = nn.CrossEntropyLoss()  # Assuming a classification task
+        self.model.train()  # Set the model to training mode
+
+        # Define loss function and optimizer
+
+        criterion = nn.CrossEntropyLoss()
+
         optimizer = torch.optim.Adam(self.model.parameters(), lr=client_learning_rate_fine_tune)
 
-
-        for epoch in range(epochs_num_input):  # You can define separate epochs for fine-tuning if needed
-            self.epoch_count = self.epoch_count+1
+        for epoch in range(epochs_num_input):
+            self.epoch_count += 1
             epoch_loss = 0
             for inputs, targets in fine_tune_loader:
-                inputs, targets = inputs.to(device), targets.to(device)  # Move to device
+                inputs, targets = inputs.to(device), targets.to(device)
                 optimizer.zero_grad()
-                # Forward pass
                 outputs = self.model(inputs)
+
+
+
                 loss = criterion(outputs, targets)
 
                 # Backward pass and optimization
                 loss.backward()
                 optimizer.step()
-                # Accumulate loss for this epoch
                 epoch_loss += loss.item()
-            result_to_print = epoch_loss / len(fine_tune_loader)
-            self.add_train_loss_to_per_epoch(result_to_print,"Fine Tuning")
 
+            result_to_print = epoch_loss / len(fine_tune_loader)
+            self.add_train_loss_to_per_epoch(result_to_print, "Fine Tuning")
             print(f"Epoch [{epoch + 1}/{epochs_num_input}], Loss: {result_to_print:.4f}")
 
-        # Return the model weights after fine-tuning
-        return self.model.state_dict(),result_to_print
+        return self.model.state_dict(), result_to_print
 
     def evaluate(self):
         # Set the model to evaluation mode

@@ -7,12 +7,14 @@ class NetType(Enum):
     ALEXNET = "AlexNet"
     VGG = "VGG"
 
+seed_num= 1
+#is_soft_loss = True
 with_server_net = False
 with_prev_weights = False
 epochs_num_input =2
 iterations = 10
 num_clients = 2
-percent_train_data_use = 0.2
+percent_train_data_use = 0.01
 percent_test_relative_to_train = 0.1
 server_split_ratio = 0.2
 server_net_type = NetType.VGG
@@ -33,13 +35,22 @@ server_batch_size_evaluate = 32
 
 def get_meta_data():
     ans = {
-        'server_split_ratio': [server_split_ratio],
-        'with_server_net': [with_server_net],  # You might need to pass or save client_split_ratio
-        'with_prev_weights': [with_prev_weights],
-        'epoches_num': [epochs_num_input],
-        'percent_train_data_use': [percent_train_data_use]
+        'c_amount':[num_clients],
+        'seed':[seed_num],
+        'server_data': [server_split_ratio],
+        'is_server_net': [with_server_net],  # You might need to pass or save client_split_ratio
+        'is_prev_weights': [with_prev_weights],
+        'epochs': [epochs_num_input],
+        'percent_train_data': [percent_train_data_use]
     }
     return ans
+
+def get_meta_data_text_keys():
+    ans = []
+    for k in get_meta_data().keys():
+        ans.append(k)
+    return ans
+
 def file_name():
     ans = ""
     for k,v in get_meta_data().items():
