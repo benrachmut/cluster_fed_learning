@@ -57,7 +57,7 @@ def create_data():
 
 #### ----------------- SPLIT DATA BETWEEN SERVER AND CLIENTS ----------------- ####
 
-def split_clients_server_data(train_set,client_split_ratio):
+def split_clients_server_data(train_set,server_split_ratio):
     """
         Splits the input training dataset into subsets for multiple clients and the server.
 
@@ -71,7 +71,7 @@ def split_clients_server_data(train_set,client_split_ratio):
         The function dynamically allocates the training data based on the number of clients and a specified split ratio for the server.
         """
 
-    total_client_data_size = int(client_split_ratio * len(train_set))
+    total_client_data_size = int((1-server_split_ratio) * len(train_set))
     server_data_size = len(train_set) - total_client_data_size
     client_data_size = total_client_data_size // num_clients  # Each client gets an equal share
     split_sizes = [client_data_size] * num_clients  # List of client dataset sizes
@@ -86,51 +86,68 @@ def split_clients_server_data(train_set,client_split_ratio):
 
 #### ----------------- CREATE CLIENTS ----------------- ####
 
-def create_clients(client_data_sets,server_data,test_set):
+def create_clients(client_data_sets,server_data,test_set,server_split_ratio):
     ans = []
     ids_list = []
     for i in range(len(client_data_sets)):
-        ids_list.append(i)
         client_data = client_data_sets[i]
-        ans.append(Client(id_ =i,client_data = client_data,server_data=server_data,test_data =test_set ))
+        c = Client(id_="Client_"+str(i), global_data=server_data, test_set=test_set, server_split_ratio=server_split_ratio, client_data =client_data)
+        ans.append(c)
+        ids_list.append(c.__str__())
+
     return ans,ids_list
 
+def create_csv(clients, server):
+    sheets_names = []
+    dfs = []
+    eval_clients_df = []
+    for c in clients:
+        df = c.train_df
+        dfs.append(df)
+        sheets_names.append(c.id_+"_train")
+        df = c.eval_test_df
+        dfs.append(df)
+        sheets_names.append(c.id_+"_eval")
+        eval_clients_df.append(df)
 
-def create_mean_df(clients, file_name):
-    # List to hold the results for each iteration
-    mean_results = []
 
-    for t in range(iterations):
-        # Gather test and train losses for the current iteration from all clients
-        test_losses = []
-        train_losses = []
 
-        for c in clients:
-            # Extract test losses for the current iteration
-            test_loss_values = c.eval_test_df.loc[c.eval_test_df['Iteration'] == t, 'Test Loss'].values
-            test_losses.extend(test_loss_values)  # Add the current client's test losses
+    df = server.train_df
+    dfs.append(df)
+    sheets_names.append(server.id_ + "_train")
+    df = server.eval_test_df
+    dfs.append(df)
+    sheets_names.append(server.id_ + "_eval")
 
-            # Extract train losses for the current iteration
-            train_loss_values = c.eval_test_df.loc[c.eval_test_df['Iteration'] == t, 'Train Loss'].values
-            train_losses.extend(train_loss_values)  # Add the current client's train losses
+    concatenated_df = pd.concat(eval_clients_df)
 
-        # Calculate the mean of the test and train losses, ignoring NaNs
-        mean_test_loss = pd.Series(test_losses).mean()
-        mean_train_loss = pd.Series(train_losses).mean()
+    # Ensure necessary columns exist
+    required_columns = ['server_split_ratio', 'with_server_net', 'with_prev_weights',
+                        'epoches_num', 'percent_train_data_use', 'Id',
+                        'Iteration', 'Train Loss', 'Test Loss']
 
-        # Append a dictionary for this iteration to the list
-        mean_results.append({
-            'Iteration': t,
-            'Average Test Loss': mean_test_loss,
-            'Average Train Loss': mean_train_loss
-        })
+    # Check if all required columns are in the DataFrame
+    if all(col in concatenated_df.columns for col in required_columns):
+        # Group by the desired columns, calculating the mean for Train and Test Loss
+        averaged_df = (
+            concatenated_df.groupby(
+                ['server_split_ratio', 'with_server_net', 'with_prev_weights',
+                 'epoches_num', 'percent_train_data_use', 'Iteration']
+            )
+                .agg({
+                'Train Loss': 'mean',
+                'Test Loss': 'mean'
+            })
+                .reset_index()
+        )
 
-    # Convert the list of dictionaries into a DataFrame
-    average_loss_df = pd.DataFrame(mean_results)
+    dfs.append(averaged_df)
+    sheets_names.append("avg_eval")
 
-    # Save the DataFrame to a CSV file
-    average_loss_df.to_csv(file_name + ".csv", index=False)
+    # Create a writer object and save each dataframe to a different sheet
+    with pd.ExcelWriter(file_name()+".xlsx", engine='xlsxwriter') as writer:
+        for df, sheet in zip(dfs, sheets_names):
+            df.to_excel(writer, sheet_name=sheet, index=False)
 
-    return average_loss_df
 
 

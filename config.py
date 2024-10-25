@@ -7,32 +7,49 @@ class NetType(Enum):
     ALEXNET = "AlexNet"
     VGG = "VGG"
 
-with_server_net = True
+with_server_net = False
+with_prev_weights = False
 epochs_num_input =2
-iterations = 50
+iterations = 10
 num_clients = 2
-percent_train_data_use = 0.01
-percent_test_relative_to_train = 0.01
-client_split_ratio_list = [0.8]
+percent_train_data_use = 0.2
+percent_test_relative_to_train = 0.1
+server_split_ratio = 0.2
 server_net_type = NetType.VGG
 client_net_type = NetType.ALEXNET
 num_classes = 10
-
-
 client_batch_size_train = 32
 client_learning_rate_train = 0.001
-
 client_batch_size_fine_tune = 32
 client_learning_rate_fine_tune = 0.001
-
 client_batch_size_evaluate = 32
-
-
-
 server_batch_size_train = 32
 server_learning_rate_train = 0.001
 
-server_batch_size_evaluate = 64
+server_batch_size_evaluate = 32
+
+
+
+
+def get_meta_data():
+    ans = {
+        'server_split_ratio': [server_split_ratio],
+        'with_server_net': [with_server_net],  # You might need to pass or save client_split_ratio
+        'with_prev_weights': [with_prev_weights],
+        'epoches_num': [epochs_num_input],
+        'percent_train_data_use': [percent_train_data_use]
+    }
+    return ans
+def file_name():
+    ans = ""
+    for k,v in get_meta_data().items():
+        ans = ans+k+"_"+str(v[0])+"__"
+    return ans
+
+
+
+
+
 
 def plot_average_loss(average_loss_df, filename='average_loss_plot.png'):
     plt.figure(figsize=(10, 6))  # Set the figure size
