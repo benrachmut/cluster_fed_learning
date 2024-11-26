@@ -6,18 +6,34 @@ from matplotlib import pyplot as plt
 class NetType(Enum):
     ALEXNET = "AlexNet"
     VGG = "VGG"
-client_split_ratio = 0.2
+
+class DataSet(Enum):
+    CIFAR100 = "CIFAR100"
+    CIFAR10 = "CIFAR10"
+
+
+data_set_selected = DataSet.CIFAR10
 seed_num = 1
 with_server_net = True
-epochs_num_input = 50
-iterations = 100
-num_clients = 2
+epochs_num_input = 10
+iterations = 20
+server_split_ratio = 0.2
+
+#----------------
+
+num_superclass = 1
+num_classes_per_superclass = 2
+identical_clients = 2
+num_clients = num_superclass*num_classes_per_superclass*identical_clients
+#----------------
+
+
+
+
 percent_train_data_use = 1
 percent_test_relative_to_train = 1
-server_split_ratio = 0.2
 server_net_type = NetType.VGG
 client_net_type = NetType.ALEXNET
-num_classes = 10
 
 
 #epochs_num_input_train_client = 10
@@ -37,7 +53,11 @@ server_learning_rate_train = 0.0001
 server_batch_size_evaluate = 32
 
 
-
+def get_CIFAR10_superclass_dict():
+    dict_ = {"animal":['bird', 'cat', 'deer', 'dog', 'frog', 'horse'],
+             "vehicle":['airplane', 'automobile','ship', 'truck']
+             }
+    return dict_
 
 def get_meta_data():
     ans = {

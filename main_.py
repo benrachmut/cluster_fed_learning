@@ -12,19 +12,19 @@ from entities import *
 
 if __name__ == '__main__':
     print(device)
-    train_set, test_set = create_data()
-    client_data_sets,server_data = split_clients_server_data(train_set,client_split_ratio)
-    clients,clients_ids = create_clients(client_data_sets,server_data,test_set)
+    torch.manual_seed(seed_num)
+    clients_data_dict, server_data_dict, test_set = create_data()
+    #client_data_sets,server_data = split_clients_server_data(train_set,server_split_ratio)
+    clients,clients_ids = create_clients(clients_data_dict,server_data_dict,test_set)
     server = Server(server_data,clients_ids, test_set)
 
     for t in range(iterations):
         print("----------------------------iter number:"+str(t))
-        for c in clients: c.iterate(t,client_split_ratio)
+        for c in clients: c.iterate(t)
         for c in clients: server.receive_single_pseudo_label(c.id_,c.pseudo_label_to_send)
-        server.iterate(t,client_split_ratio)
+        server.iterate(t)
         for c in clients: c.pseudo_label_received = server.pseudo_label_to_send
-
-        file_name= get_file_name(round(1-client_split_ratio,2))+"_test_avg_loss"
+        file_name= get_file_name(round(server_split_ratio,2))+"_test_avg_loss"
         average_loss_df = create_mean_df(clients,file_name)
         #plot_average_loss(average_loss_df=average_loss_df,filename = file_name)
 

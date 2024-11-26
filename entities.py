@@ -330,7 +330,7 @@ class Server:
 
 
 class Client:
-    def __init__(self, id_, client_data, server_data,test_data):
+    def __init__(self, id_, client_data, server_data,test_data,class_):
         self.id_ = id_
         self.local_data = client_data
         self.server_data = server_data
@@ -339,24 +339,21 @@ class Client:
         self.pseudo_label_to_send = None
         self.current_iteration = 0
         self.test_set = test_data
-        self.eval_test_df = pd.DataFrame(columns=['Sever Data Percentage', 'Client', 'Iteration', 'Train Loss', 'Test Loss'])
-        self.train_df = pd.DataFrame(columns=['Sever Data Percentage', 'Client', 'Iteration', 'epoch', 'Loss','Phase','Epoch Count'])
+        self.class_ = class_
         self.epoch_count = 0
+        self.train_weights = None
 
-    def iterate(self, t,client_split_ratio):
-        self.server_split_ratio = round(1-client_split_ratio,2)
+
+    def iterate(self, t):
         self.current_iteration = t
         self.model = get_client_model()
-        train_weights = None
+        #train_weights = None
+
         if t>0:
-            train_weights = self.train()
-        fine_tune_weights,train_loss = self.fine_tune(train_weights)
+            self.train_weights = self.train()
+        fine_tune_weights,train_loss = self.fine_tune(self.train_weights)
         self.pseudo_label_to_send = self.evaluate(fine_tune_weights)
-
-
         test_loss = self.evaluate_test_loss()
-        self.add_to_data_frame(test_loss,train_loss)
-        self.handle_data_per_epoch()
 
     def __str__(self):
         return "Client " + str(self.id_)
@@ -445,11 +442,10 @@ class Client:
                 epoch_loss += loss.item()
 
             avg_loss = epoch_loss / len(server_loader)
-            self.add_train_loss_to_per_epoch(avg_loss, epoch, "train")
 
             print(f"Epoch [{epoch + 1}/{epochs_num_input}], Loss: {avg_loss:.4f}")
 
-        return self.model.state_dict()
+        self.train_weights = self.model.state_dict()
 
     def initialize_weights(self, layer):
         """Initialize weights for the model layers."""
@@ -489,10 +485,8 @@ class Client:
                 # Accumulate loss for this epoch
                 epoch_loss += loss.item()
 
-
             result_to_print = epoch_loss / len(fine_tune_loader)
 
-            self.add_train_loss_to_per_epoch(result_to_print,epoch,"fine_tune")
 
             print(f"Epoch [{epoch + 1}/{epochs_num_input}], Loss: {result_to_print:.4f}")
 
@@ -555,39 +549,4 @@ class Client:
         # Return average loss
         return ans  # Avoid division by zero
 
-    def add_to_data_frame(self,test_loss,train_loss):
-        current_result = pd.DataFrame({
-            'Sever Data Percentage': self.server_split_ratio,
-            'Client': ["c" + str(self.id_)],
-            'Iteration': [self.current_iteration],
-            'Train Loss': [float(train_loss)],
-            'Test Loss': [float(test_loss)]  # Explicitly convert to float
-        })
-        self.eval_test_df = pd.concat([self.eval_test_df, current_result], ignore_index=True)
-        file_name = get_file_name(self.server_split_ratio)+","+self.__str__()+"test_train_loss.csv"
-        self.eval_test_df.to_csv(file_name)
-        #plot_loss_per_client(average_loss_df= self.eval_test_df, filename=file_name,client_id = self.id_,server_split_ratio = self.server_split_ratio)
 
-    def add_train_loss_to_per_epoch(self,result_to_print, epoch,phase):
-        # Create a new row with the current train loss and epoch details
-        current_train_loss = pd.DataFrame({
-            'Sever Data Percentage': [self.server_split_ratio],  # You might need to pass or save client_split_ratio
-            'Client': ["c" + str(self.id_)],
-            'Iteration': [self.current_iteration],
-            'epoch': [epoch],
-            'Loss': [result_to_print],  # This is the loss for the current epoch
-            'Phase': [phase],  # Indicate this is from the training phase
-            'Epoch Count':[self.epoch_count]
-        })
-
-        # Append the new row to the train_df
-        self.train_df = pd.concat([self.train_df, current_train_loss], ignore_index=True)
-
-    def handle_data_per_epoch(self):
-        # Save the current training data (self.train_df) to a CSV file
-        train_file_name = get_file_name(self.server_split_ratio) + "," + self.__str__() + ",train_loss_per_epoch.csv"
-        self.train_df.to_csv(train_file_name, index=False)  # Ensure it's saved without the index
-
-
-        # Optionally show the plot (in case you want to view it during runtime)
-        #plt.show()
