@@ -1,13 +1,7 @@
-import torch
-import torchvision
-import torchvision.transforms as transforms
-from torch import nn, optim
-from torch.utils.data import DataLoader, random_split
-from config import *
+
+from torch.utils.data import DataLoader
 from entities import *
-import matplotlib.pyplot as plt
 from collections import defaultdict
-from torch.utils.data import Subset
 
 
 
@@ -181,7 +175,7 @@ def create_clients(client_data_dict,server_data_dict,test_set):
         for data_ in data_list:
             ids_list.append(id_)
             id_ = id_+1
-            ans.append(Client(id_ =id_,client_data = data_,server_data=server_data_dict,test_data =test_set,class_ = class_ ))
+            ans.append(Client(id_ =id_,client_data = data_,global_data=server_data_dict,test_data =test_set,class_ = class_ ))
     return ans,ids_list
 
 

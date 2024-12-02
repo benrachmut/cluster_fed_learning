@@ -18,12 +18,16 @@ with_server_net = True
 epochs_num_input = 10
 iterations = 20
 server_split_ratio = 0.2
+batch_size = 32
+learning_rate = 0.001
 
 #----------------
 
 num_superclass = 1
 num_classes_per_superclass = 2
 identical_clients = 2
+
+num_classes = num_superclass*num_classes_per_superclass
 num_clients = num_superclass*num_classes_per_superclass*identical_clients
 #----------------
 
@@ -39,18 +43,19 @@ client_net_type = NetType.ALEXNET
 #epochs_num_input_train_client = 10
 #server_epochs_num_input = 10
 
-client_batch_size_train = 32
-client_learning_rate_train = 0.001
 
-client_batch_size_fine_tune = 32
-client_learning_rate_fine_tune = 0.001
+#client_batch_size_train = 32
+#client_learning_rate_train = 0.001
 
-client_batch_size_evaluate = 32
+#client_batch_size_fine_tune = 32
+#client_learning_rate_fine_tune = 0.001
 
-server_batch_size_train = 32
-server_learning_rate_train = 0.0001
+#client_batch_size_evaluate = 32
 
-server_batch_size_evaluate = 32
+#server_batch_size_train = 32
+#server_learning_rate_train = 0.0001
+
+#server_batch_size_evaluate = 32
 
 
 def get_CIFAR10_superclass_dict():
@@ -65,7 +70,6 @@ def get_meta_data():
         'seed':[seed_num],
         'server_data': [server_split_ratio],
         'is_server_net': [with_server_net],  # You might need to pass or save client_split_ratio
-        'is_prev_weights': [with_prev_weights],
         'epochs': [epochs_num_input],
         'percent_train_data': [percent_train_data_use]
     }
