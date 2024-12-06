@@ -1,10 +1,13 @@
+import threading
+import random
 
+import pandas as pd
 
 import torch
 import torchvision
 import torchvision.transforms as transforms
-from torch import nn
-from torch.utils.data import DataLoader
+from torch import nn, optim
+from torch.utils.data import DataLoader, random_split
 from config import *
 import torch.nn.functional as F
 
@@ -94,15 +97,7 @@ class LearningEntity(ABC):
         self.model=None
         self.weights = None
         self.loss_measures = {}
-        self.loss_measures_class_yes = {}
-        self.loss_measures_class_no = {}
-
         self.accuracy_measures = {}
-        self.accuracy_measures_class_yes = {}
-        self.accuracy_measures_class_no = {}
-
-
-
 
     def initialize_weights(self, layer):
         """Initialize weights for the model layers."""
@@ -121,13 +116,8 @@ class LearningEntity(ABC):
         #self.set_weights()
         self.iteration_context(t)
         if isinstance(self,Client) or (isinstance(self,Server) and with_server_net):
-            self.loss_measures[t]=self.evaluate_test_loss(self.test_set)
-            self.accuracy_measures[t]=self.evaluate_accuracy(self.test_set)
-        if isinstance(self,Client):
-            self.loss_measures_class_yes[t]=self.evaluate_test_loss(self.test_class)
-            self.loss_measures_class_no[t]=self.evaluate_test_loss(self.test_class_no)
-            self.accuracy_measures_class_yes[t]=self.evaluate_accuracy(self.test_class)
-            self.accuracy_measures_class_no[t]=self.evaluate_accuracy(self.test_class_no)
+            self.loss_measures[t]=self.evaluate_test_loss()
+            self.accuracy_measures[t]=self.evaluate_accuracy()
 
 
     @abstractmethod
@@ -279,7 +269,7 @@ class LearningEntity(ABC):
 
         return all_probs
 
-    def evaluate_accuracy(self,data_):
+    def evaluate_accuracy(self):
         """
            Evaluate the accuracy of the model on the given test dataset.
 
@@ -296,7 +286,7 @@ class LearningEntity(ABC):
         correct = 0  # To count the correct predictions
         total = 0  # To count the total predictions
 
-        test_loader = DataLoader(data_, batch_size=batch_size, shuffle=False)
+        test_loader = DataLoader(self.test_set, batch_size=batch_size, shuffle=False)
 
         with torch.no_grad():  # No need to track gradients during evaluation
             for inputs, targets in test_loader:
@@ -315,10 +305,10 @@ class LearningEntity(ABC):
         accuracy = 100 * correct / total  # Calculate accuracy as a percentage
         return accuracy
 
-    def evaluate_test_loss(self,data_):
+    def evaluate_test_loss(self):
         """Evaluate the model on the test set and return the loss."""
         self.model.eval()  # Set the model to evaluation mode
-        test_loader = DataLoader(data_, batch_size=batch_size, shuffle=True)
+        test_loader = DataLoader(self.test_set, batch_size=batch_size, shuffle=True)
 
         criterion = nn.CrossEntropyLoss()  # Define the loss function
         total_loss = 0.0
@@ -343,7 +333,7 @@ class LearningEntity(ABC):
         return ans  # Avoid division by zero
 
 class Client(LearningEntity):
-    def __init__(self, id_, client_data, global_data,test_data,class_,test_data_dict):
+    def __init__(self, id_, client_data, global_data,test_data,class_):
         LearningEntity.__init__(self,id_,global_data,test_data)
         self.local_data = client_data
         self.class_ = class_
@@ -353,10 +343,6 @@ class Client(LearningEntity):
 
         self.weights = None
         self.global_data =global_data
-        self.test_class, self.test_class_no = self.prep_seperated_test(test_data_dict)
-
-
-
 
 
     def iteration_context(self, t):
@@ -409,17 +395,6 @@ class Client(LearningEntity):
         #self.weights = self.model.state_dict()self.weights = self.model.state_dict()
 
         return  result_to_print
-
-    def prep_seperated_test(self, test_data_dict):
-        test_class_no = []
-        test_class_yes = []
-        for k, v in test_data_dict.items():
-            for image in v:
-                if k == self.class_:
-                    test_class_yes.append(image)
-                else:
-                    test_class_no.append(image)
-        return transform_to_TensorDataset(test_class_yes),transform_to_TensorDataset(test_class_no)
 
 
 class Server(LearningEntity):

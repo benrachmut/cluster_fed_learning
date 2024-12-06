@@ -1,9 +1,8 @@
 import copy
-from torch.utils.data import DataLoader, ConcatDataset, TensorDataset, random_split
+from torch.utils.data import DataLoader, ConcatDataset, TensorDataset
 from entities import *
 from collections import defaultdict
 import random as rnd
-from config import *
 
 
 
@@ -125,6 +124,17 @@ def create_server_data(server_data_dict):
     return all_images
 
 
+def transform_to_TensorDataset(data_):
+    images = [item[0] for item in data_]  # Extract the image tensors (index 0 of each tuple)
+    targets = [item[1] for item in data_]
+
+    # Step 2: Convert the lists of images and targets into tensors (if not already)
+    images_tensor = torch.stack(images)  # Stack the image tensors into a single tensor
+    targets_tensor = torch.tensor(targets)  # Convert the targets to a tensor
+
+
+    # Step 3: Create a TensorDataset from the images and targets
+    return TensorDataset(images_tensor, targets_tensor)
 
 def get_split_between_entities(data_by_classification_dict, selected_classes):
     server_data_dict = {}
@@ -176,21 +186,16 @@ def get_test_set(test_set_size,selected_classes_list):
     ])
     test_set = torchvision.datasets.CIFAR10(root='./data', train=False, download=True, transform=test_transform)
     data_by_classification = get_data_by_classification(test_set)
-    test_data_list = []
+    filtered_data_of_classes = []
     for class_ in selected_classes_list:
-        test_data_list.extend(data_by_classification[class_])
+        filtered_data_of_classes.extend(data_by_classification[class_])
         #print(len(data_by_classification[class_]))
 
-    test_data_dict = {}
-    for class_ in selected_classes_list:
-        test_data_dict[class_]=data_by_classification[class_]
-
     # Limit to the specified test_set_size
-    
+    #if test_set_size < len(filtered_data_of_classes):
+    #    filtered_data_of_classes = filtered_data_of_classes[:test_set_size]
 
-    test_data_list =transform_to_TensorDataset(test_data_list)
-
-    return test_data_list,test_data_dict
+    return filtered_data_of_classes
 
 
 def get_train_set_size(clients_data_dict, server_data):
@@ -223,12 +228,13 @@ def create_data():
     selected_classes_list, clients_data_dict, server_data = get_train_set()
     train_set_size = get_train_set_size(clients_data_dict, server_data)
     test_set_size = train_set_size * percent_test_relative_to_train
-    test_set,test_data_dict = get_test_set(test_set_size,selected_classes_list)
+    test_set = get_test_set(test_set_size,selected_classes_list)
     # TODO get test data by what it if familar with + what it is not familiar with.
+    test_set =transform_to_TensorDataset(test_set)
     print_data_for_debug(clients_data_dict,server_data, test_set)
 
 
-    return clients_data_dict, server_data, test_set,test_data_dict
+    return clients_data_dict, server_data, test_set
 
 #### ----------------- SPLIT DATA BETWEEN SERVER AND CLIENTS ----------------- ####
 
@@ -261,51 +267,52 @@ def split_clients_server_data(train_set):
 
 #### ----------------- CREATE CLIENTS ----------------- ####
 
-def create_clients(client_data_dict,server_data_dict,test_set,test_data_dict):
+def create_clients(client_data_dict,server_data_dict,test_set):
     ans = []
     ids_list = []
     id_ = 0
     for class_, data_list in client_data_dict.items():
         for data_ in data_list:
             ids_list.append(id_)
-            ans.append(Client(id_ =id_,client_data = data_,global_data=server_data_dict,test_data =test_set,class_ = class_,test_data_dict = test_data_dict ))
+            ans.append(Client(id_ =id_,client_data = data_,global_data=server_data_dict,test_data =test_set,class_ = class_ ))
             id_ = id_+1
 
     return ans,ids_list
 
 
+def create_mean_df(clients, file_name):
+    # List to hold the results for each iteration
+    mean_results = []
 
+    for t in range(iterations):
+        # Gather test and train losses for the current iteration from all clients
+        test_losses = []
+        train_losses = []
 
+        for c in clients:
+            # Extract test losses for the current iteration
+            test_loss_values = c.eval_test_df.loc[c.eval_test_df['Iteration'] == t, 'Test Loss'].values
+            test_losses.extend(test_loss_values)  # Add the current client's test losses
 
+            # Extract train losses for the current iteration
+            train_loss_values = c.eval_test_df.loc[c.eval_test_df['Iteration'] == t, 'Train Loss'].values
+            train_losses.extend(train_loss_values)  # Add the current client's train losses
 
+        # Calculate the mean of the test and train losses, ignoring NaNs
+        mean_test_loss = pd.Series(test_losses).mean()
+        mean_train_loss = pd.Series(train_losses).mean()
 
-def create_record_data(clients, server):
-    loss_measures = {}
-    loss_measures_class_yes = {}
-    loss_measures_class_no = {}
+        # Append a dictionary for this iteration to the list
+        mean_results.append({
+            'Iteration': t,
+            'Average Test Loss': mean_test_loss,
+            'Average Train Loss': mean_train_loss
+        })
 
-    accuracy_measures = {}
-    accuracy_measures_class_yes = {}
-    accuracy_measures_class_no = {}
+    # Convert the list of dictionaries into a DataFrame
+    average_loss_df = pd.DataFrame(mean_results)
 
-    for client in clients:
-        loss_measures["Client"+str(client.id_)]=client.loss_measures
-        loss_measures_class_yes["Client"+str(client.id_)] = client.loss_measures_class_yes
-        loss_measures_class_no["Client"+str(client.id_)] = client.loss_measures_class_no
+    # Save the DataFrame to a CSV file
+    average_loss_df.to_csv(file_name + ".csv", index=False)
 
-        accuracy_measures["Client"+str(client.id_)]=client.accuracy_measures
-        accuracy_measures_class_yes["Client" + str(client.id_)] = client.accuracy_measures_class_yes
-        accuracy_measures_class_no["Client" + str(client.id_)] = client.accuracy_measures_class_no
-
-    loss_measures[server.id_] = server.loss_measures
-    accuracy_measures[server.id_] = server.accuracy_measures
-    return RecordData(loss_measures,loss_measures_class_yes,loss_measures_class_no,accuracy_measures,accuracy_measures_class_yes,accuracy_measures_class_no)
-
-
-def create_pickle(clients, server):
-    rd = create_record_data(clients, server)
-    pik_name = rd.summary
-    pickle_file_path = pik_name+".pkl"
-
-    with open(pickle_file_path, "wb") as file:
-        pickle.dump(rd, file)
+    return average_loss_df
