@@ -1,8 +1,9 @@
 import copy
-from torch.utils.data import DataLoader, ConcatDataset, TensorDataset
+from torch.utils.data import DataLoader, ConcatDataset, TensorDataset, random_split
 from entities import *
 from collections import defaultdict
 import random as rnd
+from config import *
 
 
 
@@ -183,12 +184,11 @@ def get_test_set(test_set_size,selected_classes_list):
     test_data_dict = {}
     for class_ in selected_classes_list:
         test_data_dict[class_]=data_by_classification[class_]
+
     # Limit to the specified test_set_size
     
-    if test_set_size < len(test_data_list):
-        test_data_list = test_data_list[:test_set_size]
-    
-    test_data_list =transform_to_TensorDataset(test_set)
+
+    test_data_list =transform_to_TensorDataset(test_data_list)
 
     return test_data_list,test_data_dict
 
@@ -274,56 +274,9 @@ def create_clients(client_data_dict,server_data_dict,test_set,test_data_dict):
     return ans,ids_list
 
 
-def create_mean_df(clients, file_name):
-    # List to hold the results for each iteration
-    mean_results = []
-
-    for t in range(iterations):
-        # Gather test and train losses for the current iteration from all clients
-        test_losses = []
-        train_losses = []
-
-        for c in clients:
-            # Extract test losses for the current iteration
-            test_loss_values = c.eval_test_df.loc[c.eval_test_df['Iteration'] == t, 'Test Loss'].values
-            test_losses.extend(test_loss_values)  # Add the current client's test losses
-
-            # Extract train losses for the current iteration
-            train_loss_values = c.eval_test_df.loc[c.eval_test_df['Iteration'] == t, 'Train Loss'].values
-            train_losses.extend(train_loss_values)  # Add the current client's train losses
-
-        # Calculate the mean of the test and train losses, ignoring NaNs
-        mean_test_loss = pd.Series(test_losses).mean()
-        mean_train_loss = pd.Series(train_losses).mean()
-
-        # Append a dictionary for this iteration to the list
-        mean_results.append({
-            'Iteration': t,
-            'Average Test Loss': mean_test_loss,
-            'Average Train Loss': mean_train_loss
-        })
-
-    # Convert the list of dictionaries into a DataFrame
-    average_loss_df = pd.DataFrame(mean_results)
-
-    # Save the DataFrame to a CSV file
-    average_loss_df.to_csv(file_name + ".csv", index=False)
-
-    return average_loss_df
 
 
 
-def get_meta_data_text_keys():
-    ans = []
-    for k in get_meta_data().keys():
-        ans.append(k)
-    return ans
-
-def file_name():
-    ans = ""
-    for k,v in get_meta_data().items():
-        ans = ans+k+"_"+str(v[0])+"__"
-    return ans
 
 
 def create_record_data(clients, server):

@@ -1,13 +1,10 @@
-import threading
-import random
 
-import pandas as pd
 
 import torch
 import torchvision
 import torchvision.transforms as transforms
-from torch import nn, optim
-from torch.utils.data import DataLoader, random_split
+from torch import nn
+from torch.utils.data import DataLoader
 from config import *
 import torch.nn.functional as F
 
@@ -97,12 +94,13 @@ class LearningEntity(ABC):
         self.model=None
         self.weights = None
         self.loss_measures = {}
-        self.loss_measures_my_class = {}
-        self.loss_measures_not_my_class = {}
+        self.loss_measures_class_yes = {}
+        self.loss_measures_class_no = {}
 
         self.accuracy_measures = {}
-        self.accuracy_measures_my_class = {}
-        self.accuracy_measures_not_my_class = {}
+        self.accuracy_measures_class_yes = {}
+        self.accuracy_measures_class_no = {}
+
 
 
 
@@ -126,10 +124,10 @@ class LearningEntity(ABC):
             self.loss_measures[t]=self.evaluate_test_loss(self.test_set)
             self.accuracy_measures[t]=self.evaluate_accuracy(self.test_set)
         if isinstance(self,Client):
-            self.loss_measures_my_class[t]=self.evaluate_test_loss(self.test_class)
-            self.loss_measures_not_my_class[t]=self.evaluate_test_loss(self.test_class_no)
-            self.accuracy_measures_my_class[t]=self.evaluate_accuracy(self.test_class)
-            self.accuracy_measures_not_my_class[t]=self.evaluate_accuracy(self.test_class_no)
+            self.loss_measures_class_yes[t]=self.evaluate_test_loss(self.test_class)
+            self.loss_measures_class_no[t]=self.evaluate_test_loss(self.test_class_no)
+            self.accuracy_measures_class_yes[t]=self.evaluate_accuracy(self.test_class)
+            self.accuracy_measures_class_no[t]=self.evaluate_accuracy(self.test_class_no)
 
 
     @abstractmethod
@@ -416,10 +414,11 @@ class Client(LearningEntity):
         test_class_no = []
         test_class_yes = []
         for k, v in test_data_dict.items():
-            if k == self.class_:
-                test_class_yes.append(v)
-            else:
-                test_class_no.append(v)
+            for image in v:
+                if k == self.class_:
+                    test_class_yes.append(image)
+                else:
+                    test_class_no.append(image)
         return transform_to_TensorDataset(test_class_yes),transform_to_TensorDataset(test_class_no)
 
 
@@ -486,36 +485,4 @@ class Server(LearningEntity):
 
 
 
-
-
-class RecordData:
-    def __init__(self,loss_measures,loss_measures_class_yes,loss_measures_class_no,accuracy_measures,accuracy_measures_class_yes,accuracy_measures_class_no):
-        self.loss_measures = loss_measures
-        self.loss_measures_class_yes = loss_measures_class_yes
-        self.loss_measures_class_no = loss_measures_class_no
-
-        self.accuracy_measures = accuracy_measures
-        self.accuracy_measures_class_yes = accuracy_measures_class_yes
-        self.accuracy_measures_class_no = accuracy_measures_class_no
-
-
-
-        self.mix_percentage = mix_percentage
-        self.seed_num= seed_num
-        self.epochs_num_input= epochs_num_input
-        self.iterations= iterations
-        self. server_split_ratio= server_split_ratio
-        self.num_classes=num_classes
-        self.identical_clients =identical_clients
-        self.num_clusters= num_clusters
-
-        self.summary = (
-            f"num_clusters_{num_clusters}_"
-            f"Mix_Percentage_{mix_percentage}_"
-            f"Epochs_{epochs_num_input}_"
-            f"Iterations_{iterations}_"
-            f"Server_Split_Ratio_{server_split_ratio}_"
-            f"Num_Classes_{num_classes}_"
-            f"Identical_Clients_{identical_clients}"
-        )
 

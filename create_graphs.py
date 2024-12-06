@@ -6,6 +6,6 @@ file_path = 'num_clusters_1_Mix_Percentage_0.2_Epochs_2_Iterations_20_Server_Spl
 # Open and read the pickle file
 with open(file_path, 'rb') as file:
     data_ = pickle.load(file)
-
+print()
 
 
