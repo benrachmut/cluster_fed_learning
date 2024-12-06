@@ -10,53 +10,12 @@ from functions import *
 from entities import *
 
 
-class RecordData:
-    def __init__(self,loss_measures,accuracy_measures):
-        self.loss_measures = loss_measures
-        self.accuracy_measures = accuracy_measures
-        self.mix_percentage = mix_percentage
-        self.seed_num= seed_num
-        self.epochs_num_input= epochs_num_input
-        self.iterations= iterations
-        self. server_split_ratio= server_split_ratio
-        self.num_classes=num_classes
-        self.identical_clients =identical_clients
-        self.num_clusters= num_clusters
-        self.summary = (
-            f"num_clusters_{num_clusters}_"
-            f"Mix_Percentage_{mix_percentage}_"
-            f"Epochs_{epochs_num_input}_"
-            f"Iterations_{iterations}_"
-            f"Server_Split_Ratio_{server_split_ratio}_"
-            f"Num_Classes_{num_classes}_"
-            f"Identical_Clients_{identical_clients}"
-        )
-
-def create_record_data(clients, server):
-    loss_measures = {}
-    accuracy_measures = {}
-    for client in clients:
-        loss_measures[client.id_]=client.loss_measures
-        accuracy_measures[client.id_]=client.accuracy_measures
-    loss_measures[server.id_] = server.loss_measures
-    accuracy_measures[server.id_] = server.accuracy_measures
-    return RecordData(loss_measures,accuracy_measures)
-
-
-def create_pickle(clients, server):
-    rd = create_record_data(clients, server)
-    pik_name = rd.summary
-    pickle_file_path = pik_name+".pkl"
-
-    with open(pickle_file_path, "wb") as file:
-        pickle.dump(rd, file)
-
 
 if __name__ == '__main__':
     print(device)
     torch.manual_seed(seed_num)
-    clients_data_dict, server_data, test_set = create_data()
-    clients,clients_ids = create_clients(clients_data_dict,server_data,test_set)
+    clients_data_dict, server_data, test_set,test_data_dict = create_data()
+    clients,clients_ids = create_clients(clients_data_dict,server_data,test_set,test_data_dict)
     server = Server(id_="server",global_data=server_data,test_data = test_set,clients_ids = clients_ids)
 
     for t in range(iterations):

@@ -97,7 +97,14 @@ class LearningEntity(ABC):
         self.model=None
         self.weights = None
         self.loss_measures = {}
+        self.loss_measures_my_class = {}
+        self.loss_measures_not_my_class = {}
+
         self.accuracy_measures = {}
+        self.accuracy_measures_my_class = {}
+        self.accuracy_measures_not_my_class = {}
+
+
 
     def initialize_weights(self, layer):
         """Initialize weights for the model layers."""
@@ -116,8 +123,13 @@ class LearningEntity(ABC):
         #self.set_weights()
         self.iteration_context(t)
         if isinstance(self,Client) or (isinstance(self,Server) and with_server_net):
-            self.loss_measures[t]=self.evaluate_test_loss()
-            self.accuracy_measures[t]=self.evaluate_accuracy()
+            self.loss_measures[t]=self.evaluate_test_loss(self.test_set)
+            self.accuracy_measures[t]=self.evaluate_accuracy(self.test_set)
+        if isinstance(self,Client):
+            self.loss_measures_my_class[t]=self.evaluate_test_loss(self.test_class)
+            self.loss_measures_not_my_class[t]=self.evaluate_test_loss(self.test_class_no)
+            self.accuracy_measures_my_class[t]=self.evaluate_accuracy(self.test_class)
+            self.accuracy_measures_not_my_class[t]=self.evaluate_accuracy(self.test_class_no)
 
 
     @abstractmethod
@@ -269,7 +281,7 @@ class LearningEntity(ABC):
 
         return all_probs
 
-    def evaluate_accuracy(self):
+    def evaluate_accuracy(self,data_):
         """
            Evaluate the accuracy of the model on the given test dataset.
 
@@ -286,7 +298,7 @@ class LearningEntity(ABC):
         correct = 0  # To count the correct predictions
         total = 0  # To count the total predictions
 
-        test_loader = DataLoader(self.test_set, batch_size=batch_size, shuffle=False)
+        test_loader = DataLoader(data_, batch_size=batch_size, shuffle=False)
 
         with torch.no_grad():  # No need to track gradients during evaluation
             for inputs, targets in test_loader:
@@ -305,10 +317,10 @@ class LearningEntity(ABC):
         accuracy = 100 * correct / total  # Calculate accuracy as a percentage
         return accuracy
 
-    def evaluate_test_loss(self):
+    def evaluate_test_loss(self,data_):
         """Evaluate the model on the test set and return the loss."""
         self.model.eval()  # Set the model to evaluation mode
-        test_loader = DataLoader(self.test_set, batch_size=batch_size, shuffle=True)
+        test_loader = DataLoader(data_, batch_size=batch_size, shuffle=True)
 
         criterion = nn.CrossEntropyLoss()  # Define the loss function
         total_loss = 0.0
@@ -333,7 +345,7 @@ class LearningEntity(ABC):
         return ans  # Avoid division by zero
 
 class Client(LearningEntity):
-    def __init__(self, id_, client_data, global_data,test_data,class_):
+    def __init__(self, id_, client_data, global_data,test_data,class_,test_data_dict):
         LearningEntity.__init__(self,id_,global_data,test_data)
         self.local_data = client_data
         self.class_ = class_
@@ -343,6 +355,10 @@ class Client(LearningEntity):
 
         self.weights = None
         self.global_data =global_data
+        self.test_class, self.test_class_no = self.prep_seperated_test(test_data_dict)
+
+
+
 
 
     def iteration_context(self, t):
@@ -395,6 +411,16 @@ class Client(LearningEntity):
         #self.weights = self.model.state_dict()self.weights = self.model.state_dict()
 
         return  result_to_print
+
+    def prep_seperated_test(self, test_data_dict):
+        test_class_no = []
+        test_class_yes = []
+        for k, v in test_data_dict.items():
+            if k == self.class_:
+                test_class_yes.append(v)
+            else:
+                test_class_no.append(v)
+        return transform_to_TensorDataset(test_class_yes),transform_to_TensorDataset(test_class_no)
 
 
 class Server(LearningEntity):
@@ -460,4 +486,36 @@ class Server(LearningEntity):
 
 
 
+
+
+class RecordData:
+    def __init__(self,loss_measures,loss_measures_class_yes,loss_measures_class_no,accuracy_measures,accuracy_measures_class_yes,accuracy_measures_class_no):
+        self.loss_measures = loss_measures
+        self.loss_measures_class_yes = loss_measures_class_yes
+        self.loss_measures_class_no = loss_measures_class_no
+
+        self.accuracy_measures = accuracy_measures
+        self.accuracy_measures_class_yes = accuracy_measures_class_yes
+        self.accuracy_measures_class_no = accuracy_measures_class_no
+
+
+
+        self.mix_percentage = mix_percentage
+        self.seed_num= seed_num
+        self.epochs_num_input= epochs_num_input
+        self.iterations= iterations
+        self. server_split_ratio= server_split_ratio
+        self.num_classes=num_classes
+        self.identical_clients =identical_clients
+        self.num_clusters= num_clusters
+
+        self.summary = (
+            f"num_clusters_{num_clusters}_"
+            f"Mix_Percentage_{mix_percentage}_"
+            f"Epochs_{epochs_num_input}_"
+            f"Iterations_{iterations}_"
+            f"Server_Split_Ratio_{server_split_ratio}_"
+            f"Num_Classes_{num_classes}_"
+            f"Identical_Clients_{identical_clients}"
+        )
 

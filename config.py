@@ -1,7 +1,12 @@
+import pickle
 from enum import Enum
 from random import random
 
+import torch
 from matplotlib import pyplot as plt
+from torch.utils.data import TensorDataset
+
+from entities import Client
 
 
 class NetType(Enum):
@@ -88,16 +93,16 @@ def get_meta_data():
     }
     return ans
 
-def get_meta_data_text_keys():
-    ans = []
-    for k in get_meta_data().keys():
-        ans.append(k)
-    return ans
-
-def file_name():
-    ans = ""
-    for k,v in get_meta_data().items():
-        ans = ans+k+"_"+str(v[0])+"__"
-    return ans
 
 
+def transform_to_TensorDataset(data_):
+    images = [item[0] for item in data_]  # Extract the image tensors (index 0 of each tuple)
+    targets = [item[1] for item in data_]
+
+    # Step 2: Convert the lists of images and targets into tensors (if not already)
+    images_tensor = torch.stack(images)  # Stack the image tensors into a single tensor
+    targets_tensor = torch.tensor(targets)  # Convert the targets to a tensor
+
+
+    # Step 3: Create a TensorDataset from the images and targets
+    return TensorDataset(images_tensor, targets_tensor)
