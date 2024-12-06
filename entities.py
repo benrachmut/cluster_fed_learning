@@ -20,7 +20,7 @@ def get_file_name(server_split_ratio):
 
 
 class AlexNet(nn.Module):
-    def __init__(self, num_classes=10):
+    def __init__(self, num_classes):
         super(AlexNet, self).__init__()
         self.model = nn.Sequential(
             nn.Conv2d(3, 64, kernel_size=3, stride=1, padding=1),
@@ -57,7 +57,7 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 # Define VGG16 for server
 class VGGServer(nn.Module):
-    def __init__(self, num_classes=10):
+    def __init__(self, num_classes):
         super(VGGServer, self).__init__()
         self.vgg = torchvision.models.vgg16(weights=None)  # No pre-trained weights
         self.vgg.classifier[6] = nn.Linear(4096, num_classes)  # Adjust for CIFAR-10
@@ -96,6 +96,9 @@ class LearningEntity(ABC):
         self.test_set= test_data
         self.model=None
         self.weights = None
+        self.loss_measures = {}
+        self.accuracy_measures = {}
+
     def initialize_weights(self, layer):
         """Initialize weights for the model layers."""
         if isinstance(layer, (nn.Linear, nn.Conv2d)):
@@ -103,19 +106,79 @@ class LearningEntity(ABC):
             if layer.bias is not None:
                 nn.init.zeros_(layer.bias)
 
-    def iterate(self,t):
-        if self.weights  is None:
-            self.model.apply(self.initialize_weights)
-        else:
-            self.model.apply(self.weights)
+    #def set_weights(self):
+        #if self.weights  is None:
+        #    self.model.apply(self.initialize_weights)
+        #else:
+        #    self.model.apply(self.weights)
 
+    def iterate(self,t):
+        #self.set_weights()
         self.iteration_context(t)
+        if isinstance(self,Client) or (isinstance(self,Server) and with_server_net):
+            self.loss_measures[t]=self.evaluate_test_loss()
+            self.accuracy_measures[t]=self.evaluate_accuracy()
+
 
     @abstractmethod
     def iteration_context(self,t):
         pass
 
-    def train(self,mean_pseudo_labels, data_):
+    def train(self, mean_pseudo_labels):
+        print(f"*** {self.__str__()} train ***")
+
+        #if self.weights is None:
+        #    self.model.apply(self.initialize_weights)
+        #else:
+        #    self.model.load_state_dict(self.weights)
+
+        # Create a DataLoader from the provided dataset
+        server_loader = DataLoader(
+            self.global_data,
+            batch_size=batch_size,
+            shuffle=False,
+            drop_last=True
+        )
+
+        # Set the model to training mode
+        self.model.train()
+
+        # Define the criterion and optimizer
+        criterion = nn.KLDivLoss(reduction='batchmean')
+        optimizer = torch.optim.Adam(self.model.parameters(), lr=learning_rate)
+
+        # Move pseudo-labels to the same device as the model
+        pseudo_targets_all = mean_pseudo_labels.to(device)
+
+        # Training loop
+        for epoch in range(epochs_num_input):
+            epoch_loss = 0.0
+
+            for batch_idx, (inputs, indices) in enumerate(server_loader):
+                # Move inputs and pseudo-targets to the appropriate device
+                print(batch_idx)
+                inputs = inputs.to(device)
+                pseudo_targets = pseudo_targets_all[indices]  # Map indices to pseudo-labels
+
+                # Forward pass
+                outputs = self.model(inputs)
+
+                # Compute the loss
+                loss = criterion(F.log_softmax(outputs, dim=1), pseudo_targets)
+
+                # Backward pass and optimization
+                optimizer.zero_grad()
+                loss.backward()
+                optimizer.step()
+
+                # Accumulate loss for the epoch
+                epoch_loss += loss.item()
+
+            # Print loss for the epoch
+            print(f"Epoch [{epoch + 1}/{epochs_num_input}], Loss: {epoch_loss / len(server_loader):.4f}")
+            #self.weights = self.model.state_dict()
+
+    def train_old(self,mean_pseudo_labels, data_):
 
 
         print(f"*** {self.__str__()} train ***")
@@ -182,39 +245,70 @@ class LearningEntity(ABC):
         self.weights =self.model.state_dict()
         return avg_loss
 
-    def evaluate(self,data_):
-        # Set the model to evaluation mode
-        self.model.load_state_dict(self.weights)
-        self.model.eval()
+    def evaluate(self):
+        print("*** Generating Pseudo-Labels with Probabilities ***")
 
         # Create a DataLoader for the global data
-        global_loader = DataLoader(data_, batch_size=batch_size, shuffle=False)
+        global_data_loader = DataLoader(self.global_data, batch_size=batch_size, shuffle=False)
 
-        # List to hold pseudo-labels
-        pseudo_labels_list = []
+        self.model.eval()  # Set the model to evaluation mode
 
-        with torch.no_grad():
-            for batch in global_loader:
-                # Unpack the batch if it contains both inputs and targets
-                inputs = batch[0]  # Assuming the first element is the inputs
-                inputs = inputs.to(device)  # Move to device
+        all_probs = []  # List to store the softmax probabilities
+        with torch.no_grad():  # Disable gradient computation
+            for inputs, _ in global_data_loader:
+                inputs = inputs.to(device)
+                outputs = self.model(inputs)  # Forward pass
 
-                # Get the model outputs
+                # Apply softmax to get the class probabilities
+                probs = F.softmax(outputs, dim=1)  # Apply softmax along the class dimension
+
+                all_probs.append(probs.cpu())  # Store the probabilities on CPU
+
+        # Concatenate all probabilities into a single tensor
+        all_probs = torch.cat(all_probs, dim=0)
+
+        return all_probs
+
+    def evaluate_accuracy(self):
+        """
+           Evaluate the accuracy of the model on the given test dataset.
+
+           Args:
+               model (torch.nn.Module): The model to evaluate.
+               test_data (torch.utils.data.Dataset): The test dataset.
+               batch_size (int): The batch size for loading the data.
+               device (str): The device to run the model on, e.g., 'cuda' or 'cpu'.
+
+           Returns:
+               float: The accuracy of the model on the test dataset.
+           """
+        self.model.eval()  # Set the model to evaluation mode
+        correct = 0  # To count the correct predictions
+        total = 0  # To count the total predictions
+
+        test_loader = DataLoader(self.test_set, batch_size=batch_size, shuffle=False)
+
+        with torch.no_grad():  # No need to track gradients during evaluation
+            for inputs, targets in test_loader:
+                inputs, targets = inputs.to(device), targets.to(device)
+
+                # Forward pass
                 outputs = self.model(inputs)
 
-                # Assuming outputs are class probabilities
-                pseudo_labels_list.append(outputs.cpu())  # Store on CPU for easier aggregation
+                # Get the predicted class
+                _, predicted = torch.max(outputs, 1)
 
-        # Concatenate all pseudo labels from the batch
-        pseudo_labels = torch.cat(pseudo_labels_list, dim=0)
+                # Update the total number of predictions and correct predictions
+                total += targets.size(0)
+                correct += (predicted == targets).sum().item()
 
-        # Return pseudo labels to send to the server
-        return pseudo_labels  # This should be a tensor of shape (num_samples, num_classes)
+        accuracy = 100 * correct / total  # Calculate accuracy as a percentage
+        return accuracy
 
     def evaluate_test_loss(self):
         """Evaluate the model on the test set and return the loss."""
         self.model.eval()  # Set the model to evaluation mode
-        test_loader = DataLoader(self.test_set, batch_size=batch_size, shuffle=False)
+        test_loader = DataLoader(self.test_set, batch_size=batch_size, shuffle=True)
 
         criterion = nn.CrossEntropyLoss()  # Define the loss function
         total_loss = 0.0
@@ -245,21 +339,19 @@ class Client(LearningEntity):
         self.class_ = class_
         self.epoch_count = 0
         self.model = get_client_model()
-        self.weights = None
+        self.model.apply(self.initialize_weights)
 
-        self.global_data_list = []
-        for data_list in self.global_data.values():
-            self.global_data_list.extend(data_list)
-        random.seed(seed_num)
-        random.shuffle(self.global_data_list)
+        self.weights = None
+        self.global_data =global_data
+
 
     def iteration_context(self, t):
         self.current_iteration = t
         if t>0:
-            train_loss = self.train(self.pseudo_label_received,self.global_data_list)
+            train_loss = self.train(self.pseudo_label_received)
         train_loss = self.fine_tune()
         self.pseudo_label_to_send = self.evaluate()
-        test_loss = self.evaluate_test_loss()
+        #test_loss = self.evaluate_test_loss()
 
     def __str__(self):
         return "Client " + str(self.id_)
@@ -268,10 +360,10 @@ class Client(LearningEntity):
         print("*** " + self.__str__() + " fine-tune ***")
 
         # Load the weights into the model
-        if self.weights is not None:
-            self.model.load_state_dict(self.weights)
-        else:
-            self.model.apply(self.initialize_weights)
+        #if self.weights is  None:
+        #    self.model.apply(self.initialize_weights)
+        #else:
+        #    self.model.load_state_dict(self.weights)
 
         # Create a DataLoader for the local data
         fine_tune_loader = DataLoader(self.local_data, batch_size=batch_size, shuffle=True)
@@ -299,8 +391,8 @@ class Client(LearningEntity):
                 epoch_loss += loss.item()
 
             result_to_print = epoch_loss / len(fine_tune_loader)
-            self.add_train_loss_to_per_epoch(result_to_print, "Fine Tuning")
             print(f"Epoch [{epoch + 1}/{epochs_num_input}], Loss: {result_to_print:.4f}")
+        #self.weights = self.model.state_dict()self.weights = self.model.state_dict()
 
         return  result_to_print
 
@@ -312,7 +404,7 @@ class Server(LearningEntity):
         self.clients_ids = clients_ids
         self.reset_clients_received_pl()
         self.model = get_server_model()
-        self.weights = self.initialize_weights
+        self.weights = None
 
 
 
@@ -328,9 +420,11 @@ class Server(LearningEntity):
         if with_server_net:
             mean_pseudo_labels = self.get_mean_pseudo_labels()  # #
             self.model = get_server_model()
-            weights_train,train_loss = self.train(mean_pseudo_labels)
-            self.pseudo_label_to_send = self.evaluate(weights_train)
-            test_loss = self.evaluate_test_loss()
+            self.model.apply(self.initialize_weights)
+
+            self.train(mean_pseudo_labels)
+            self.pseudo_label_to_send = self.evaluate()
+
 
         else:
             self.pseudo_label_to_send = self.get_mean_pseudo_labels()

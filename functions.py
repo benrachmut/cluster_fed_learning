@@ -1,5 +1,5 @@
 import copy
-from torch.utils.data import DataLoader, ConcatDataset
+from torch.utils.data import DataLoader, ConcatDataset, TensorDataset
 from entities import *
 from collections import defaultdict
 import random as rnd
@@ -14,44 +14,19 @@ def cut_data(data_set, size_use):
 
 
 def get_data_by_classification(data_set):
-    class_labels = data_set.classes
+    #class_labels = data_set.classes
     data_by_classification = defaultdict(list)
-    for single in data_set:
-        image, label =single
+    for image in data_set:
     #for image, label in data_set:
-        class_name = class_labels[label]
-        data_by_classification[class_name].append(single)
+        data_by_classification[image[1]].append(image)
     return data_by_classification
 
 
-def get_list_of_superclass():
-    sorted_keys = sorted(get_CIFAR10_superclass_dict().keys())
-    num_superclass_local = num_superclass
-    selected_keys = []
-    for i in range(num_superclass_local):
-        selected_keys.append(sorted_keys[i])
-    return selected_keys
-
-
-def get_dict_of_classes(list_of_superclass):
-    ans ={}
-    for superclass in list_of_superclass:
-        ans[superclass]=[]
-        list_of_classes = get_CIFAR10_superclass_dict()[superclass]
-        sorted_list_of_classes = sorted(list_of_classes)
-        num_class_per_super_class_local = num_classes_per_superclass
-        for i in range(num_class_per_super_class_local):
-            ans[superclass].append(sorted_list_of_classes[i])
-    return ans
 
 
 
-def get_selected_classes():
-    if num_superclass>len(get_CIFAR10_superclass_dict()):
-        raise Exception("num_superclass is larger then the subclasses in the data")
-    list_of_superclass = get_list_of_superclass()
-    dict_of_classes = get_dict_of_classes(list_of_superclass)
-    return dict_of_classes
+
+
 
 
 def get_clients_and_server_data_portions(data_of_class, size_use):
@@ -116,40 +91,71 @@ def complete_client_data(clients_data_dict, data_to_mix):
             other_data_selected = data_to_mix[other_class_selected].pop(0)
             if len(data_to_mix[other_class_selected])==0:
                 del data_to_mix[other_class_selected]
-            new_subset = ConcatDataset([client_list, other_data_selected])
-            ans[class_name].append(new_subset)
+            new_subset = []
+            for image in client_list:new_subset.append(image)
+            for image in other_data_selected: new_subset.append(image)
+
+            new_td = transform_to_TensorDataset(new_subset)
+            ans[class_name].append(new_td)
 
             #rnd.shuffle()
 
     return ans
 
 
+def check_data_targets(data_,name_of_data):
+    targets = torch.tensor([target for _, target in data_])
+    unique_labels = torch.unique(targets)
+
+    print("unique targets for",name_of_data,str(unique_labels))
+
+
+
 def create_server_data(server_data_dict):
     all_subsets = []
-    for v  in server_data_dict.values():all_subsets.append(v)
-    return ConcatDataset(all_subsets)
+    all_images = []
+    for v  in server_data_dict.values():
+        all_subsets.append(v)
+        for image in v:
+            all_images.append(image)
+
+    #check_server_data_targets(ans)
+
+    return all_images
 
 
-def get_split_between_clients(data_by_classification_dict, selected_classes):
+def transform_to_TensorDataset(data_):
+    images = [item[0] for item in data_]  # Extract the image tensors (index 0 of each tuple)
+    targets = [item[1] for item in data_]
+
+    # Step 2: Convert the lists of images and targets into tensors (if not already)
+    images_tensor = torch.stack(images)  # Stack the image tensors into a single tensor
+    targets_tensor = torch.tensor(targets)  # Convert the targets to a tensor
+
+
+    # Step 3: Create a TensorDataset from the images and targets
+    return TensorDataset(images_tensor, targets_tensor)
+
+def get_split_between_entities(data_by_classification_dict, selected_classes):
     server_data_dict = {}
     clients_data_dict = {}
-    all_train = []
-    for superclass, classes_list in selected_classes.items():
-        for current_class in classes_list:
-            data_of_class = data_by_classification_dict[current_class]
-            all_train = all_train+data_of_class
-            train_set_size = len(data_of_class)
-            size_use = int(percent_train_data_use * train_set_size)
-            data_of_class = cut_data(data_of_class, size_use)
-            client_data_per_class, server_data_per_class = split_clients_server_data(data_of_class)
-            clients_data_dict[current_class] = client_data_per_class
-            server_data_dict[current_class] = server_data_per_class
+    for class_target in selected_classes:
+        data_of_class = data_by_classification_dict[class_target]
+        train_set_size = len(data_of_class)
+        size_use = int(percent_train_data_use * train_set_size)
+        data_of_class = cut_data(data_of_class, size_use)
+        client_data_per_class, server_data_per_class = split_clients_server_data(data_of_class)
+        clients_data_dict[class_target] = client_data_per_class
+        server_data_dict[class_target] = server_data_per_class
     server_data = create_server_data(server_data_dict)
+    server_data = transform_to_TensorDataset(server_data)
     clients_data_dict, data_to_mix = get_split_train_client_data(clients_data_dict)
     clients_data_dict = complete_client_data(clients_data_dict, data_to_mix)
 
 
-    return clients_data_dict,server_data,all_train
+
+
+    return clients_data_dict,server_data
 
 
 
@@ -162,33 +168,23 @@ def get_train_set():
         transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5)),  # Normalize
     ])
 
-    # Load CIFAR-10 training dataset
-    if data_set_selected == DataSet.CIFAR100:
-        raise Exception("did not handle CIFAR100 yet")
-    if data_set_selected == DataSet.CIFAR10:
-        train_set = torchvision.datasets.CIFAR10(root='./data', train=True, download=True, transform=transform)
-        data_by_classification_dict = get_data_by_classification(train_set)
-        selected_classes_dict = get_selected_classes()
-        clients_data_dict, server_data_dict,all_data = get_split_between_clients(data_by_classification_dict,selected_classes_dict)
-        return selected_classes_dict, clients_data_dict, server_data_dict,all_data
+
+    train_set = torchvision.datasets.CIFAR10(root='./data', train=True, download=True, transform=transform)
+    data_by_classification_dict = get_data_by_classification(train_set)
+    selected_classes_list = sorted(data_by_classification_dict.keys())[:num_classes]
+    clients_data_dict, server_data = get_split_between_entities(data_by_classification_dict, selected_classes_list)
+    return selected_classes_list, clients_data_dict, server_data
 
 
 
 
 
-def get_test_set(test_set_size,selected_classes_dict):
+def get_test_set(test_set_size,selected_classes_list):
     test_transform = transforms.Compose([
         transforms.ToTensor(),
         transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5)),  # Normalize
     ])
     test_set = torchvision.datasets.CIFAR10(root='./data', train=False, download=True, transform=test_transform)
-    #print(len(test_set))
-    # Get class indices for selected_classes
-    selected_classes_list = []
-    for classes_ in selected_classes_dict.values():
-        for class_ in classes_:
-            selected_classes_list.append(class_)
-
     data_by_classification = get_data_by_classification(test_set)
     filtered_data_of_classes = []
     for class_ in selected_classes_list:
@@ -202,17 +198,43 @@ def get_test_set(test_set_size,selected_classes_dict):
     return filtered_data_of_classes
 
 
+def get_train_set_size(clients_data_dict, server_data):
+    ans = 0
+    for class_, datas in clients_data_dict.items():
+        for data_ in datas:
+           ans = ans + len(data_)
+    ans = ans+len(server_data)
+    return ans
+
+
+def print_data_for_debug(clients_data_dict,server_data, test_set):
+    for class_name, datas in clients_data_dict.items():
+        sizes_ = []
+        counter = 0
+        for data_ in datas:
+            sizes_.append(len(data_))
+            check_data_targets(data_,"client"+str(counter))
+            counter += 1
+        print("avg train set size for", class_name, "is:", str(sum(sizes_) / len(sizes_)), "; total data in class",
+              sum(sizes_))
+    print("server data size:", len(server_data))
+    check_data_targets(server_data, "server" + str(counter))
+
+    print("test set size:", len(test_set))
+    check_data_targets(test_set, "test" + str(counter))
+
+
 def create_data():
-    selected_classes_dict, clients_data_dict, server_data_dict, train_set = get_train_set()
-    test_set_size = len(train_set) * percent_test_relative_to_train
+    selected_classes_list, clients_data_dict, server_data = get_train_set()
+    train_set_size = get_train_set_size(clients_data_dict, server_data)
+    test_set_size = train_set_size * percent_test_relative_to_train
+    test_set = get_test_set(test_set_size,selected_classes_list)
+    # TODO get test data by what it if familar with + what it is not familiar with.
+    test_set =transform_to_TensorDataset(test_set)
+    print_data_for_debug(clients_data_dict,server_data, test_set)
 
 
-    test_set = get_test_set(test_set_size,selected_classes_dict)
-
-    print("train set size:",len(train_set))
-    print("test set size:",len(test_set))
-
-    return clients_data_dict, server_data_dict, test_set
+    return clients_data_dict, server_data, test_set
 
 #### ----------------- SPLIT DATA BETWEEN SERVER AND CLIENTS ----------------- ####
 
@@ -252,8 +274,9 @@ def create_clients(client_data_dict,server_data_dict,test_set):
     for class_, data_list in client_data_dict.items():
         for data_ in data_list:
             ids_list.append(id_)
-            id_ = id_+1
             ans.append(Client(id_ =id_,client_data = data_,global_data=server_data_dict,test_data =test_set,class_ = class_ ))
+            id_ = id_+1
+
     return ans,ids_list
 
 
