@@ -116,8 +116,8 @@ class LearningEntity(ABC):
 
     def iterate(self,t):
         #self.set_weights()
-        torch.manual_seed(42)
-        torch.cuda.manual_seed(42)
+        torch.manual_seed(self.num+t*17)
+        torch.cuda.manual_seed(self.num+t*17)
         self.iteration_context(t)
         if isinstance(self,Client) or (isinstance(self,Server) and with_server_net):
             self.loss_measures[t]=self.evaluate_test_loss()
@@ -339,6 +339,7 @@ class LearningEntity(ABC):
 class Client(LearningEntity):
     def __init__(self, id_, client_data, global_data,test_data,class_):
         LearningEntity.__init__(self,id_,global_data,test_data)
+        self.num = (self.id_+1)*17
         self.local_data = client_data
         self.class_ = class_
         self.epoch_count = 0
@@ -405,6 +406,8 @@ class Client(LearningEntity):
 class Server(LearningEntity):
     def __init__(self,id_,global_data,test_data, clients_ids):
         LearningEntity.__init__(self, id_,global_data,test_data)
+        self.num = (self.id_+1000)*17
+
         self.received_pseudo_labels = {}
         self.clients_ids = clients_ids
         self.reset_clients_received_pl()

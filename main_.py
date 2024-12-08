@@ -75,7 +75,7 @@ if __name__ == '__main__':
         server.iterate(t)
         for c in clients:
             c.pseudo_label_received = server.pseudo_label_to_send
-        #create_pickle(clients,server)
+        create_pickle(clients,server)
 
 
 
