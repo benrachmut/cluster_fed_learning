@@ -124,7 +124,7 @@ class LearningEntity(ABC):
     def iteration_context(self,t):
         pass
 
-    def train(self, mean_pseudo_labels):
+    def train__(self, mean_pseudo_labels):
         print(f"*** {self.__str__()} train ***")
 
         #if self.weights is None:
@@ -178,11 +178,11 @@ class LearningEntity(ABC):
             print(f"Epoch [{epoch + 1}/{epochs_num_input}], Loss: {epoch_loss / len(server_loader):.4f}")
             #self.weights = self.model.state_dict()
 
-    def train_old(self,mean_pseudo_labels, data_):
+    def train(self,mean_pseudo_labels):
 
 
         print(f"*** {self.__str__()} train ***")
-        server_loader = DataLoader(data_, batch_size=batch_size, shuffle=False, num_workers=4,
+        server_loader = DataLoader(self.global_data, batch_size=batch_size, shuffle=False, num_workers=4,
                                    drop_last=True)
 
         self.model.train()
@@ -339,7 +339,7 @@ class Client(LearningEntity):
         self.class_ = class_
         self.epoch_count = 0
         self.model = get_client_model()
-        self.model.apply(self.initialize_weights)
+        #self.model.apply(self.initialize_weights)
 
         self.weights = None
         self.global_data =global_data
@@ -351,6 +351,7 @@ class Client(LearningEntity):
             train_loss = self.train(self.pseudo_label_received)
         train_loss = self.fine_tune()
         self.pseudo_label_to_send = self.evaluate()
+        print()
         #test_loss = self.evaluate_test_loss()
 
     def __str__(self):
@@ -420,7 +421,7 @@ class Server(LearningEntity):
         if with_server_net:
             mean_pseudo_labels = self.get_mean_pseudo_labels()  # #
             self.model = get_server_model()
-            self.model.apply(self.initialize_weights)
+            #self.model.apply(self.initialize_weights)
 
             self.train(mean_pseudo_labels)
             self.pseudo_label_to_send = self.evaluate()
@@ -428,7 +429,7 @@ class Server(LearningEntity):
 
         else:
             self.pseudo_label_to_send = self.get_mean_pseudo_labels()
-
+        print()
         self.reset_clients_received_pl()
 
 

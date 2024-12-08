@@ -18,8 +18,8 @@ mix_percentage = 0.2
 seed_num = 1
 
 with_server_net = False
-epochs_num_input = 2
-iterations = 20
+epochs_num_input = 10
+iterations = 50
 server_split_ratio = 0.2
 batch_size = 32
 learning_rate = 0.001
@@ -27,15 +27,12 @@ learning_rate = 0.001
 #----------------
 
 num_classes = 2
-identical_clients = 1
+identical_clients = 2
 
 num_clients = num_classes*identical_clients
 #----------------
-
-
-
 num_clusters = 1
-percent_train_data_use = 0.2
+percent_train_data_use = 1
 percent_test_relative_to_train = 1
 server_net_type = NetType.VGG
 client_net_type = NetType.ALEXNET
