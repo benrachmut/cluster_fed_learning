@@ -1,4 +1,5 @@
 import copy
+
 from torch.utils.data import DataLoader, ConcatDataset, TensorDataset
 from entities import *
 from collections import defaultdict
@@ -79,9 +80,12 @@ def complete_client_data(clients_data_dict, data_to_mix):
         dict: Updated clients_data_dict with completed data.
     """
     ans={}
+    counter = 0
     for class_name, client_lists in clients_data_dict.items():
+        counter = counter+1
         ans[class_name] = []
         for client_list in client_lists:
+            counter = counter + 1
 
             other_classes = list(data_to_mix.keys())
             if class_name in other_classes:
@@ -94,7 +98,8 @@ def complete_client_data(clients_data_dict, data_to_mix):
             new_subset = []
             for image in client_list:new_subset.append(image)
             for image in other_data_selected: new_subset.append(image)
-
+            rnd.seed(counter*17)
+            rnd.shuffle(new_subset)
             new_td = transform_to_TensorDataset(new_subset)
             ans[class_name].append(new_td)
 
@@ -148,6 +153,8 @@ def get_split_between_entities(data_by_classification_dict, selected_classes):
         clients_data_dict[class_target] = client_data_per_class
         server_data_dict[class_target] = server_data_per_class
     server_data = create_server_data(server_data_dict)
+    rnd.seed(42)
+    rnd.shuffle(server_data)
     server_data = transform_to_TensorDataset(server_data)
     clients_data_dict, data_to_mix = get_split_train_client_data(clients_data_dict)
     clients_data_dict = complete_client_data(clients_data_dict, data_to_mix)

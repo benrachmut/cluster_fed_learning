@@ -97,7 +97,9 @@ class LearningEntity(ABC):
         self.model=None
         self.weights = None
         self.loss_measures = {}
-        self.accuracy_measures = {}
+        self.accuracy_test_measures = {}
+        self.accuracy_pl_measures= {}
+
 
     def initialize_weights(self, layer):
         """Initialize weights for the model layers."""
@@ -114,11 +116,13 @@ class LearningEntity(ABC):
 
     def iterate(self,t):
         #self.set_weights()
+        torch.manual_seed(42)
+        torch.cuda.manual_seed(42)
         self.iteration_context(t)
         if isinstance(self,Client) or (isinstance(self,Server) and with_server_net):
             self.loss_measures[t]=self.evaluate_test_loss()
-            self.accuracy_measures[t]=self.evaluate_accuracy()
-
+            self.accuracy_test_measures[t]=self.evaluate_accuracy(self.test_set)
+            self.accuracy_pl_measures[t]=self.evaluate_accuracy(self.global_data)
 
     @abstractmethod
     def iteration_context(self,t):
@@ -269,7 +273,7 @@ class LearningEntity(ABC):
 
         return all_probs
 
-    def evaluate_accuracy(self):
+    def evaluate_accuracy(self,data_):
         """
            Evaluate the accuracy of the model on the given test dataset.
 
@@ -286,7 +290,7 @@ class LearningEntity(ABC):
         correct = 0  # To count the correct predictions
         total = 0  # To count the total predictions
 
-        test_loader = DataLoader(self.test_set, batch_size=batch_size, shuffle=False)
+        test_loader = DataLoader(data_, batch_size=batch_size, shuffle=False)
 
         with torch.no_grad():  # No need to track gradients during evaluation
             for inputs, targets in test_loader:

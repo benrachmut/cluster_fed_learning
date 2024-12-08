@@ -11,9 +11,10 @@ from entities import *
 
 
 class RecordData:
-    def __init__(self,loss_measures,accuracy_measures):
+    def __init__(self,loss_measures,accuracy_measures,accuracy_pl_measures):
         self.loss_measures = loss_measures
-        self.accuracy_measures = accuracy_measures
+        self.accuracy_pl_measures = accuracy_pl_measures
+        self.accuracy_test_measures = accuracy_measures
         self.mix_percentage = mix_percentage
         self.seed_num= seed_num
         self.epochs_num_input= epochs_num_input
@@ -34,13 +35,18 @@ class RecordData:
 
 def create_record_data(clients, server):
     loss_measures = {}
-    accuracy_measures = {}
+    accuracy_test_measures = {}
+    accuracy_pl_measures = {}
+
     for client in clients:
         loss_measures[client.id_]=client.loss_measures
-        accuracy_measures[client.id_]=client.accuracy_measures
+        accuracy_test_measures[client.id_]=client.accuracy_test_measures
+        accuracy_pl_measures[client.id_]=client.accuracy_pl_measures
     loss_measures[server.id_] = server.loss_measures
-    accuracy_measures[server.id_] = server.accuracy_measures
-    return RecordData(loss_measures,accuracy_measures)
+    accuracy_test_measures[server.id_] = server.accuracy_test_measures
+    accuracy_pl_measures[server.id_] = server.accuracy_pl_measures
+
+    return RecordData(loss_measures,accuracy_test_measures,accuracy_pl_measures)
 
 
 def create_pickle(clients, server):
@@ -61,12 +67,15 @@ if __name__ == '__main__':
 
     for t in range(iterations):
         print("----------------------------iter number:"+str(t))
-        for c in clients: c.iterate(t)
+        for c in clients:
+            c.iterate(t)
+            print()
         for c in clients:
             server.receive_single_pseudo_label(c.id_,c.pseudo_label_to_send)
         server.iterate(t)
-        for c in clients: c.pseudo_label_received = server.pseudo_label_to_send
-        create_pickle(clients,server)
+        for c in clients:
+            c.pseudo_label_received = server.pseudo_label_to_send
+        #create_pickle(clients,server)
 
 
 
