@@ -23,6 +23,7 @@ class RecordData:
         self.num_classes=num_classes
         self.identical_clients =identical_clients
         self.num_clusters= num_clusters
+        self.with_server_net = with_server_net
         self.summary = (
             f"num_clusters_{num_clusters}_"
             f"Mix_Percentage_{mix_percentage}_"
@@ -31,6 +32,7 @@ class RecordData:
             f"Server_Split_Ratio_{server_split_ratio}_"
             f"Num_Classes_{num_classes}_"
             f"Identical_Clients_{identical_clients}"
+            f"with_server_net{with_server_net}"
         )
 
 def create_record_data(clients, server):

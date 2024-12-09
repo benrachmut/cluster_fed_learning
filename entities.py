@@ -406,7 +406,7 @@ class Client(LearningEntity):
 class Server(LearningEntity):
     def __init__(self,id_,global_data,test_data, clients_ids):
         LearningEntity.__init__(self, id_,global_data,test_data)
-        self.num = (self.id_+1000)*17
+        self.num = (1000)*17
 
         self.received_pseudo_labels = {}
         self.clients_ids = clients_ids
