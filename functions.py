@@ -1,6 +1,9 @@
 import copy
 
-from torch.utils.data import DataLoader, ConcatDataset, TensorDataset
+import pandas as pd
+from torch.utils.data import DataLoader, ConcatDataset, TensorDataset, random_split
+from torchvision.transforms import transforms
+
 from entities import *
 from collections import defaultdict
 import random as rnd
@@ -44,60 +47,62 @@ def get_split_train_client_data(clients_data_dict):
     Returns:
         dict: New dictionary with the same structure but containing the reduced data.
     """
-    reduced_data_dict = {}
+    data_to_mix = []
     clients_original_data_dict = {}
     for class_name, image_groups in clients_data_dict.items():
         reduced_image_groups = []
         clients_original_image_group = []
         for group in image_groups:
             # Calculate the number of items to include based on the percentage
-            num_images_to_include = int(len(group) * mix_percentage)
-            images_left = int(len(group) * (1-mix_percentage))
+            num_images_to_include = int(len(group) * experiment_config.mix_percentage)
+            images_left = int(len(group) * (1-experiment_config.mix_percentage))
             split_sizes = [images_left,num_images_to_include]
             splits = random_split(group, split_sizes)
             clients_original_image_group.append(splits[0])
-            reduced_image_groups.append(splits[1])
+            for image_ in splits[1]:
+                reduced_image_groups.append(image_)
 
         clients_original_data_dict[class_name] = clients_original_image_group
-        reduced_data_dict[class_name] = reduced_image_groups
+        data_to_mix.extend(reduced_image_groups)
+        rnd.seed(17)
+        rnd.shuffle(data_to_mix)
+    return clients_original_data_dict,data_to_mix
 
-    return clients_original_data_dict,reduced_data_dict
 
 
-
-def complete_client_data(clients_data_dict, data_to_mix):
-    """
-    Completes each client's data in clients_data_dict to the target size
-    using data from split_train_client_data, ensuring the additional data
-    comes from different classes.
-
-    Args:
-        clients_data_dict (dict): Original client data, with keys as class names and values as lists of image lists.
-        split_train_client_data (dict): Additional data to use for completion.
-        target_size (int): Desired size for each client's list.
-
-    Returns:
-        dict: Updated clients_data_dict with completed data.
-    """
+def complete_client_data(clients_data_dict, data_to_mix,data_size_per_client):
     ans={}
     counter = 0
     for class_name, client_lists in clients_data_dict.items():
-        counter = counter+1
         ans[class_name] = []
         for client_list in client_lists:
-            counter = counter + 1
-
-            other_classes = list(data_to_mix.keys())
-            if class_name in other_classes:
-                other_classes.remove(class_name)
-            other_class_selected = rnd.choice(other_classes)
-
-            other_data_selected = data_to_mix[other_class_selected].pop(0)
-            if len(data_to_mix[other_class_selected])==0:
-                del data_to_mix[other_class_selected]
+            counter = +1
             new_subset = []
-            for image in client_list:new_subset.append(image)
-            for image in other_data_selected: new_subset.append(image)
+
+            new_data_to_mix = []
+
+
+            for image in client_list:
+                new_subset.append(image)
+
+            for image in data_to_mix:
+                if len(new_subset) < data_size_per_client and image[1] != class_name:
+                    new_subset.append(image)
+                else:
+                    new_data_to_mix.append(image)
+            data_to_mix = new_data_to_mix
+
+            #other_classes = list(data_to_mix.keys())
+            #if class_name in other_classes:
+                #other_classes.remove(class_name)
+            #other_class_selected = rnd.choice(other_classes)
+
+            #other_data_selected = data_to_mix[other_class_selected].pop(0)
+            #if len(data_to_mix[other_class_selected])==0:
+            #    del data_to_mix[other_class_selected]
+
+            #for image in other_data_selected:
+            #    new_subset.append(image)
             rnd.seed(counter*17)
             rnd.shuffle(new_subset)
             new_td = transform_to_TensorDataset(new_subset)
@@ -141,15 +146,20 @@ def transform_to_TensorDataset(data_):
     # Step 3: Create a TensorDataset from the images and targets
     return TensorDataset(images_tensor, targets_tensor)
 
+
+
+
+
 def get_split_between_entities(data_by_classification_dict, selected_classes):
     server_data_dict = {}
     clients_data_dict = {}
     for class_target in selected_classes:
         data_of_class = data_by_classification_dict[class_target]
         train_set_size = len(data_of_class)
-        size_use = int(percent_train_data_use * train_set_size)
+        size_use = int(experiment_config.percent_train_data_use * train_set_size)
         data_of_class = cut_data(data_of_class, size_use)
         client_data_per_class, server_data_per_class = split_clients_server_data(data_of_class)
+        data_size_per_client = len(client_data_per_class[0])
         clients_data_dict[class_target] = client_data_per_class
         server_data_dict[class_target] = server_data_per_class
     server_data = create_server_data(server_data_dict)
@@ -157,7 +167,7 @@ def get_split_between_entities(data_by_classification_dict, selected_classes):
     rnd.shuffle(server_data)
     server_data = transform_to_TensorDataset(server_data)
     clients_data_dict, data_to_mix = get_split_train_client_data(clients_data_dict)
-    clients_data_dict = complete_client_data(clients_data_dict, data_to_mix)
+    clients_data_dict = complete_client_data(clients_data_dict, data_to_mix,data_size_per_client)
 
 
 
@@ -165,6 +175,47 @@ def get_split_between_entities(data_by_classification_dict, selected_classes):
     return clients_data_dict,server_data
 
 
+
+
+def split_clients_server_data_IID(train_set,server_split_ratio):
+    """
+        Splits the input training dataset into subsets for multiple clients and the server.
+
+        Args:
+        - train_set: The full training dataset to be split.
+
+        Returns:
+        - client_data_sets: A list of datasets for each client.
+        - server_data: A dataset for the server.
+
+        The function dynamically allocates the training data based on the number of clients and a specified split ratio for the server.
+        """
+
+    total_client_data_size = int((1-server_split_ratio) * len(train_set))
+    server_data_size = len(train_set) - total_client_data_size
+    client_data_size = total_client_data_size // experiment_config.num_clients  # Each client gets an equal share
+    split_sizes = [client_data_size] * experiment_config.num_clients  # List of client dataset sizes
+    split_sizes.append(server_data_size)  # Add the remaining data for the server
+    seed = 42
+    torch.manual_seed(seed)
+    splits = random_split(train_set, split_sizes)
+    client_data_sets = splits[:-1]  # All client datasets
+    server_data = splits[-1]
+
+    return client_data_sets, server_data
+
+
+def change_format_of_clients_data_dict(client_data_sets):
+    clients_data_dict = {}
+    counter = 0
+
+    for single_set in client_data_sets:
+        image_list = []
+        for set_ in single_set:
+            image_list.append(set_)
+        clients_data_dict[counter] = [transform_to_TensorDataset(image_list)]
+        counter += 1
+    return clients_data_dict
 
 
 def get_train_set():
@@ -178,8 +229,16 @@ def get_train_set():
 
     train_set = torchvision.datasets.CIFAR10(root='./data', train=True, download=True, transform=transform)
     data_by_classification_dict = get_data_by_classification(train_set)
-    selected_classes_list = sorted(data_by_classification_dict.keys())[:num_classes]
-    clients_data_dict, server_data = get_split_between_entities(data_by_classification_dict, selected_classes_list)
+    selected_classes_list = sorted(data_by_classification_dict.keys())[:experiment_config.num_classes]
+
+    if experiment_config.mix_percentage == 1:
+        client_data_sets, server_data = split_clients_server_data_IID(train_set, experiment_config.server_split_ratio)
+
+        clients_data_dict = change_format_of_clients_data_dict(client_data_sets)
+        server_data = transform_to_TensorDataset(server_data)
+
+    else:
+        clients_data_dict, server_data = get_split_between_entities(data_by_classification_dict, selected_classes_list)
     return selected_classes_list, clients_data_dict, server_data
 
 
@@ -234,11 +293,11 @@ def print_data_for_debug(clients_data_dict,server_data, test_set):
 def create_data():
     selected_classes_list, clients_data_dict, server_data = get_train_set()
     train_set_size = get_train_set_size(clients_data_dict, server_data)
-    test_set_size = train_set_size * percent_test_relative_to_train
+    test_set_size = train_set_size * experiment_config.percent_test_relative_to_train
     test_set = get_test_set(test_set_size,selected_classes_list)
     # TODO get test data by what it if familar with + what it is not familiar with.
     test_set =transform_to_TensorDataset(test_set)
-    print_data_for_debug(clients_data_dict,server_data, test_set)
+   # print_data_for_debug(clients_data_dict,server_data, test_set)
 
 
     return clients_data_dict, server_data, test_set
@@ -259,10 +318,10 @@ def split_clients_server_data(train_set):
         The function dynamically allocates the training data based on the number of clients and a specified split ratio for the server.
         """
 
-    total_client_data_size = int((1-server_split_ratio) * len(train_set))
+    total_client_data_size = int((1-experiment_config.server_split_ratio) * len(train_set))
     server_data_size = len(train_set) - total_client_data_size
-    client_data_size = total_client_data_size // identical_clients  # Each client gets an equal share
-    split_sizes = [client_data_size] * identical_clients  # List of client dataset sizes
+    client_data_size = total_client_data_size // experiment_config.identical_clients  # Each client gets an equal share
+    split_sizes = [client_data_size] * experiment_config.identical_clients  # List of client dataset sizes
     split_sizes.append(server_data_size)  # Add the remaining data for the server
     splits = random_split(train_set, split_sizes)
     client_data_sets = splits[:-1]  # All client datasets
@@ -278,11 +337,14 @@ def create_clients(client_data_dict,server_data_dict,test_set):
     ans = []
     ids_list = []
     id_ = 0
+
+
     for class_, data_list in client_data_dict.items():
         for data_ in data_list:
             ids_list.append(id_)
             ans.append(Client(id_ =id_,client_data = data_,global_data=server_data_dict,test_data =test_set,class_ = class_ ))
             id_ = id_+1
+
 
     return ans,ids_list
 
@@ -291,7 +353,7 @@ def create_mean_df(clients, file_name):
     # List to hold the results for each iteration
     mean_results = []
 
-    for t in range(iterations):
+    for t in range(experiment_config.iterations):
         # Gather test and train losses for the current iteration from all clients
         test_losses = []
         train_losses = []

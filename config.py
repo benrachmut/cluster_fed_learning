@@ -13,88 +13,158 @@ class DataSet(Enum):
     CIFAR10 = "CIFAR10"
 
 
-data_set_selected = DataSet.CIFAR10
-mix_percentage = 0.2
-seed_num = 1
+class DataType(Enum):
+    IID = 1
+    NonIID = 2
 
-with_server_net = False
-epochs_num_input = 10
-iterations = 50
-server_split_ratio = 0.2
-batch_size = 32
-learning_rate = 0.001
+class NetsType(Enum):
+    C_alex_S_vgg = 1
+    C_alex_S_alex = 2
+    C_alex_S_None = 3
 
-#----------------
-
-num_classes = 2
-identical_clients = 2
-
-num_clients = num_classes*identical_clients
-#----------------
-num_clusters = 1
-percent_train_data_use = 1
-percent_test_relative_to_train = 1
-server_net_type = NetType.VGG
-client_net_type = NetType.ALEXNET
+class ExpType(Enum):
+    full= 1
+    short=2
+    #IID_diff_nets = 1
+    #NonIID_diff_nets = 2
+    #IID_same_nets = 3
+    #NonIID_same_nets = 4
+    #IID_no_net = 5
+    #NonIID_no_net = 6
+    #short = 7
 
 
-summary = (
-    f"num_clusters_{num_clusters}_"
-    f"Mix_Percentage_{mix_percentage}_"
-    f"Seed_Num_{seed_num}_"
-    f"With_Server_Net_{with_server_net}_"
-    f"Epochs_{epochs_num_input}_"
-    f"Iterations_{iterations}_"
-    f"Server_Split_Ratio_{server_split_ratio}_"
-    f"Num_Classes_{num_classes}_"
-    f"Identical_Clients_{identical_clients}"
-)
 
-#epochs_num_input_train_client = 10
-#server_epochs_num_input = 10
+class ClusterTechnique(Enum):
+    kmeans = 1
+    manual = 2
+
+class ServerLearningTechnique(Enum):
+    multi_head = 1
+    multi_models = 2
 
 
-#client_batch_size_train = 32
-#client_learning_rate_train = 0.001
+class ExperimentConfig:
+    def __init__(self):
+        self.identical_clients = None
+        self.mix_percentage = None
+        self.server_net_type = None
+        self.client_net_type = None
+        self.batch_size = None
+        self.learning_rate_train_s = None
 
-#client_batch_size_fine_tune = 32
-#client_learning_rate_fine_tune = 0.001
+        self.cluster_technique = None
+        self.server_learning_technique = None
 
-#client_batch_size_evaluate = 32
+        self.data_set_selected = DataSet.CIFAR10
+        self.num_classes = 10
 
-#server_batch_size_train = 32
-#server_learning_rate_train = 0.0001
+        self.seed_num = 1
+        self.with_weight_memory = True
+        self.with_server_net = True
+        self.epochs_num_input = 20
+        self.epochs_num_train = 10
 
-#server_batch_size_evaluate = 32
+        self.iterations = 12
+        self.server_split_ratio = 0.2
+        self.learning_rate_fine_tune_c = 0.001
+        self.learning_rate_train_c = 0.001
+        self.num_clusters = None
+
+        # ----------------
+
+        # ----------------
+
+        self.num_clients = None  # num_classes*identical_clients
+        self.percent_train_data_use = 1
+        self.percent_test_relative_to_train = 1
+
+    def update_data_type(self,data_type):
+        if data_type == DataType.IID:
+            self.mix_percentage = 1
+            self.identical_clients = 1
+            self.batch_size = 128
+            self.num_clients = 10
+
+        if data_type == DataType.NonIID:
+            self.mix_percentage = 0.2
+            self.identical_clients = 1
+            self.batch_size = 128
+            self.num_clients = self.identical_clients * self.num_classes
+
+    def update_net_type(self,net_type):
+        if net_type == NetsType.C_alex_S_alex:
+            self.client_net_type = NetType.ALEXNET
+            self.server_net_type = NetType.ALEXNET
+            self.learning_rate_train_c = 0.001
+            self.learning_rate_fine_tune_c = 0.001
+            self.learning_rate_train_s = 0.001
+            self.with_server_net = True
+
+        if net_type == NetsType.C_alex_S_vgg:
+            self.client_net_type = NetType.ALEXNET
+            self.server_net_type = NetType.VGG
+            self.learning_rate_train_c = 0.001
+            self.learning_rate_fine_tune_c = 0.001
+            self.learning_rate_train_s = 0.0001
+            self.with_server_net = True
+
+        if net_type == NetsType.C_alex_S_None:
+            self.client_net_type = NetType.VGG
+            self.server_net_type = ""
+            self.learning_rate_train_c = None
+            self.learning_rate_fine_tune_c = 0.001
+            self.learning_rate_train_s = 0.001
+            self.with_server_net = False
 
 
-#def get_CIFAR10_superclass_dict():
-#    dict_ = {"animal":['bird', 'cat', 'deer', 'dog', 'frog', 'horse'],
-#             "vehicle":['airplane', 'automobile','ship', 'truck']
-#             }
-#    return dict_
+    def update_type_of_experiment(self,exp_type):
 
-def get_meta_data():
-    ans = {
-        'c_amount':[num_clients],
-        'seed':[seed_num],
-        'server_data': [server_split_ratio],
-        'is_server_net': [with_server_net],  # You might need to pass or save client_split_ratio
-        'epochs': [epochs_num_input],
-        'percent_train_data': [percent_train_data_use]
-    }
-    return ans
 
-def get_meta_data_text_keys():
-    ans = []
-    for k in get_meta_data().keys():
-        ans.append(k)
-    return ans
 
-def file_name():
-    ans = ""
-    for k,v in get_meta_data().items():
-        ans = ans+k+"_"+str(v[0])+"__"
-    return ans
+
+        if exp_type == ExpType.short:
+            self.num_classes = 10
+            self.with_server_net = True
+            #net_type = NetsType.C_alex_S_alex
+            #data_type = DataType.NonIID
+            ############
+            self.epochs_num_input = 2 #20
+            self.epochs_num_train = 2 #10
+            self.iterations = 2
+            self.percent_train_data_use = 0.2
+            self.percent_test_relative_to_train = 0.2
+
+        #######-------------------------------------
+        #self.update_data_type(data_type)
+
+        #######-------------------------------------
+        #self.update_net_type(net_type)
+
+        ##############------------------------------------------------
+
+        if exp_type == ExpType.full:
+            self.epochs_num_input = 20
+            self.epochs_num_train = 10
+            self.iterations = 11
+            self.percent_train_data_use = 1
+            self.percent_test_relative_to_train = 1
+
+
+
+
+
+
+
+
+
+
+
+
+experiment_config = ExperimentConfig()
+
+
+
+
 
 
