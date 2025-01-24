@@ -102,7 +102,7 @@ if __name__ == '__main__':
 
     nets_types_list  = [NetsType.C_alex_S_vgg]
     cluster_technique_list = list(ClusterTechnique)
-    server_learning_technique_list = list(ServerLearningTechnique)
+    server_feedback_technique_list = list(ServerFeedbackTechnique)
     num_cluster_list = [3]
 
 
@@ -120,7 +120,7 @@ if __name__ == '__main__':
                 for cluster_technique in cluster_technique_list:
                     experiment_config.cluster_technique = cluster_technique
                     data_to_pickle[num_cluster][net_type.name][cluster_technique.name] = {}
-                    for server_learning_technique in server_learning_technique_list:
+                    for server_learning_technique in server_feedback_technique_list:
                         experiment_config.server_learning_technique = server_learning_technique
                         experiment_config.update_type_of_experiment(exp_type)
                         torch.manual_seed(experiment_config.seed_num)

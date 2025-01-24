@@ -39,9 +39,9 @@ class ClusterTechnique(Enum):
     kmeans = 1
     manual = 2
 
-class ServerLearningTechnique(Enum):
-    multi_head = 1
-    multi_models = 2
+class ServerFeedbackTechnique(Enum):
+    similar_to_client = 1
+    similar_to_cluster = 2
 
 
 class ExperimentConfig:
