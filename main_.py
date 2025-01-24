@@ -122,7 +122,7 @@ if __name__ == '__main__':
                     data_to_pickle[num_cluster][net_type.name][cluster_technique.name] = {}
                     for server_feedback_technique in server_feedback_technique_list:
                         experiment_config.server_feedback_technique = server_feedback_technique
-                        experiment_config.update_typ_of_experiment(exp_type)
+                        experiment_config.update_type_of_experiment(exp_type)
                         torch.manual_seed(experiment_config.seed_num)
                         clients,clients_ids = create_clients(clients_data_dict,server_data,test_set)
                         server = Server(id_="server",global_data=server_data,test_data = test_set,clients_ids = clients_ids)
@@ -139,7 +139,7 @@ if __name__ == '__main__':
                                 c.pseudo_label_received = server.pseudo_label_to_send[c.id_]
                             rd = create_record_data(clients, server)
                             data_to_pickle[num_cluster][net_type.name][cluster_technique.name][server_feedback_technique.name]  = rd
-                            pik_name = net_type.name+data_type.name+ exp_type.name+"_"+str(num_cluster)+"_"+cluster_technique.name+"_"+server_learning_technique.name
+                            pik_name = net_type.name+data_type.name+ exp_type.name+"_"+str(num_cluster)+"_"+cluster_technique.name+"_"+server_feedback_technique.name
                             pickle_file_path = pik_name +".pkl"
 
                             with open(pickle_file_path, "wb") as file:

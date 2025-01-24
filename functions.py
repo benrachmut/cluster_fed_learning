@@ -486,14 +486,11 @@ def split_clients_server_data(train_set):
 def create_clients(client_data_dict,server_data_dict,test_set):
     ans = []
     ids_list = []
-    id_ = 0
 
 
-    for class_, data_list in client_data_dict.items():
-        for data_ in data_list:
-            ids_list.append(id_)
-            ans.append(Client(id_ =id_,client_data = data_,global_data=server_data_dict,test_data =test_set,class_ = class_ ))
-            id_ = id_+1
+    for id_, data_ in client_data_dict.items():
+        ids_list.append(id_)
+        ans.append(Client(id_ =id_,client_data = data_,global_data=server_data_dict,test_data =test_set))
 
 
     return ans,ids_list

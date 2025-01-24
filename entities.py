@@ -306,11 +306,10 @@ class LearningEntity(ABC):
 
 
 class Client(LearningEntity):
-    def __init__(self, id_, client_data, global_data,test_data,class_):
+    def __init__(self, id_, client_data, global_data,test_data):
         LearningEntity.__init__(self,id_,global_data,test_data)
         self.num = (self.id_+1)*17
         self.local_data = client_data
-        self.class_ = class_
         self.epoch_count = 0
         self.model = get_client_model()
         self.model.apply(self.initialize_weights)
