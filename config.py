@@ -54,7 +54,7 @@ class ExperimentConfig:
         self.learning_rate_train_s = None
 
         self.cluster_technique = None
-        self.server_learning_technique = None
+        self.server_feedback_technique = None
 
         self.data_set_selected = DataSet.CIFAR10
         self.num_classes = 10
@@ -88,9 +88,11 @@ class ExperimentConfig:
 
         if data_type == DataType.NonIID:
             self.mix_percentage = 0.2
-            self.identical_clients = 1
+            self.identical_clients = 2
             self.batch_size = 128
-            self.num_clients = self.identical_clients * self.num_classes
+            self.num_clients = 10
+            if self.num_clients%self.identical_clients!=0:
+                raise Exception("identical clients must be dividable by identical clients i.e., self.num_clients%self.identical_clients=0? ")
 
     def update_net_type(self,net_type):
         if net_type == NetsType.C_alex_S_alex:

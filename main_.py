@@ -109,7 +109,7 @@ if __name__ == '__main__':
     for data_type in data_types:
         data_to_pickle = {}
         experiment_config.update_data_type(data_type)
-        clients_data_dict, server_data, test_set = create_data()
+        clients_data_dict, server_data, test_set = create_data(data_type)
 
         for num_cluster in num_cluster_list:
             experiment_config.num_clusters = num_cluster
@@ -120,9 +120,9 @@ if __name__ == '__main__':
                 for cluster_technique in cluster_technique_list:
                     experiment_config.cluster_technique = cluster_technique
                     data_to_pickle[num_cluster][net_type.name][cluster_technique.name] = {}
-                    for server_learning_technique in server_feedback_technique_list:
-                        experiment_config.server_learning_technique = server_learning_technique
-                        experiment_config.update_type_of_experiment(exp_type)
+                    for server_feedback_technique in server_feedback_technique_list:
+                        experiment_config.server_feedback_technique = server_feedback_technique
+                        experiment_config.update_typ_of_experiment(exp_type)
                         torch.manual_seed(experiment_config.seed_num)
                         clients,clients_ids = create_clients(clients_data_dict,server_data,test_set)
                         server = Server(id_="server",global_data=server_data,test_data = test_set,clients_ids = clients_ids)
@@ -138,7 +138,7 @@ if __name__ == '__main__':
                             for c in clients:
                                 c.pseudo_label_received = server.pseudo_label_to_send[c.id_]
                             rd = create_record_data(clients, server)
-                            data_to_pickle[num_cluster][net_type.name][cluster_technique.name][server_learning_technique.name]  = rd
+                            data_to_pickle[num_cluster][net_type.name][cluster_technique.name][server_feedback_technique.name]  = rd
                             pik_name = net_type.name+data_type.name+ exp_type.name+"_"+str(num_cluster)+"_"+cluster_technique.name+"_"+server_learning_technique.name
                             pickle_file_path = pik_name +".pkl"
 

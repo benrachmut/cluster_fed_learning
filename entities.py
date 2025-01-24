@@ -11,7 +11,8 @@ from abc import ABC, abstractmethod
 
 # Define AlexNet for clients
 
-
+from sklearn.cluster import KMeans
+import numpy as np
 
 class AlexNet(nn.Module):
     def __init__(self, num_classes):
@@ -125,22 +126,13 @@ class LearningEntity(ABC):
 
 
         if isinstance(self,Server) and experiment_config.with_server_net:
-            #if experiment_config.server_learning_technique == ServerLearningTechnique.multi_models:
-            #    for cluster_num, model_ in self.model_per_cluster.items():
-            #        self.loss_measures[cluster_num][t] = self.evaluate_test_loss(model_)
-            #        self.accuracy_test_measures[cluster_num][t] = self.evaluate_accuracy(self.test_set,model_)
-            #        self.accuracy_pl_measures[cluster_num][t] = self.evaluate_accuracy(self.global_data,model_)
+            raise Exception("need to evaluate use backbone")
 
-            #        self.accuracy_test_measures_k_half_cluster[cluster_num][t] = self.evaluate_accuracy(self.test_set, model_,experiment_config.num_clusters//2)
-            #        self.accuracy_pl_measures_k_half_cluster[cluster_num][t] = self.evaluate_accuracy(self.global_data, model_,experiment_config.num_clusters//2)
-            #if experiment_config.server_learning_technique == ServerLearningTechnique.multi_head:
-
-
-            self.loss_measures[cluster_num][t] = #self.evaluate_test_loss(model_)
-            self.accuracy_test_measures[cluster_num][t] = #self.evaluate_accuracy(self.test_set, model_)
-            self.accuracy_pl_measures[cluster_num][t] = #self.evaluate_accuracy(self.global_data, model_)
-            self.accuracy_test_measures_k_half_cluster[cluster_num][t] = #self.evaluate_accuracy(self.test_set, model_, experiment_config.num_clusters // 2)
-            self.accuracy_pl_measures_k_half_cluster[cluster_num][t] = #self.evaluate_accuracy(self.global_data,model_,experiment_config.num_clusters // 2)
+            #self.loss_measures[cluster_num][t] = #self.evaluate_test_loss(model_)
+            #self.accuracy_test_measures[cluster_num][t] = #self.evaluate_accuracy(self.test_set, model_)
+            #self.accuracy_pl_measures[cluster_num][t] = #self.evaluate_accuracy(self.global_data, model_)
+            #self.accuracy_test_measures_k_half_cluster[cluster_num][t] = #self.evaluate_accuracy(self.test_set, model_, experiment_config.num_clusters // 2)
+            #self.accuracy_pl_measures_k_half_cluster[cluster_num][t] = #self.evaluate_accuracy(self.global_data,model_,experiment_config.num_clusters // 2)
     @abstractmethod
     def iteration_context(self,t):
         pass
@@ -442,7 +434,7 @@ class Server(LearningEntity):
 
 
 
-def iteration_context(self,t):
+    def iteration_context(self,t):
         self.current_iteration = t
         mean_pseudo_labels_per_cluster, clusters_client_id_dict = self.get_mean_pseudo_labels()  # #
 
@@ -458,8 +450,8 @@ def iteration_context(self,t):
         #            self.pseudo_label_to_send[client_id] = pseudo_labels_for_model
 
         #if experiment_config.cluster_architecture == ServerLearningTechnique.multi_head:
-        do mutli head
-        self.pseudo_label_to_send[client_id] = pseudo_labels_for_model
+        #do mutli head
+        #self.pseudo_label_to_send[client_id] = pseudo_labels_for_model
 
         self.reset_clients_received_pl()
 
@@ -471,10 +463,9 @@ def iteration_context(self,t):
         for id_ in self.clients_ids:
             self.received_pseudo_labels[id_] = None
 
-    from sklearn.cluster import KMeans
-    import numpy as np
 
-    def k_means_grouping(self ):
+
+    def k_means_grouping(self):
         """
         Groups agents into k clusters based on the similarity of their pseudo-labels,
         with memory of cluster centroids from the previous iteration.
@@ -538,7 +529,8 @@ def iteration_context(self,t):
         return ans
 
     def manual_grouping(self):
-        TODO
+        raise Exception("TODO manual grouping")
+
     def get_mean_pseudo_labels(self):
         # Stack the pseudo labels tensors into a single tensor
         mean_per_cluster = {}
