@@ -1,6 +1,7 @@
 import copy
 
 import pandas as pd
+from scipy.stats import ansari
 from torch.utils.data import TensorDataset, random_split,Subset
 from torchvision.transforms import transforms
 
@@ -49,6 +50,33 @@ def create_torch_mix_set(data_to_mix_list):
     mixed_subset = Subset(dataset, shuffled_indices)
     return mixed_subset
 
+
+
+def split_list(data, num_splits, seed=None):
+
+    if seed is not None:
+        rnd.seed(17)
+
+    # Shuffle the data
+    rnd.shuffle(data)
+
+    # Calculate sizes for splits
+    total_size = len(data)
+    split_size = total_size // num_splits
+    split_sizes = [split_size] * num_splits
+
+    # Distribute the remainder among the splits
+    for i in range(total_size % num_splits):
+        split_sizes[i] += 1
+
+    # Split the data
+    splits = []
+    start = 0
+    for size in split_sizes:
+        splits.append(data[start:start + size])
+        start += size
+
+    return splits
 def get_mix_torch(data_to_mix_list):
     all_mix_tuples = []
     for l in data_to_mix_list:
@@ -56,52 +84,115 @@ def get_mix_torch(data_to_mix_list):
             all_mix_tuples.append(image)
     rnd.seed(17)
     rnd.shuffle(all_mix_tuples)
-    return transform_to_TensorDataset(all_mix_tuples)
+    return split_list(all_mix_tuples, experiment_config.num_clients, 1357)
 
-
-def get_split_train_client_data(clients_data_dict):
-
+def get_data_to_mix_and_data_to_leave(classes_data_dict):
     data_to_mix_list = []
     clients_original_data_dict = {}
 
-    for class_name,single_tensor_set in clients_data_dict.items():
-        size_to_mix = int(len(single_tensor_set)* experiment_config.mix_percentage)
-        size_to_leave = int(len(single_tensor_set)* (1-experiment_config.mix_percentage))
-        splits = random_split(single_tensor_set, [size_to_mix,size_to_leave], generator=torch.Generator().manual_seed(42))
-        data_to_mix = splits[0]
+    for class_name, single_tensor_set in classes_data_dict.items():
+        size_to_mix = int(len(single_tensor_set) * experiment_config.mix_percentage)
+        size_to_leave = int(len(single_tensor_set) * (1 - experiment_config.mix_percentage))
+
+        torch.Generator().manual_seed(777)
+        splits = random_split(single_tensor_set, [size_to_mix, size_to_leave])
+        data_to_mix = transform_to_TensorDataset(splits[0])
         data_to_mix_list.append(data_to_mix)
-        data_to_leave = splits[1]
-        clients_original_data_dict[class_name]  = data_to_leave
+        data_to_leave = transform_to_TensorDataset(splits[1])
+        clients_original_data_dict[class_name] = data_to_leave
+    return data_to_mix_list,clients_original_data_dict
 
 
-    mix_torch = get_mix_torch(data_to_mix_list)
+def get_images_per_group_dict(group,target_original_data_dict):
+    images_per_group_dict = {}
+    for target in group:
+        t_data_set = target_original_data_dict[target]
+        i = 0
+        for image in t_data_set:
+            if i not in images_per_group_dict:
+                images_per_group_dict[i] = []
+            images_per_group_dict[i].append(image)
+            if i == len(group) - 1:
+                i = 0
+            else:
+                i = i + 1
+    ans = []
+    for v in images_per_group_dict.values():
+        ans.append(transform_to_TensorDataset(v))
+    return ans
+
+def get_mix_tensor_list(target_original_data_dict):
 
     identical_clients = experiment_config.identical_clients
     # Step 1: Get all the keys
-    keys = list(clients_data_dict.keys())
-    # Step 2: Create groups of the desired size
+
+
+    rnd.seed(19)
+    keys = list(target_original_data_dict.keys())
+    rnd.shuffle(keys)
     groups = [keys[i:i + identical_clients] for i in range(0, len(keys), identical_clients)]
 
+    list_of_torches_clients = []
+    for group in groups:
+        list_of_group = get_images_per_group_dict(group,target_original_data_dict)
+        list_of_torches_clients.extend(list_of_group)
+
+    return list_of_torches_clients
+
+def get_match_mix_clients(mix_tensor_list,clients_tensor_list):
+    ans = []
+    for i in range(len(mix_tensor_list)):
+        data_per_client_list = []
+        first_list = mix_tensor_list[i]
+        second_list = clients_tensor_list[i]
+        for image in first_list:
+            data_per_client_list.append(image)
+        for image in second_list:
+            data_per_client_list.append(image)
+
+        rnd.seed(658+17*(i+1))
+        rnd.shuffle(data_per_client_list)
+        ans.append(transform_to_TensorDataset(data_per_client_list))
+    return ans
 
 
-    for class_name, image_groups in clients_data_dict.items():
-        reduced_image_groups = []
-        clients_original_image_group = []
-        for group in image_groups:
-            # Calculate the number of items to include based on the percentage
-            num_images_to_include = int(len(group) * experiment_config.mix_percentage)
-            images_left = int(len(group) * (1-experiment_config.mix_percentage))
-            split_sizes = [images_left,num_images_to_include]
-            splits = random_split(group, split_sizes)
-            clients_original_image_group.append(splits[0])
-            for image_ in splits[1]:
-                reduced_image_groups.append(image_)
+def get_split_train_client_data(classes_data_dict):
+    data_to_mix_list,target_original_data_dict = get_data_to_mix_and_data_to_leave(classes_data_dict)
+    mix_tensor_list = get_mix_torch(data_to_mix_list)
+    clients_tensor_list = get_mix_tensor_list(target_original_data_dict)
+    if len(mix_tensor_list)!=len(clients_tensor_list):raise Exception("lists need to be same length")
+    match_mix_clients = get_match_mix_clients(mix_tensor_list,clients_tensor_list)
+    ans = {}
+    for i in range(len(match_mix_clients)):ans[i]=match_mix_clients[i]
 
-        clients_original_data_dict[class_name] = clients_original_image_group
-        data_to_mix.extend(reduced_image_groups)
-        rnd.seed(17)
-        rnd.shuffle(data_to_mix)
-    return clients_original_data_dict,data_to_mix
+
+
+    return ans
+
+
+
+
+
+
+
+    #for class_name, image_groups in clients_data_dict.items():
+    #    reduced_image_groups = []
+    #    clients_original_image_group = []
+    #    for group in image_groups:
+    #        # Calculate the number of items to include based on the percentage
+    #        num_images_to_include = int(len(group) * experiment_config.mix_percentage)
+    #        images_left = int(len(group) * (1-experiment_config.mix_percentage))
+    #        split_sizes = [images_left,num_images_to_include]
+    #        splits = random_split(group, split_sizes)
+    #        clients_original_image_group.append(splits[0])
+    #        for image_ in splits[1]:
+    #            reduced_image_groups.append(image_)
+
+     #   clients_original_data_dict[class_name] = clients_original_image_group
+     #   data_to_mix.extend(reduced_image_groups)
+     #   rnd.seed(17)
+    #    rnd.shuffle(data_to_mix)
+    #return clients_original_data_dict,data_to_mix
 
 
 
@@ -215,25 +306,17 @@ def get_server_data(server_data_dict):
     rnd.seed(42)
     rnd.shuffle(server_data)
     return transform_to_TensorDataset(server_data)
-def get_split_between_entities(data_by_classification_dict, selected_classes):
+def split_clients_server_data_Non_IID(data_by_classification_dict, selected_classes):
     server_data_dict = {}
-    clients_data_dict = {}
+    classes_data_dict = {}
     for class_target in selected_classes:
         data_of_class = cut_data_for_partial_use_of_data(class_target,data_by_classification_dict)
         client_data_per_class, server_data_per_class = split_clients_server_data(data_of_class)
-        clients_data_dict[class_target] = client_data_per_class[0]
+        classes_data_dict[class_target] = client_data_per_class
         server_data_dict[class_target] = server_data_per_class
     server_data = get_server_data(server_data_dict)
 
-    clients_data_dict, data_to_mix = get_split_train_client_data(clients_data_dict)
-
-    #clients_data_dict = create_identical_groups(clients_data_dict)
-
-    #clients_data_dict = complete_client_data(clients_data_dict, data_to_mix,data_size_per_client)
-
-
-
-
+    clients_data_dict = get_split_train_client_data(classes_data_dict)
     return clients_data_dict,server_data
 
 
@@ -264,7 +347,10 @@ def split_clients_server_data_IID(train_set,server_split_ratio):
     client_data_sets = splits[:-1]  # All client datasets
     server_data = splits[-1]
 
-    return client_data_sets, server_data
+    clients_data_dict = change_format_of_clients_data_dict(client_data_sets)
+    server_data = transform_to_TensorDataset(server_data)
+
+    return clients_data_dict, server_data
 
 
 def change_format_of_clients_data_dict(client_data_sets):
@@ -275,7 +361,7 @@ def change_format_of_clients_data_dict(client_data_sets):
         image_list = []
         for set_ in single_set:
             image_list.append(set_)
-        clients_data_dict[counter] = [transform_to_TensorDataset(image_list)]
+        clients_data_dict[counter] = transform_to_TensorDataset(image_list)
         counter += 1
     return clients_data_dict
 
@@ -294,14 +380,11 @@ def get_train_set(data_type):
     selected_classes_list = sorted(data_by_classification_dict.keys())[:experiment_config.num_classes]
 
     if data_type == DataType.IID:
-        client_data_sets, server_data = split_clients_server_data_IID(train_set, experiment_config.server_split_ratio)
-
-        clients_data_dict = change_format_of_clients_data_dict(client_data_sets)
-        server_data = transform_to_TensorDataset(server_data)
-
+        clients_data_dict, server_data = split_clients_server_data_IID(train_set, experiment_config.server_split_ratio)
 
     if data_type == DataType.NonIID:
-        clients_data_dict, server_data = get_split_between_entities(data_by_classification_dict, selected_classes_list)
+        clients_data_dict, server_data = split_clients_server_data_Non_IID(data_by_classification_dict, selected_classes_list)
+
     return selected_classes_list, clients_data_dict, server_data
 
 
@@ -381,16 +464,20 @@ def split_clients_server_data(train_set):
         The function dynamically allocates the training data based on the number of clients and a specified split ratio for the server.
         """
 
+    train_set_images = []
+    for image in train_set: train_set_images.append(image)
+
     total_client_data_size = int((1-experiment_config.server_split_ratio) * len(train_set))
     server_data_size = len(train_set) - total_client_data_size
     client_data_size = total_client_data_size #// experiment_config.identical_clients  # Each client gets an equal share
-    split_sizes = [client_data_size] #* experiment_config.identical_clients  # List of client dataset sizes
-    split_sizes.append(server_data_size)  # Add the remaining data for the server
-    splits = random_split(train_set, split_sizes)
-    client_data_sets = splits[:-1]  # All client datasets
-    server_data = splits[-1]
+    split_sizes = [client_data_size,server_data_size] #* experiment_config.identical_clients  # List of client dataset sizes
 
-    return client_data_sets, server_data
+    torch.Generator().manual_seed(999)
+    splits = random_split(train_set_images, split_sizes)
+    clients_data = transform_to_TensorDataset(splits[0])  # All client datasets
+    server_data = transform_to_TensorDataset(splits[1])
+
+    return clients_data, server_data
 
 
 
