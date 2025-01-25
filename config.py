@@ -43,9 +43,12 @@ class ServerFeedbackTechnique(Enum):
     similar_to_client = 1
     similar_to_cluster = 2
 
+class NetClusterTechnique(Enum):
+    multi_head = 1
 
 class ExperimentConfig:
     def __init__(self):
+        self.net_cluster_technique = None
         self.identical_clients = None
         self.mix_percentage = None
         self.server_net_type = None

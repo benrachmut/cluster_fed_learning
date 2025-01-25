@@ -105,6 +105,7 @@ if __name__ == '__main__':
     server_feedback_technique_list = list(ServerFeedbackTechnique)
     num_cluster_list = [3]
 
+    experiment_config.net= NetClusterTechnique.multi_head
 
     for data_type in data_types:
         data_to_pickle = {}

@@ -15,9 +15,10 @@ from sklearn.cluster import KMeans
 import numpy as np
 
 class AlexNet(nn.Module):
-    def __init__(self, num_classes):
+    def __init__(self, num_classes, num_clusters=1):
         super(AlexNet, self).__init__()
-        self.model = nn.Sequential(
+        # Define the backbone (shared layers)
+        self.backbone = nn.Sequential(
             nn.Conv2d(3, 64, kernel_size=3, stride=1, padding=1),
             nn.ReLU(),
             nn.MaxPool2d(kernel_size=2, stride=2),
@@ -40,29 +41,64 @@ class AlexNet(nn.Module):
             nn.Dropout(),
             nn.Linear(4096, 4096),
             nn.ReLU(),
-            nn.Dropout(),
-            nn.Linear(4096, num_classes)
+            nn.Dropout()
         )
 
-    def forward(self, x):
-        return self.model(x)
+        # Define multi-head layers (one head per cluster)
+        self.heads = nn.ModuleDict({
+            f"head_{i}": nn.Linear(4096, num_classes) for i in range(num_clusters)
+        })
+
+    def forward(self, x, cluster_id=None):
+        # Forward pass through the shared backbone
+        x = self.backbone(x)
+
+        if cluster_id is not None:
+            # Use the specific head corresponding to the cluster
+            x = self.heads[f"head_{cluster_id}"](x)
+        else:
+            if len(self.heads) == 1:
+                # If there's only one head, return its output directly
+                x = self.heads["head_0"](x)
+            else:
+                # Return outputs for all heads as a dictionary
+                x = {f"head_{i}": head(x) for i, head in self.heads.items()}
+
+        return x
+
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
 # Define VGG16 for server
 class VGGServer(nn.Module):
-    def __init__(self, num_classes):
+    def __init__(self, num_classes, num_clusters=1):
         super(VGGServer, self).__init__()
         self.vgg = torchvision.models.vgg16(weights=None)  # No pre-trained weights
         self.vgg.classifier[6] = nn.Linear(4096, num_classes)  # Adjust for CIFAR-10
 
-    def forward(self, x):
+        # Multi-head architecture: one head per cluster
+        self.heads = nn.ModuleDict({
+            f"head_{i}": nn.Linear(num_classes, num_classes) for i in range(num_clusters)
+        })
+
+    def forward(self, x, cluster_id=None):
         # Resize input to match VGG's expected input size
         x = nn.functional.interpolate(x, size=(224, 224), mode='bilinear', align_corners=False)
-        x = self.vgg(x)
-        return x
+        x = self.vgg(x)  # Backbone output
 
+        if cluster_id is not None:
+            # Use the specific head corresponding to the cluster
+            x = self.heads[f"head_{cluster_id}"](x)
+        else:
+            if len(self.heads) == 1:
+                # If there's only one head, return its output directly
+                x = self.heads["head_0"](x)
+            else:
+                # Return outputs for all heads as a dictionary
+                x = {f"head_{i}": head(x) for i, head in self.heads.items()}
+
+        return x
 
 def get_client_model():
     if experiment_config.client_net_type == NetType.ALEXNET:
@@ -72,10 +108,15 @@ def get_client_model():
 
 
 def get_server_model():
+    if experiment_config.net_cluster_technique== NetClusterTechnique.multi_head:
+        num_heads = experiment_config.num_clusters
+    else:
+        num_heads = 1
+
     if experiment_config.server_net_type == NetType.ALEXNET:
-        return AlexNet(num_classes=experiment_config.num_classes).to(device)
+        return AlexNet(num_classes=experiment_config.num_classes,num_clusters=num_heads).to(device)
     if experiment_config.server_net_type == NetType.VGG:
-        return VGGServer(num_classes=experiment_config.num_classes).to(device)
+        return VGGServer(num_classes=experiment_config.num_classes,num_clusters=num_heads).to(device)
 
 
 
