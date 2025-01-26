@@ -6,6 +6,7 @@ from torch import nn
 from torch.utils.data import DataLoader
 from config import *
 import torch.nn.functional as F
+from itertools import combinations
 
 from abc import ABC, abstractmethod
 
@@ -476,6 +477,8 @@ class Server(LearningEntity):
 
     def iteration_context(self,t):
         self.current_iteration = t
+
+
         mean_pseudo_labels_per_cluster, clusters_client_id_dict = self.get_mean_pseudo_labels()  # #
 
 
@@ -568,17 +571,44 @@ class Server(LearningEntity):
                 ans[cluster_id].append(self.received_pseudo_labels[client_id])
         return ans
 
-    def manual_grouping(self):
-        raise Exception("TODO manual grouping")
+    def calc_L2(self,pair):
+        first_pl = self.received_pseudo_labels[pair[0]]
+        second_pl = self.received_pseudo_labels[pair[1]]
+        difference = first_pl - second_pl  # Element-wise difference
+        squared_difference = difference ** 2  # Square the differences
+        sum_squared = torch.sum(squared_difference)  # Sum of squared differences
+        return torch.sqrt(sum_squared)  # Take the square root
 
+    def get_L2_of_all_clients(self):
+
+        # Example list of client IDs
+        pairs = list(combinations(self.clients_ids, 2))
+        ans_dict = {}
+        for pair in pairs:
+            ans_dict[pair] = self.calc_L2(pair)
+        return ans_dict
+
+    def manual_grouping(self):
+        clusters_client_id_dict = {}
+        if experiment_config.num_clusters == 1:
+            clusters_client_id_dict[0]=self.clients_ids
+        else:
+            cluster_counter = experiment_config.num_clusters
+            L2_of_all_clients = self.get_L2_of_all_clients()
+            max_pair = max(L2_of_all_clients.items(), key=lambda item: item[1])
+            clusters_centers_dict={}
+            #stop here, need to take pl of pair then if cluster counter is not zero add furthest and add, when done with center add who is left, dont forget to update L2_of_all_clients
+            raise Exception("stop here")
     def get_mean_pseudo_labels(self):
         # Stack the pseudo labels tensors into a single tensor
         mean_per_cluster = {}
+
+
         if experiment_config.cluster_technique == ClusterTechnique.kmeans:
             clusters_client_id_dict = self.k_means_grouping()
 
         if experiment_config.cluster_technique == ClusterTechnique.manual:
-            clusters_client_id_dict = self.manual_grouping(experiment_config.num_clusters)
+            clusters_client_id_dict = self.manual_grouping()
 
         cluster_mean_pseudo_labels_dict = self.get_cluster_mean_pseudo_labels_dict(clusters_client_id_dict)
 

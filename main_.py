@@ -101,7 +101,7 @@ if __name__ == '__main__':
     data_types =[DataType.NonIID]
 
     nets_types_list  = [NetsType.C_alex_S_vgg]
-    cluster_technique_list = list(ClusterTechnique)
+    cluster_technique_list = [ClusterTechnique.manual]
     server_feedback_technique_list = list(ServerFeedbackTechnique)
     num_cluster_list = [3]
 
