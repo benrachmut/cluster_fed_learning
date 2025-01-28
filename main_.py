@@ -66,20 +66,21 @@ def create_record_data(clients, server:Server):
     server_accuracy_pl_measures = {}
     server_accuracy_test_measures_k_half_cluster = {}
     server_accuracy_pl_measures_k_half_cluster = {}
-    for server_cluster_id,model in server.model_per_cluster.items():
-        server_loss_measures[server_cluster_id] = server.loss_measures[server_cluster_id]
-        server_accuracy_test_measures[server_cluster_id] = server.accuracy_test_measures[server_cluster_id]
-        server_accuracy_pl_measures[server_cluster_id] = server.accuracy_pl_measures[server_cluster_id]
-        server_accuracy_test_measures_k_half_cluster[server_cluster_id] = server.accuracy_test_measures_k_half_cluster[server_cluster_id]
-        server_accuracy_pl_measures_k_half_cluster[server_cluster_id] = server.accuracy_pl_measures_k_half_cluster[server_cluster_id]
+    if experiment_config.server_feedback_technique == ServerFeedbackTechnique.similar_to_cluster and experiment_config.net_cluster_technique== NetClusterTechnique.multi_head:
+        for server_cluster_id in range(experiment_config.num_clusters):
+            server_loss_measures[server_cluster_id] = server.loss_measures[server_cluster_id]
+            server_accuracy_test_measures[server_cluster_id] = server.accuracy_test_measures[server_cluster_id]
+            server_accuracy_pl_measures[server_cluster_id] = server.accuracy_pl_measures[server_cluster_id]
+            server_accuracy_test_measures_k_half_cluster[server_cluster_id] = server.accuracy_test_measures_k_half_cluster[server_cluster_id]
+            server_accuracy_pl_measures_k_half_cluster[server_cluster_id] = server.accuracy_pl_measures_k_half_cluster[server_cluster_id]
 
 
 
-    records_dict["server"]["loss"] = server_loss_measures
-    records_dict["server"]["accuracy_test"] = server_accuracy_test_measures
-    records_dict["server"]["accuracy_test_server_data"] = server_accuracy_pl_measures
-    records_dict["server"]["accuracy_test(k=c/2)"] = server_accuracy_test_measures_k_half_cluster
-    records_dict["server"]["accuracy_test_server_data(k=c/2)"] = server_accuracy_pl_measures_k_half_cluster
+        records_dict["server"]["loss"] = server_loss_measures
+        records_dict["server"]["accuracy_test"] = server_accuracy_test_measures
+        records_dict["server"]["accuracy_test_server_data"] = server_accuracy_pl_measures
+        records_dict["server"]["accuracy_test(k=c/2)"] = server_accuracy_test_measures_k_half_cluster
+        records_dict["server"]["accuracy_test_server_data(k=c/2)"] = server_accuracy_pl_measures_k_half_cluster
 
 
     return RecordData(records_dict)
@@ -102,18 +103,24 @@ if __name__ == '__main__':
 
     nets_types_list  = [NetsType.C_alex_S_vgg]
     cluster_technique_list = [ClusterTechnique.manual]
-    server_feedback_technique_list = list(ServerFeedbackTechnique)
-    num_cluster_list = [3]
+    server_feedback_technique_list = [ServerFeedbackTechnique.similar_to_cluster]
+    num_cluster_list = [2]
 
-    experiment_config.net= NetClusterTechnique.multi_head
+    experiment_config.net_cluster_technique= NetClusterTechnique.multi_head
 
     for data_type in data_types:
         data_to_pickle = {}
         experiment_config.update_data_type(data_type)
-        clients_data_dict, server_data, test_set = create_data(data_type)
+        clients_train_data_dict, server_train_data, clients_test_data_dict, server_test_data = create_data(data_type)
 
         for num_cluster in num_cluster_list:
+
             experiment_config.num_clusters = num_cluster
+            if num_cluster == 1:
+                experiment_config.num_rounds_multi_head = 1
+            else:
+                experiment_config.num_rounds_multi_head = 2
+
             data_to_pickle[num_cluster] = {}
             for net_type in nets_types_list:
                 experiment_config.update_net_type(net_type)
@@ -125,8 +132,10 @@ if __name__ == '__main__':
                         experiment_config.server_feedback_technique = server_feedback_technique
                         experiment_config.update_type_of_experiment(exp_type)
                         torch.manual_seed(experiment_config.seed_num)
-                        clients,clients_ids = create_clients(clients_data_dict,server_data,test_set)
-                        server = Server(id_="server",global_data=server_data,test_data = test_set,clients_ids = clients_ids)
+                        clients,clients_ids = create_clients(clients_train_data_dict, server_train_data,clients_test_data_dict)
+                        server = Server(id_="server",global_data=server_train_data,test_data = server_test_data,clients_ids = clients_ids)
+                        for client in clients:
+                            client.server = server
 
                         for t in range(experiment_config.iterations):
                             print("----------------------------iter number:"+str(t))

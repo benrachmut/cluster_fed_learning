@@ -48,6 +48,7 @@ class NetClusterTechnique(Enum):
 
 class ExperimentConfig:
     def __init__(self):
+        self.num_rounds_multi_head = 2
         self.net_cluster_technique = None
         self.identical_clients = None
         self.mix_percentage = None
@@ -65,8 +66,9 @@ class ExperimentConfig:
         self.seed_num = 1
         self.with_weight_memory = True
         self.with_server_net = True
-        self.epochs_num_input = 20
-        self.epochs_num_train = 10
+        self.epochs_num_input_fine_tune_clients = 30
+        self.epochs_num_train_client = 10
+        self.epochs_num_train_server = 10
 
         self.iterations = 12
         self.server_split_ratio = 0.2
