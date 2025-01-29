@@ -1,18 +1,17 @@
 import numpy as np
 import torch
 import torchvision
-from sklearn.cluster import KMeans
 from torch import nn
 from torch.utils.data import DataLoader
 from config import *
 import torch.nn.functional as F
 from itertools import combinations
+from sklearn.cluster import KMeans
 
 from abc import ABC, abstractmethod
 
 # Define AlexNet for clients
 
-from sklearn.cluster import KMeans
 import numpy as np
 
 class AlexNet(nn.Module):
@@ -50,6 +49,7 @@ class AlexNet(nn.Module):
             f"head_{i}": nn.Linear(4096, num_classes) for i in range(num_clusters)
         })
 
+
     def forward(self, x, cluster_id=None):
         # Forward pass through the shared backbone
         x = self.backbone(x)
@@ -66,7 +66,6 @@ class AlexNet(nn.Module):
                 x = {f"head_{i}": head(x) for i, head in self.heads.items()}
 
         return x
-
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -553,8 +552,9 @@ class Client(LearningEntity):
 
 
 class Server(LearningEntity):
-    def __init__(self,id_,global_data,test_data, clients_ids,clients_test_data_dict):
+    def __init__(self,id_,global_data,test_data, clients_ids,clients_test_data_dict,identical_groups):
         LearningEntity.__init__(self, id_,global_data)
+        self.identical_groups = identical_groups
         self.test_data= test_data
         self.num = (1000)*17
         self.pseudo_label_received = {}
@@ -963,7 +963,10 @@ class Server(LearningEntity):
             clusters_client_id_dict = self.k_means_grouping()
 
         if experiment_config.cluster_technique == ClusterTechnique.manual:
-            clusters_client_id_dict = self.manual_grouping()
+            if experiment_config.num_clusters == 6:
+                clusters_client_id_dict = self.identical_groups
+            else:
+                clusters_client_id_dict = self.manual_grouping()
 
         cluster_mean_pseudo_labels_dict = self.get_cluster_mean_pseudo_labels_dict(clusters_client_id_dict)
 

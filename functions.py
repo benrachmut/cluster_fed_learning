@@ -131,13 +131,15 @@ def get_mix_tensor_list(target_original_data_dict):
     keys = list(target_original_data_dict.keys())
     rnd.shuffle(keys)
     groups = [keys[i:i + identical_clients] for i in range(0, len(keys), identical_clients)]
-
+    identical_groups = {}
+    for i in range(len(groups)):
+        identical_groups[i]=groups[i]
     list_of_torches_clients = []
     for group in groups:
         list_of_group = get_images_per_group_dict(group,target_original_data_dict)
         list_of_torches_clients.extend(list_of_group)
 
-    return list_of_torches_clients
+    return list_of_torches_clients,identical_groups
 
 def get_match_mix_clients(mix_tensor_list,clients_tensor_list):
     ans = []
@@ -159,7 +161,7 @@ def get_match_mix_clients(mix_tensor_list,clients_tensor_list):
 def get_split_train_client_data(classes_data_dict):
     data_to_mix_list,target_original_data_dict = get_data_to_mix_and_data_to_leave(classes_data_dict)
     mix_tensor_list = get_mix_torch(data_to_mix_list)
-    clients_tensor_list = get_mix_tensor_list(target_original_data_dict)
+    clients_tensor_list,identical_groups = get_mix_tensor_list(target_original_data_dict)
     if len(mix_tensor_list)!=len(clients_tensor_list):raise Exception("lists need to be same length")
     match_mix_clients = get_match_mix_clients(mix_tensor_list,clients_tensor_list)
     ans = {}
@@ -167,7 +169,7 @@ def get_split_train_client_data(classes_data_dict):
 
 
 
-    return ans
+    return ans,identical_groups
 
 
 
@@ -316,25 +318,14 @@ def split_clients_server_data_Non_IID(data_by_classification_dict, selected_clas
         server_data_dict[class_target] = server_data_per_class
     server_data = get_server_data(server_data_dict)
 
-    clients_data_dict = get_split_train_client_data(classes_data_dict)
-    return clients_data_dict,server_data
+    clients_data_dict,identical_groups = get_split_train_client_data(classes_data_dict)
+    return clients_data_dict,server_data,identical_groups
 
 
 
 
 def split_clients_server_data_IID(train_set,server_split_ratio):
-    """
-        Splits the input training dataset into subsets for multiple clients and the server.
 
-        Args:
-        - train_set: The full training dataset to be split.
-
-        Returns:
-        - client_data_sets: A list of datasets for each client.
-        - server_data: A dataset for the server.
-
-        The function dynamically allocates the training data based on the number of clients and a specified split ratio for the server.
-        """
 
     total_client_data_size = int((1-server_split_ratio) * len(train_set))
     server_data_size = len(train_set) - total_client_data_size
@@ -345,6 +336,9 @@ def split_clients_server_data_IID(train_set,server_split_ratio):
     torch.manual_seed(seed)
     splits = random_split(train_set, split_sizes)
     client_data_sets = splits[:-1]  # All client datasets
+
+    #cut_data(total_client_data_size, experiment_config.percent_train_data_use*)
+
     server_data = splits[-1]
 
     clients_data_dict = change_format_of_clients_data_dict(client_data_sets)
@@ -378,14 +372,14 @@ def get_data_set(data_type,is_train ):
     train_set = torchvision.datasets.CIFAR10(root='./data', train=is_train, download=True, transform=transform)
     data_by_classification_dict = get_data_by_classification(train_set)
     selected_classes_list = sorted(data_by_classification_dict.keys())[:experiment_config.num_classes]
-
+    identical_groups = None
     if data_type == DataType.IID:
         clients_data_dict, server_data = split_clients_server_data_IID(train_set, experiment_config.server_split_ratio)
 
     if data_type == DataType.NonIID:
-        clients_data_dict, server_data = split_clients_server_data_Non_IID(data_by_classification_dict, selected_classes_list)
+        clients_data_dict, server_data,identical_groups = split_clients_server_data_Non_IID(data_by_classification_dict, selected_classes_list)
 
-    return selected_classes_list, clients_data_dict, server_data
+    return selected_classes_list, clients_data_dict, server_data,identical_groups
 
 
 
@@ -437,10 +431,11 @@ def print_data_for_debug(clients_data_dict,server_data, test_set):
 
 
 def create_data(data_type):
-    selected_classes_list, clients_train_data_dict, server_train_data = get_data_set(data_type, is_train = True)
+    identical_groups = None
+    selected_classes_list, clients_train_data_dict, server_train_data,identical_groups = get_data_set(data_type, is_train = True)
     #train_set_size = get_train_set_size(clients_data_dict, server_data)
     #test_set_size = train_set_size * experiment_config.percent_test_relative_to_train
-    selected_test_classes_list, clients_test_data_dict, server_test_data = get_data_set(data_type, is_train = False)
+    selected_test_classes_list, clients_test_data_dict, server_test_data,identical_groups = get_data_set(data_type, is_train = False)
 
     #test_set = get_test_set(test_set_size,selected_classes_list)
     # TODO get test data by what it if familar with + what it is not familiar with.
@@ -448,7 +443,7 @@ def create_data(data_type):
    # print_data_for_debug(clients_data_dict,server_data, test_set)
 
 
-    return clients_train_data_dict, server_train_data, clients_test_data_dict, server_test_data
+    return clients_train_data_dict, server_train_data, clients_test_data_dict, server_test_data,identical_groups
 
 #### ----------------- SPLIT DATA BETWEEN SERVER AND CLIENTS ----------------- ####
 

@@ -126,15 +126,16 @@ class ExperimentConfig:
 
         if exp_type == ExpType.short:
             self.num_classes = 10
+            self.num_clients = 4
+            self.identical_clients=2
             self.with_server_net = True
-            #net_type = NetsType.C_alex_S_alex
-            #data_type = DataType.NonIID
+
             ############
             self.epochs_num_input = 2 #20
             self.epochs_num_train = 2 #10
             self.iterations = 2
-            self.percent_train_data_use = 0.2
-            self.percent_test_relative_to_train = 0.2
+            self.percent_train_data_use = 0.1
+            self.percent_test_relative_to_train = 0.1
 
         #######-------------------------------------
         #self.update_data_type(data_type)
