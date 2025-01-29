@@ -25,13 +25,7 @@ class NetsType(Enum):
 class ExpType(Enum):
     full= 1
     short=2
-    #IID_diff_nets = 1
-    #NonIID_diff_nets = 2
-    #IID_same_nets = 3
-    #NonIID_same_nets = 4
-    #IID_no_net = 5
-    #NonIID_no_net = 6
-    #short = 7
+
 
 
 
@@ -49,6 +43,12 @@ class NetClusterTechnique(Enum):
 class ExperimentConfig:
     def __init__(self):
         self.num_rounds_multi_head = 2
+
+        self.epochs_num_train_server = 10
+        self.epochs_num_input_fine_tune_clients = 30
+        self.epochs_num_train_client = 10
+
+
         self.net_cluster_technique = None
         self.identical_clients = None
         self.mix_percentage = None
@@ -56,33 +56,27 @@ class ExperimentConfig:
         self.client_net_type = None
         self.batch_size = None
         self.learning_rate_train_s = None
-
         self.cluster_technique = None
         self.server_feedback_technique = None
-
         self.data_set_selected = DataSet.CIFAR10
         self.num_classes = 10
-
         self.seed_num = 1
         self.with_weight_memory = True
         self.with_server_net = True
-        self.epochs_num_input_fine_tune_clients = 30
-        self.epochs_num_train_client = 10
-        self.epochs_num_train_server = 10
 
         self.iterations = 12
         self.server_split_ratio = 0.2
         self.learning_rate_fine_tune_c = 0.001
         self.learning_rate_train_c = 0.001
         self.num_clusters = None
-
-        # ----------------
-
-        # ----------------
-
         self.num_clients = None  # num_classes*identical_clients
         self.percent_train_data_use = 1
         self.percent_test_relative_to_train = 1
+
+    def to_dict(self):
+        """Returns a dictionary of attribute names and their values."""
+        return {attr: getattr(self, attr) for attr in dir(self) if
+                not callable(getattr(self, attr)) and not attr.startswith("__")}
 
     def update_data_type(self,data_type):
         if data_type == DataType.IID:
@@ -111,7 +105,7 @@ class ExperimentConfig:
         if net_type == NetsType.C_alex_S_vgg:
             self.client_net_type = NetType.ALEXNET
             self.server_net_type = NetType.VGG
-            self.learning_rate_train_c = 0.001
+            self.learning_rate_train_c = 0.0001
             self.learning_rate_fine_tune_c = 0.001
             self.learning_rate_train_s = 0.0001
             self.with_server_net = True

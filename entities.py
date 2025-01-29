@@ -123,18 +123,17 @@ def get_server_model():
 
 
 class LearningEntity(ABC):
-    def __init__(self,id_,global_data,test_data):
+    def __init__(self,id_,global_data):
         self.global_data = global_data
         self.pseudo_label_received = {}
         self.pseudo_label_to_send = None
         self.current_iteration = 0
         self.epoch_count = 0
         self.id_ = id_
-        self.test_set= test_data
         self.model=None
         #self.weights = None
-        self.loss_measures = {}
-
+        self.accuracy_per_client_1 = {}
+        self.accuracy_per_client_5 = {}
         #self.accuracy_pl_measures= {}
         #self.accuracy_test_measures_k_half_cluster = {}
         #self.accuracy_pl_measures_k_half_cluster= {}
@@ -152,7 +151,7 @@ class LearningEntity(ABC):
         #    self.model.apply(self.initialize_weights)
         #else:
         #    self.model.apply(self.weights)
-    def get_client_cluster(self):
+    def get_client_cluster(self,t):
         clusters_client_id_dict = self.server.clusters_client_id_dict[t]
         for cluster_id, clients_ids in clusters_client_id_dict.items():
             if self.id_ in clients_ids:
@@ -327,8 +326,10 @@ class LearningEntity(ABC):
 
 class Client(LearningEntity):
     def __init__(self, id_, client_data, global_data,test_data):
-        LearningEntity.__init__(self,id_,global_data,test_data)
+        LearningEntity.__init__(self,id_,global_data)
         self.num = (self.id_+1)*17
+        self.test_set= test_data
+
         self.local_data = client_data
         self.epoch_count = 0
         self.model = get_client_model()
@@ -353,13 +354,13 @@ class Client(LearningEntity):
             else:
                 self.model.apply(self.initialize_weights)
 
-        if t > 0:
-            client_cluster = self.get_client_cluster()
-            if client_cluster is None:
-                raise Exception("above method is not working well")
-            self.accuracy_test_measures_at_server[t] = self.server.evaluate_accuracy(self.test_set, model=None, k=1, cluster_id=client_cluster)
-        self.accuracy_test_measures[t] = self.evaluate_accuracy(self.test_set, model=None, k=1, cluster_id=client_cluster)
-
+        #if t > 0:
+        #    client_cluster = self.get_client_cluster(t)
+        #    if client_cluster is None:
+        #        raise Exception("above method is not working well")
+        #    self.accuracy_test_measures_at_server[t] = self.server.evaluate_accuracy(self.test_set, model=None, k=1, cluster_id=client_cluster)
+        self.accuracy_per_client_1[t] = self.evaluate_accuracy(self.test_set,k=1)
+        self.accuracy_per_client_5[t] = self.evaluate_accuracy(self.test_set,k=5)
 
 
     def train__(self, mean_pseudo_labels, data_):
@@ -430,7 +431,7 @@ class Client(LearningEntity):
 
     def train(self,mean_pseudo_labels):
 
-
+        print(f"Mean pseudo-labels shape: {mean_pseudo_labels.shape}")  # Should be (num_data_points, num_classes)
 
         print(f"*** {self.__str__()} train ***")
         server_loader = DataLoader(self.global_data, batch_size=experiment_config.batch_size, shuffle=False, num_workers=4,
@@ -552,32 +553,36 @@ class Client(LearningEntity):
 
 
 class Server(LearningEntity):
-    def __init__(self,id_,global_data,test_data, clients_ids):
-        LearningEntity.__init__(self, id_,global_data,test_data)
+    def __init__(self,id_,global_data,test_data, clients_ids,clients_test_data_dict):
+        LearningEntity.__init__(self, id_,global_data)
+        self.test_data= test_data
         self.num = (1000)*17
         self.pseudo_label_received = {}
         self.clusters_client_id_dict = {}
         self.clients_ids = clients_ids
         self.reset_clients_received_pl()
+        self.clients_test_data_dict=clients_test_data_dict
         #if experiment_config.server_learning_technique == ServerLearningTechnique.multi_head:
         self.model = get_server_model()
         self.model.apply(self.initialize_weights)
         self.previous_centroids_dict = {}
         self.pseudo_label_to_send = {}
-
         num_clusters = experiment_config.num_clusters
-        self.model_per_cluster = {}
+
+
 
         for cluster_id in  range(num_clusters):
             self.previous_centroids_dict[cluster_id] = None
-            #if experiment_config.server_learning_technique == ServerLearningTechnique.multi_models:
-            #    self.model_per_cluster[cluster_id] = get_server_model()
-            #    self.model_per_cluster[cluster_id].apply(self.initialize_weights)
-            self.loss_measures[cluster_id] = {}
-            self.accuracy_pl_measures[cluster_id]= {}
-            self.accuracy_test_measures[cluster_id]= {}
-            self.accuracy_test_measures_k_half_cluster[cluster_id]={}
-            self.accuracy_pl_measures_k_half_cluster[cluster_id]={}
+
+
+
+        for client_id in self.clients_ids:
+            self.accuracy_per_client_1[client_id]={}
+            self.accuracy_per_client_5[client_id]={}
+
+        #self.accuracy_aggregated_head = {}
+        #self.accuracy_pl_measures[cluster_id] = {}
+
 
 
         #self.model = get_server_model()
@@ -593,9 +598,6 @@ class Server(LearningEntity):
 
     def receive_single_pseudo_label(self, sender, info):
         self.pseudo_label_received[sender] = info
-
-
-
 
     def get_pseudo_label_list_after_models_train(self,mean_pseudo_labels_per_cluster):
         pseudo_labels_for_model_per_cluster = {}
@@ -639,8 +641,8 @@ class Server(LearningEntity):
     def iteration_context(self,t):
         self.current_iteration = t
         mean_pseudo_labels_per_cluster, self.clusters_client_id_dict[t] = self.get_mean_pseudo_labels()  # #
-
-
+        #for cluster_id, mean_pl in mean_pseudo_labels_per_cluster.items():
+        #    mean_pseudo_labels_per_cluster[cluster_id] = mean_pl.T.to(device)
 
         if experiment_config.net_cluster_technique == NetClusterTechnique.multi_head:
             for _ in range(experiment_config.num_rounds_multi_head):
@@ -648,18 +650,22 @@ class Server(LearningEntity):
                      self.train(mean_pseudo_label_for_cluster, cluster_id)
                      if experiment_config.server_feedback_technique == ServerFeedbackTechnique.similar_to_cluster:
                         pseudo_labels_for_cluster = self.evaluate_for_cluster(cluster_id)
+                        #pseudo_labels_for_cluster = pseudo_labels_for_cluster.T.to(device)
 
                         #pseudo_labels_for_model = evaluate_per_head#self.evaluate(model_)
-                        for client_id in clusters_client_id_dict[cluster_id]:
+                        for client_id in self.clusters_client_id_dict[t][cluster_id]:
                             self.pseudo_label_to_send[client_id] = pseudo_labels_for_cluster
-        if experiment_config.server_feedback_technique == ServerFeedbackTechnique.similar_to_cluster:
+        if experiment_config.server_feedback_technique == ServerFeedbackTechnique.similar_to_client:
             pseudo_labels_for_cluster_list = []
             for cluster_id, mean_pseudo_label_for_cluster in mean_pseudo_labels_per_cluster.items():
                 self.train(mean_pseudo_label_for_cluster, cluster_id)
-                if experiment_config.server_feedback_technique == ServerFeedbackTechnique.similar_to_cluster:
-                    pseudo_labels_for_cluster_list.append(self.evaluate_for_cluster(cluster_id))
-            self.select_confident_pseudo_labels(pseudo_labels_for_cluster_list)
-            raise Exception("Check if above work")
+                pseudo_labels_for_cluster_list.append(self.evaluate_for_cluster(cluster_id))
+
+            pseudo_labels_to_send = self.select_confident_pseudo_labels(pseudo_labels_for_cluster_list)
+            #pseudo_labels_to_send = pseudo_labels_to_send.T.to(device)
+
+            for client_id in self.clients_ids:
+                self.pseudo_label_to_send[client_id] = pseudo_labels_to_send
 
                 #pseudo_labels_for_model = evaluate_per_all_heads  # self.evaluate(model_)
                 #for client_id in self.clients_ids:
@@ -667,11 +673,16 @@ class Server(LearningEntity):
         #if experiment_config.cluster_architecture == ServerLearningTechnique.multi_head:
         #do mutli head
         #self.pseudo_label_to_send[client_id] = pseudo_labels_for_model
+        for client_id in self.clients_ids:
+            cluster_id_for_client = self.get_cluster_of_client(client_id,t)
+            self.accuracy_per_client_1[client_id][t] = self.evaluate_accuracy(self.clients_test_data_dict[client_id], k =1,cluster_id=cluster_id_for_client)
+            self.accuracy_per_client_5[client_id][t] = self.evaluate_accuracy(self.clients_test_data_dict[client_id], k =5,cluster_id=cluster_id_for_client)
 
         self.reset_clients_received_pl()
 
     def train(self, mean_pseudo_labels,  cluster_num="0"):
 
+        print(f"Mean pseudo-labels shape: {mean_pseudo_labels.shape}")  # Should be (num_data_points, num_classes)
 
         print(f"*** {self.__str__()} train *** Cluster: {cluster_num} ***")
         server_loader = DataLoader(self.global_data, batch_size=experiment_config.batch_size, shuffle=False,
@@ -1016,6 +1027,11 @@ class Server(LearningEntity):
                 return True
         else:
             return False
+
+    def get_cluster_of_client(self,client_id,t):
+        for cluster_id, clients_id_list in self.clusters_client_id_dict[t].items():
+            if client_id in clients_id_list:
+                return cluster_id
 
 
 
