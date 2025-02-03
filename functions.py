@@ -431,11 +431,10 @@ def print_data_for_debug(clients_data_dict,server_data, test_set):
 
 
 def create_data(data_type):
-    identical_groups = None
-    selected_classes_list, clients_train_data_dict, server_train_data,identical_groups = get_data_set(data_type, is_train = True)
+    selected_classes_list, clients_train_data_dict, server_train_data = get_data_set(data_type, is_train = True)
     #train_set_size = get_train_set_size(clients_data_dict, server_data)
     #test_set_size = train_set_size * experiment_config.percent_test_relative_to_train
-    selected_test_classes_list, clients_test_data_dict, server_test_data,identical_groups = get_data_set(data_type, is_train = False)
+    selected_test_classes_list, clients_test_data_dict, server_test_data = get_data_set(data_type, is_train = False)
 
     #test_set = get_test_set(test_set_size,selected_classes_list)
     # TODO get test data by what it if familar with + what it is not familiar with.
@@ -443,7 +442,7 @@ def create_data(data_type):
    # print_data_for_debug(clients_data_dict,server_data, test_set)
 
 
-    return clients_train_data_dict, server_train_data, clients_test_data_dict, server_test_data,identical_groups
+    return clients_train_data_dict, server_train_data, clients_test_data_dict, server_test_data
 
 #### ----------------- SPLIT DATA BETWEEN SERVER AND CLIENTS ----------------- ####
 
@@ -480,14 +479,14 @@ def split_clients_server_data(train_set):
 
 #### ----------------- CREATE CLIENTS ----------------- ####
 
-def create_clients(client_data_dict,server_data,test_set):
+def create_clients(client_data_dict,server_data,test_set,server_test_data):
     ans = []
     ids_list = []
 
 
     for id_, data_ in client_data_dict.items():
         ids_list.append(id_)
-        ans.append(Client(id_ =id_,client_data = data_,global_data=server_data,test_data =test_set[id_]))
+        ans.append(Client(id_ =id_,client_data = data_,global_data=server_data,global_test_data=server_test_data,local_test_data =test_set[id_]))
 
 
     return ans,ids_list

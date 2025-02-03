@@ -3,7 +3,9 @@ from random import random
 
 from matplotlib import pyplot as plt
 
-
+class ServerInputTech(Enum):
+    mean = 1
+    max = 2
 class NetType(Enum):
     ALEXNET = "AlexNet"
     VGG = "VGG"
@@ -39,11 +41,12 @@ class ServerFeedbackTechnique(Enum):
 
 class NetClusterTechnique(Enum):
     multi_head = 1
+    multi_model = 2
 
 class ExperimentConfig:
     def __init__(self):
         self.num_rounds_multi_head = 2
-
+        self.server_input_tech = None
         self.epochs_num_train_server = 10
         self.epochs_num_input_fine_tune_clients = 30
         self.epochs_num_train_client = 10
