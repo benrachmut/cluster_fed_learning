@@ -59,8 +59,10 @@ if __name__ == '__main__':
 
         data_to_pickle = {}
         experiment_config.update_data_type(data_type)
+        experiment_config.update_type_of_experiment(exp_type)
         clients_train_data_dict, server_train_data, clients_test_data_dict, server_test_data = create_data(data_type)
-
+        if experiment_config.percent_train_data_use<1:
+            clients_train_data_dict, server_train_data, clients_test_data_dict, server_test_data = cut_data_v2(clients_train_data_dict, server_train_data, clients_test_data_dict, server_test_data)
         for num_cluster in num_cluster_list:
             if num_cluster == "known_labels" and data_type == DataType.IID:
                 continue

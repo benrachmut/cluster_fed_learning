@@ -108,7 +108,7 @@ class ExperimentConfig:
         if net_type == NetsType.C_alex_S_vgg:
             self.client_net_type = NetType.ALEXNET
             self.server_net_type = NetType.VGG
-            self.learning_rate_train_c = 0.0001
+            self.learning_rate_train_c = 0.001
             self.learning_rate_fine_tune_c = 0.001
             self.learning_rate_train_s = 0.0001
             self.with_server_net = True
@@ -123,9 +123,6 @@ class ExperimentConfig:
 
 
     def update_type_of_experiment(self,exp_type):
-
-
-
 
         if exp_type == ExpType.short:
             self.num_classes = 10
@@ -149,9 +146,9 @@ class ExperimentConfig:
         ##############------------------------------------------------
 
         if exp_type == ExpType.full:
-            self.epochs_num_input = 20
-            self.epochs_num_train = 10
-            self.iterations = 11
+            #self.epochs_num_input = 20
+            #self.epochs_num_train = 10
+            #self.iterations = 11
             self.percent_train_data_use = 1
             self.percent_test_relative_to_train = 1
 

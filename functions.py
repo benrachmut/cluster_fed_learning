@@ -2,7 +2,7 @@ import copy
 
 import pandas as pd
 from scipy.stats import ansari
-from torch.utils.data import TensorDataset, random_split,Subset
+from torch.utils.data import TensorDataset, random_split, Subset, Dataset
 from torchvision.transforms import transforms
 
 from entities import *
@@ -131,15 +131,13 @@ def get_mix_tensor_list(target_original_data_dict):
     keys = list(target_original_data_dict.keys())
     rnd.shuffle(keys)
     groups = [keys[i:i + identical_clients] for i in range(0, len(keys), identical_clients)]
-    identical_groups = {}
-    for i in range(len(groups)):
-        identical_groups[i]=groups[i]
+
     list_of_torches_clients = []
     for group in groups:
         list_of_group = get_images_per_group_dict(group,target_original_data_dict)
         list_of_torches_clients.extend(list_of_group)
 
-    return list_of_torches_clients,identical_groups
+    return list_of_torches_clients
 
 def get_match_mix_clients(mix_tensor_list,clients_tensor_list):
     ans = []
@@ -161,7 +159,7 @@ def get_match_mix_clients(mix_tensor_list,clients_tensor_list):
 def get_split_train_client_data(classes_data_dict):
     data_to_mix_list,target_original_data_dict = get_data_to_mix_and_data_to_leave(classes_data_dict)
     mix_tensor_list = get_mix_torch(data_to_mix_list)
-    clients_tensor_list,identical_groups = get_mix_tensor_list(target_original_data_dict)
+    clients_tensor_list = get_mix_tensor_list(target_original_data_dict)
     if len(mix_tensor_list)!=len(clients_tensor_list):raise Exception("lists need to be same length")
     match_mix_clients = get_match_mix_clients(mix_tensor_list,clients_tensor_list)
     ans = {}
@@ -169,7 +167,7 @@ def get_split_train_client_data(classes_data_dict):
 
 
 
-    return ans,identical_groups
+    return ans
 
 
 
@@ -265,38 +263,6 @@ def transform_to_TensorDataset(data_):
 
 
 
-def create_identical_groups(clients_data_dict):
-    identical_clients = experiment_config.identical_clients
-
-    # Step 1: Get all the keys
-    keys = list(clients_data_dict.keys())
-
-    # Step 2: Create groups of the desired size
-    groups = [keys[i:i + identical_clients] for i in range(0, len(keys), identical_clients)]
-    for group in groups:
-        sets_of_data = {}
-        for client_id in group:
-            sets_of_data[client_id] = clients_data_dict[client_id]
-
-            print(type(sets_of_data[client_id][0]))
-            print()
-
-
-
-            #for image in client_list:
-            #    new_subset.append(image)
-
-            #for image in data_to_mix:
-            #    if len(new_subset) < data_size_per_client and image[1] != class_name:
-            #        new_subset.append(image)
-            #    else:
-            #        new_data_to_mix.append(image)
-            #data_to_mix = new_data_to_mix
-
-            #rnd.seed(counter * 17)
-            #rnd.shuffle(new_subset)
-            #new_td = transform_to_TensorDataset(new_subset)
-    print()
 def cut_data_for_partial_use_of_data(class_target,data_by_classification_dict):
     data_of_class = data_by_classification_dict[class_target]
     train_set_size = len(data_of_class)
@@ -318,8 +284,8 @@ def split_clients_server_data_Non_IID(data_by_classification_dict, selected_clas
         server_data_dict[class_target] = server_data_per_class
     server_data = get_server_data(server_data_dict)
 
-    clients_data_dict,identical_groups = get_split_train_client_data(classes_data_dict)
-    return clients_data_dict,server_data,identical_groups
+    clients_data_dict = get_split_train_client_data(classes_data_dict)
+    return clients_data_dict,server_data
 
 
 
@@ -372,14 +338,13 @@ def get_data_set(data_type,is_train ):
     train_set = torchvision.datasets.CIFAR10(root='./data', train=is_train, download=True, transform=transform)
     data_by_classification_dict = get_data_by_classification(train_set)
     selected_classes_list = sorted(data_by_classification_dict.keys())[:experiment_config.num_classes]
-    identical_groups = None
     if data_type == DataType.IID:
         clients_data_dict, server_data = split_clients_server_data_IID(train_set, experiment_config.server_split_ratio)
 
     if data_type == DataType.NonIID:
-        clients_data_dict, server_data,identical_groups = split_clients_server_data_Non_IID(data_by_classification_dict, selected_classes_list)
+        clients_data_dict, server_data = split_clients_server_data_Non_IID(data_by_classification_dict, selected_classes_list)
 
-    return selected_classes_list, clients_data_dict, server_data,identical_groups
+    return selected_classes_list, clients_data_dict, server_data
 
 
 
@@ -478,6 +443,52 @@ def split_clients_server_data(train_set):
 
 
 #### ----------------- CREATE CLIENTS ----------------- ####
+
+
+def get_random_dataset(dataset, percent = experiment_config.percent_train_data_use):
+
+    total_size = len(dataset)
+    subset_size = int(total_size * (percent / 100))
+
+    # Get random indices
+    indices = rnd.sample(range(total_size), subset_size)
+
+    # Extract the samples using the indices
+    data = [dataset[i] for i in indices]
+
+    # Create a new dataset of the same type
+    if isinstance(dataset, torch.utils.data.TensorDataset):
+        # Handle TensorDataset separately
+        tensors = [torch.stack([sample[i] for sample in data]) for i in range(len(dataset.tensors))]
+        return torch.utils.data.TensorDataset(*tensors)
+
+    # Otherwise, assume it's a standard Dataset and return a custom wrapper
+    class RandomDataset(Dataset):
+        def __init__(self, data):
+            self.data = data
+
+        def __len__(self):
+            return len(self.data)
+
+        def __getitem__(self, idx):
+            return self.data[idx]
+
+    return RandomDataset(data)
+
+def cut_dict(data_dict: {}):
+    ans = {}
+    for k, v in data_dict.items():
+        ans[k] = get_random_dataset(v)
+    return ans
+
+def cut_data_v2(clients_train_data_dict, server_train_data, clients_test_data_dict, server_test_data):
+    clients_train_data_dict = cut_dict(clients_train_data_dict)
+    server_train_data = get_random_dataset(server_train_data)
+    clients_test_data_dict = cut_dict(clients_test_data_dict)
+    server_test_data = get_random_dataset(server_test_data)
+    return clients_train_data_dict, server_train_data, clients_test_data_dict, server_test_data
+
+
 
 def create_clients(client_data_dict,server_data,test_set,server_test_data):
     ans = []
