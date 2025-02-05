@@ -104,6 +104,10 @@ class ExperimentConfig:
             self.learning_rate_fine_tune_c = 0.001
             self.learning_rate_train_s = 0.001
             self.with_server_net = True
+            self.epochs_num_train_server = 10
+            self.epochs_num_input_fine_tune_clients = 10
+            self.epochs_num_train_client = 10
+
 
         if net_type == NetsType.C_alex_S_vgg:
             self.client_net_type = NetType.ALEXNET
@@ -112,6 +116,10 @@ class ExperimentConfig:
             self.learning_rate_fine_tune_c = 0.001
             self.learning_rate_train_s = 0.0001
             self.with_server_net = True
+            self.epochs_num_train_server = 10
+            self.epochs_num_input_fine_tune_clients = 10
+            self.epochs_num_train_client = 10
+
 
         if net_type == NetsType.C_alex_S_None:
             self.client_net_type = NetType.VGG
@@ -149,6 +157,8 @@ class ExperimentConfig:
             #self.epochs_num_input = 20
             #self.epochs_num_train = 10
             #self.iterations = 11
+            self.iterations = 10
+
             self.percent_train_data_use = 1
             self.percent_test_relative_to_train = 1
 
