@@ -2,7 +2,7 @@ import numpy as np
 import torch
 import torchvision
 from torch import nn
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, Dataset
 from config import *
 import torch.nn.functional as F
 from itertools import combinations
@@ -186,66 +186,10 @@ class LearningEntity(ABC):
     def iteration_context(self,t):
         pass
 
-    #def evaluate(self, model=None):
-    #    if model is None:
-    #        model = self.model
-    #    print("*** Generating Pseudo-Labels with Probabilities ***")
-
-        # Create a DataLoader for the global data
-    #    global_data_loader = DataLoader(self.global_data, batch_size=experiment_config.batch_size, shuffle=False)
-
-    #    model.eval()  # Set the model to evaluation mode
-
-    #    all_probs = []  # List to store the softmax probabilities
-    #    with torch.no_grad():  # Disable gradient computation
-            #for inputs, _ in global_data_loader:
-            #    inputs = inputs.to(device)
-            #    outputs = model(inputs)  # Forward pass
-
-                # Apply softmax to get the class probabilities
-            #    probs = F.softmax(outputs, dim=1)  # Apply softmax along the class dimension
-
-            #    all_probs.append(probs.cpu())  # Store the probabilities on CPU
-
-        # Concatenate all probabilities into a single tensor (2D matrix)
-    #    all_probs = torch.cat(all_probs, dim=0)
-
-       #print(f"Shape of the 2D pseudo-label matrix: {all_probs.shape}")
-    #    return all_probs
-
     def evaluate(self, model=None):
         if model is None:
             model = self.model
-        print("*** Generating Pseudo-Labels with Probabilities ***")
-
-        global_data_loader = DataLoader(self.global_data, batch_size=experiment_config.batch_size, shuffle=False)
-
-        model.eval()
-        all_pseudo_labels = []
-
-        with torch.no_grad():
-            for batch_idx, (inputs, _) in enumerate(global_data_loader):
-                inputs = inputs.to(device)
-                outputs = model(inputs)
-                probs = F.softmax(outputs, dim=1)
-
-                # Get the start index for this batch
-                start_idx = batch_idx * experiment_config.batch_size
-                indices = torch.arange(start_idx, start_idx + inputs.size(0))  # Store corresponding indices
-
-                # Append (index, pseudo-label) pairs
-                all_pseudo_labels.append(torch.stack((indices, probs.argmax(dim=1).cpu()), dim=1))
-
-                # Concatenate everything into a single tensor (num_samples, 2) -> (index, label)
-        all_pseudo_labels = torch.cat(all_pseudo_labels, dim=0)
-
-        #print(f"Generated pseudo-labels with shape: {all_pseudo_labels.shape}")  # Should be (num_data_points, 2)
-        return all_pseudo_labels
-
-    def evaluate_(self, model=None):
-        if model is None:
-            model = self.model
-        print("*** Generating Pseudo-Labels with Probabilities ***")
+    #    print("*** Generating Pseudo-Labels with Probabilities ***")
 
         # Create a DataLoader for the global data
         global_data_loader = DataLoader(self.global_data, batch_size=experiment_config.batch_size, shuffle=False)
@@ -263,10 +207,15 @@ class LearningEntity(ABC):
 
                 all_probs.append(probs.cpu())  # Store the probabilities on CPU
 
-        # Concatenate all probabilities into a single tensor
+        # Concatenate all probabilities into a single tensor (2D matrix)
         all_probs = torch.cat(all_probs, dim=0)
 
+       #print(f"Shape of the 2D pseudo-label matrix: {all_probs.shape}")
         return all_probs
+
+
+
+
 
     def evaluate_accuracy(self, data_, model=None, k=1, cluster_id=None):
         if model is None:
@@ -470,7 +419,7 @@ class Client(LearningEntity):
         print(f"Mean pseudo-labels shape: {mean_pseudo_labels.shape}")  # Should be (num_data_points, num_classes)
 
         print(f"*** {self.__str__()} train ***")
-        server_loader = DataLoader(self.global_data, batch_size=experiment_config.batch_size, shuffle=True, num_workers=4,
+        server_loader = DataLoader(self.global_data, batch_size=experiment_config.batch_size, shuffle=False, num_workers=4,
                                    drop_last=True)
         #server_loader = DataLoader(self.global_data, batch_size=experiment_config.batch_size, shuffle=False,
         #                           num_workers=0)
@@ -586,17 +535,17 @@ class Client(LearningEntity):
 
         return  result_to_print
 
-class IndexedDataset(torch.utils.data.Dataset):
-    def __init__(self, data, labels):
-        self.data = data
-        self.labels = labels
-
-    def __len__(self):
-        return len(self.data)
-
-    def __getitem__(self, idx):
-        return self.data[idx], idx  # Return data and its original index
-
+class MyDataset(Dataset):
+    def __getitem__(self, index):
+        data = self.data[index]
+        return data, index  # Now returning index too!
+def custom_collate_fn(batch):
+    """
+    Custom collate function to return dataset indices along with inputs.
+    """
+    inputs, indices = zip(*batch)  # Assuming dataset returns (data, index)
+    inputs = torch.stack(inputs, dim=0)
+    return inputs, torch.tensor(indices, dtype=torch.long)
 
 class Server(LearningEntity):
     def __init__(self,id_,global_data,test_data, clients_ids,clients_test_data_dict):
@@ -677,7 +626,7 @@ class Server(LearningEntity):
         ans = list(pseudo_labels_for_model_per_cluster.values())
         return ans
 
-    def select_confident_pseudo_labels(self,cluster_pseudo_labels):
+    def select_confident_pseudo_labels(self, cluster_pseudo_labels):
         """
         Select pseudo-labels from the cluster with the highest confidence for each data point.
 
@@ -705,7 +654,6 @@ class Server(LearningEntity):
             selected_labels[mask] = pseudo_labels[mask]
 
         return selected_labels
-
     def create_feed_back_to_clients_multihead(self,mean_pseudo_labels_per_cluster,t):
         for _ in range(experiment_config.num_rounds_multi_head):
             for cluster_id, mean_pseudo_label_for_cluster in mean_pseudo_labels_per_cluster.items():
@@ -905,6 +853,7 @@ class Server(LearningEntity):
             print(f"Epoch [{epoch + 1}/{experiment_config.epochs_num_train_server}], Loss: {avg_loss:.4f}")
 
         return avg_loss
+
 
     def reset_clients_received_pl(self):
         for id_ in self.clients_ids:
@@ -1125,6 +1074,7 @@ class Server(LearningEntity):
         # Stack the pseudo labels tensors into a single tensor
         mean_per_cluster = {}
 
+        flag = False
         if experiment_config.num_clusters == "known_labels":
             ans = {}
             ans[0] = [0,1]
@@ -1133,11 +1083,11 @@ class Server(LearningEntity):
             ans[3] = [6, 7]
             ans[4] = [8, 9]
             clusters_client_id_dict = ans
-            
-        if experiment_config.cluster_technique == ClusterTechnique.kmeans:
+            flag = True
+        if experiment_config.cluster_technique == ClusterTechnique.kmeans and not flag:
             clusters_client_id_dict = self.k_means_grouping()
 
-        if experiment_config.cluster_technique == ClusterTechnique.manual: 
+        if experiment_config.cluster_technique == ClusterTechnique.manual  and not flag:
             clusters_client_id_dict = self.manual_grouping()
 
         cluster_mean_pseudo_labels_dict = self.get_cluster_mean_pseudo_labels_dict(clusters_client_id_dict)

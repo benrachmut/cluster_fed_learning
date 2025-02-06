@@ -102,7 +102,7 @@ class ExperimentConfig:
             self.server_net_type = NetType.ALEXNET
             self.learning_rate_train_c = 0.001
             self.learning_rate_fine_tune_c = 0.001
-            self.learning_rate_train_s = 0.001
+            self.learning_rate_train_s = 0.0001
             self.with_server_net = True
             self.epochs_num_train_server = 10
             self.epochs_num_input_fine_tune_clients = 10

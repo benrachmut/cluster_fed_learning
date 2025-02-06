@@ -19,7 +19,7 @@ class RecordData:
         self.server_accuracy_per_client_1 = server.accuracy_per_client_1
         self.server_accuracy_per_client_5 = server.accuracy_per_client_5
         self.server_accuracy_per_client_1_max = server.accuracy_per_client_1_max
-        self.server_accuracy_server_test_max = server.accuracy_test_max
+        self.server_accuracy_server_test_max = server.accuracy_per_client_1
         self.server_accuracy_server_global_max = server.accuracy_global_max
         self.server_accuracy_per_cluster_test_1=server.accuracy_server_test_1
         self.server_accuracy_per_cluster_global_data_1 = server.accuracy_global_data_1
@@ -46,17 +46,17 @@ if __name__ == '__main__':
 
     data_types =[DataType.NonIID,DataType.IID]
     server_input_tech_list = [ServerInputTech.max,ServerInputTech.mean]
-    nets_types_list  = [NetsType.C_alex_S_alex,NetsType.C_alex_S_vgg]
+    nets_types_list  = [NetsType.C_alex_S_vgg]#[NetsType.C_alex_S_alex,NetsType.C_alex_S_vgg]
     cluster_technique_list = [ClusterTechnique.manual]
-    server_feedback_technique_list = [ServerFeedbackTechnique.similar_to_cluster,ServerFeedbackTechnique.similar_to_client]
+    server_feedback_technique_list = [ServerFeedbackTechnique.similar_to_cluster]#[ServerFeedbackTechnique.similar_to_cluster,ServerFeedbackTechnique.similar_to_client]
 
     net_cluster_technique_list = [NetClusterTechnique.multi_model,NetClusterTechnique.multi_head]
 
     for data_type in data_types:
         if data_type == DataType.NonIID:
-            num_cluster_list = ["known_labels", 1, 5,  3]
+            num_cluster_list = ["known_labels", 1,2,5]
         else:
-            num_cluster_list = [1, 5,  3]
+            num_cluster_list = [1, 5,  2]
 
         data_to_pickle = {}
         experiment_config.update_data_type(data_type)
@@ -112,7 +112,7 @@ if __name__ == '__main__':
                                         data_to_pickle[net_cluster_technique.name][net_type.name][num_cluster][server_input_tech.name][cluster_technique.name][server_feedback_technique.name]  = rd
 
                                         pik_name = net_cluster_technique.name +"_" +net_type.name+"_" + str(num_cluster)+"_" +server_input_tech.name+"_" +cluster_technique.name+"_" +server_feedback_technique.name
-                                        pickle_file_path = pik_name +".pkl"
+                                        pickle_file_path = pik_name +"__.pkl"
 
                                         with open(pickle_file_path, "wb") as file:
                                             pickle.dump(data_to_pickle, file)
