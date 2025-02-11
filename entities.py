@@ -363,7 +363,7 @@ class Client(LearningEntity):
     def train__(self, mean_pseudo_labels, data_):
 
         print(f"*** {self.__str__()} train ***")
-        server_loader = DataLoader(data_, batch_size=experiment_config.batch_size, shuffle=False, num_workers=4,
+        server_loader = DataLoader(data_, batch_size=experiment_config.batch_size, shuffle=False, num_workers=0,
                                    drop_last=True)
 
         self.model.train()
@@ -431,7 +431,7 @@ class Client(LearningEntity):
         print(f"Mean pseudo-labels shape: {mean_pseudo_labels.shape}")  # Should be (num_data_points, num_classes)
 
         print(f"*** {self.__str__()} train ***")
-        server_loader = DataLoader(self.global_data, batch_size=experiment_config.batch_size, shuffle=False, num_workers=4,
+        server_loader = DataLoader(self.global_data, batch_size=experiment_config.batch_size, shuffle=False, num_workers=0,
                                    drop_last=True)
         #server_loader = DataLoader(self.global_data, batch_size=experiment_config.batch_size, shuffle=False,
         #                           num_workers=0)
@@ -796,7 +796,7 @@ class Server(LearningEntity):
 
         print(f"*** {self.__str__()} train *** Cluster: {cluster_num} ***")
         server_loader = DataLoader(self.global_data , batch_size=experiment_config.batch_size, shuffle=False,
-                                   num_workers=4, drop_last=True)
+                                   num_workers=0, drop_last=True)
 
 
 
