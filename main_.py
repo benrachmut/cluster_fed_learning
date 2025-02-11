@@ -48,10 +48,10 @@ if __name__ == '__main__':
     mix_percentage_list = [0.2]
     server_input_tech_list = [ServerInputTech.max]
     nets_types_list  = [NetsType.C_alex_S_alex]#,NetsType.C_alex_S_vgg]#,NetsType.C_alex_S_vgg]
-    cluster_technique_list = [ClusterTechnique.kmeans,ClusterTechnique.manual]
+    cluster_technique_list = [ClusterTechnique.manual]
     server_feedback_technique_list = [ServerFeedbackTechnique.similar_to_cluster]#[ServerFeedbackTechnique.similar_to_cluster,ServerFeedbackTechnique.similar_to_client]
 
-    net_cluster_technique_list = [NetClusterTechnique.multi_model]#,NetClusterTechnique.multi_head]
+    net_cluster_technique_list = [NetClusterTechnique.multi_head,NetClusterTechnique.multi_model]#,NetClusterTechnique.multi_head]
 
     for data_type in data_types:
         data_to_pickle ={data_type.name:{}}
