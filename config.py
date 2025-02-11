@@ -3,6 +3,7 @@ from random import random
 
 from matplotlib import pyplot as plt
 
+
 class ServerInputTech(Enum):
     mean = 1
     max = 2
@@ -45,6 +46,7 @@ class NetClusterTechnique(Enum):
 
 class ExperimentConfig:
     def __init__(self):
+        self.number_of_classes_in_non_iid_customer = 2
         self.num_rounds_multi_head = 2
         self.server_input_tech = None
         self.epochs_num_train_server = 10

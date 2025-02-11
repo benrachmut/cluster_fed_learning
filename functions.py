@@ -156,12 +156,43 @@ def get_match_mix_clients(mix_tensor_list,clients_tensor_list):
     return ans
 
 
+def group_labels(label_dict, group_size=2):
+    # Sort the labels to ensure sequential order
+    labels = sorted(label_dict.keys())
+
+    # Create the groups dynamically based on the desired group_size
+    groups = {
+        f"group_{i // group_size + 1}": labels[i:i + int(group_size)]
+        for i in range(0, len(labels), int(group_size))
+    }
+    ans = {}
+    for group_name,group_lists in groups.items():
+        data_per_group = []
+        for member in group_lists:
+            data_per_group.append(label_dict[member])
+        ans[group_name] = data_per_group
+    return ans
+
+
+
+
+
+
 def get_split_train_client_data(classes_data_dict):
     data_to_mix_list,target_original_data_dict = get_data_to_mix_and_data_to_leave(classes_data_dict)
     mix_tensor_list = get_mix_torch(data_to_mix_list)
-    clients_tensor_list = get_mix_tensor_list(target_original_data_dict)
-    if len(mix_tensor_list)!=len(clients_tensor_list):raise Exception("lists need to be same length")
-    match_mix_clients = get_match_mix_clients(mix_tensor_list,clients_tensor_list)
+    how_many_groups = experiment_config.number_of_classes_in_non_iid_customer
+
+
+    target_original_data_dict = group_labels(target_original_data_dict,how_many_groups)
+    for group_name, tensor_list in target_original_data_dict.items():
+    print()
+
+
+    #clients_tensor_list = get_mix_tensor_list(target_original_data_dict)
+
+    #if len(mix_tensor_list)!=len(clients_tensor_list):raise Exception("lists need to be same length")
+    match_mix_clients = get_match_mix_clients(mix_tensor_list,target_original_data_dict)
     ans = {}
     for i in range(len(match_mix_clients)):ans[i]=match_mix_clients[i]
 
