@@ -249,7 +249,7 @@ class LearningEntity(ABC):
                 outputs = model(inputs, cluster_id=cluster_id)
 
                 # Get the top-k predictions
-                _, top_k_preds = torch.topk(outputs, k, dim=1)
+                _, top_k_preds = torch.topk(outputs, 1, dim=1)
 
                 # Update the total number of predictions and correct predictions
                 total += targets.size(0)
@@ -535,17 +535,6 @@ class Client(LearningEntity):
 
         return  result_to_print
 
-class MyDataset(Dataset):
-    def __getitem__(self, index):
-        data = self.data[index]
-        return data, index  # Now returning index too!
-def custom_collate_fn(batch):
-    """
-    Custom collate function to return dataset indices along with inputs.
-    """
-    inputs, indices = zip(*batch)  # Assuming dataset returns (data, index)
-    inputs = torch.stack(inputs, dim=0)
-    return inputs, torch.tensor(indices, dtype=torch.long)
 
 class Server(LearningEntity):
     def __init__(self,id_,global_data,test_data, clients_ids,clients_test_data_dict):
@@ -658,15 +647,18 @@ class Server(LearningEntity):
         for _ in range(experiment_config.num_rounds_multi_head):
             for cluster_id, mean_pseudo_label_for_cluster in mean_pseudo_labels_per_cluster.items():
                 self.train(mean_pseudo_label_for_cluster, cluster_id)
-                if experiment_config.server_feedback_technique == ServerFeedbackTechnique.similar_to_cluster:
-                    pseudo_labels_for_cluster = self.evaluate_for_cluster(cluster_id)
-                    for client_id in self.clusters_client_id_dict[t][cluster_id]:
-                        self.pseudo_label_to_send[client_id] = pseudo_labels_for_cluster
+            if experiment_config.server_feedback_technique == ServerFeedbackTechnique.similar_to_cluster:
+
+                for cluster_id in mean_pseudo_labels_per_cluster.keys():
+                        pseudo_labels_for_cluster = self.evaluate_for_cluster(cluster_id)
+                        for client_id in self.clusters_client_id_dict[t][cluster_id]:
+                            self.pseudo_label_to_send[client_id] = pseudo_labels_for_cluster
 
         if experiment_config.server_feedback_technique == ServerFeedbackTechnique.similar_to_client:
             pseudo_labels_for_cluster_list = []
             for cluster_id, mean_pseudo_label_for_cluster in mean_pseudo_labels_per_cluster.items():
                 self.train(mean_pseudo_label_for_cluster, cluster_id)
+            for cluster_id in mean_pseudo_labels_per_cluster.keys():
                 pseudo_labels_for_cluster_list.append(self.evaluate_for_cluster(cluster_id))
 
             pseudo_labels_to_send = self.select_confident_pseudo_labels(pseudo_labels_for_cluster_list)
@@ -725,6 +717,9 @@ class Server(LearningEntity):
             test_data_per_clients = self.clients_test_data_dict[client_id]
             cluster_id_for_client = self.get_cluster_of_client(client_id, t)
             if experiment_config.net_cluster_technique == NetClusterTechnique.multi_model:
+                print("cluster_id_for_client",cluster_id_for_client)
+                print("len(self.multi_model_dict)",len(self.multi_model_dict))
+
                 selected_model = self.multi_model_dict[cluster_id_for_client]
                 cluster_id_for_client = 0
 

@@ -89,7 +89,7 @@ class ExperimentConfig:
             self.num_clients = 10
 
         if data_type == DataType.NonIID:
-            self.mix_percentage = 0.2
+            self.mix_percentage = None
             self.identical_clients = 2
             self.batch_size = 128
             self.num_clients = 10
@@ -157,7 +157,7 @@ class ExperimentConfig:
             #self.epochs_num_input = 20
             #self.epochs_num_train = 10
             #self.iterations = 11
-            self.iterations = 10
+            self.iterations = 6
 
             self.percent_train_data_use = 1
             self.percent_test_relative_to_train = 1

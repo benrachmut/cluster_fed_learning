@@ -44,54 +44,66 @@ if __name__ == '__main__':
     exp_type = ExpType.full
 
 
-    data_types =[DataType.NonIID,DataType.IID]
-    server_input_tech_list = [ServerInputTech.max,ServerInputTech.mean]
-    nets_types_list  = [NetsType.C_alex_S_vgg]#[NetsType.C_alex_S_alex,NetsType.C_alex_S_vgg]
-    cluster_technique_list = [ClusterTechnique.manual]
+    data_types =[DataType.NonIID]
+    mix_percentage_list = [0.2]
+    server_input_tech_list = [ServerInputTech.max]
+    nets_types_list  = [NetsType.C_alex_S_alex]#,NetsType.C_alex_S_vgg]#,NetsType.C_alex_S_vgg]
+    cluster_technique_list = [ClusterTechnique.kmeans,ClusterTechnique.manual]
     server_feedback_technique_list = [ServerFeedbackTechnique.similar_to_cluster]#[ServerFeedbackTechnique.similar_to_cluster,ServerFeedbackTechnique.similar_to_client]
 
-    net_cluster_technique_list = [NetClusterTechnique.multi_model,NetClusterTechnique.multi_head]
+    net_cluster_technique_list = [NetClusterTechnique.multi_model]#,NetClusterTechnique.multi_head]
 
     for data_type in data_types:
+        data_to_pickle ={data_type.name:{}}
         if data_type == DataType.NonIID:
-            num_cluster_list = ["known_labels", 1,2,5]
+            num_cluster_list = [5,3,"known_labels", 1]
         else:
-            num_cluster_list = [1, 5,  2]
-
-        data_to_pickle = {}
+            num_cluster_list = [1, 5, 2,3,4]
+            mix_percentage_list = [1]
         experiment_config.update_data_type(data_type)
         experiment_config.update_type_of_experiment(exp_type)
-        clients_train_data_dict, server_train_data, clients_test_data_dict, server_test_data = create_data(data_type)
-        if experiment_config.percent_train_data_use<1:
-            clients_train_data_dict, server_train_data, clients_test_data_dict, server_test_data = cut_data_v2(clients_train_data_dict, server_train_data, clients_test_data_dict, server_test_data)
+        for mix_percentage in mix_percentage_list:
+            mix_percentage_name = str(int(mix_percentage*100))
 
-        for  net_cluster_technique in    net_cluster_technique_list:
-            experiment_config.net_cluster_technique= net_cluster_technique
-            data_to_pickle[net_cluster_technique.name]= {}
+            experiment_config.mix_percentage = mix_percentage
+            data_to_pickle[data_type.name][mix_percentage_name] = {}
+            clients_train_data_dict, server_train_data, clients_test_data_dict, server_test_data = create_data(data_type)
+            #if experiment_config.percent_train_data_use<1:
+            #    clients_train_data_dict, server_train_data, clients_test_data_dict, server_test_data = cut_data_v2(clients_train_data_dict, server_train_data, clients_test_data_dict, server_test_data)
 
             for net_type in nets_types_list:
                 experiment_config.update_net_type(net_type)
-                data_to_pickle[net_cluster_technique.name][net_type.name] = {}
+                data_to_pickle[data_type.name][mix_percentage_name][net_type.name] = {}
 
-                for num_cluster in num_cluster_list:
-                    if num_cluster == "known_labels" and data_type == DataType.IID:
-                        continue
-                    else:
-                        experiment_config.num_clusters = num_cluster
-                        if num_cluster == 1:
-                            experiment_config.num_rounds_multi_head = 1
+                for net_cluster_technique in net_cluster_technique_list:
+                    experiment_config.net_cluster_technique = net_cluster_technique
+                    data_to_pickle[data_type.name][mix_percentage_name][net_type.name][net_cluster_technique.name]={}
+
+                    for num_cluster in num_cluster_list:
+                        if num_cluster == "known_labels" and data_type == DataType.IID:
+                            continue
                         else:
-                            experiment_config.num_rounds_multi_head = 1
+                            experiment_config.num_clusters = num_cluster
+                            if num_cluster == 1:
+                                experiment_config.num_rounds_multi_head = 1
+                            else:
+                                experiment_config.num_rounds_multi_head = 2
+                            data_to_pickle[data_type.name][mix_percentage_name][net_type.name][net_cluster_technique.name][num_cluster] = {}
 
-                        data_to_pickle[net_cluster_technique.name][net_type.name][num_cluster] = {}
+
+
+
+
 
                         for server_input_tech in server_input_tech_list:
                             experiment_config.server_input_tech = server_input_tech
-                            data_to_pickle[net_cluster_technique.name][net_type.name][num_cluster] [server_input_tech.name] = {}
+                            data_to_pickle[data_type.name][mix_percentage_name][net_type.name][net_cluster_technique.name][num_cluster][server_input_tech.name] = {}
 
                             for cluster_technique in cluster_technique_list:
                                 experiment_config.cluster_technique = cluster_technique
-                                data_to_pickle[net_cluster_technique.name][net_type.name][num_cluster][server_input_tech.name][cluster_technique.name] = {}
+                                data_to_pickle[data_type.name][mix_percentage_name][net_type.name][net_cluster_technique.name][num_cluster][server_input_tech.name][cluster_technique.name] = {}
+
+
                                 for server_feedback_technique in server_feedback_technique_list:
                                     experiment_config.server_feedback_technique = server_feedback_technique
                                     experiment_config.update_type_of_experiment(exp_type)
@@ -109,10 +121,11 @@ if __name__ == '__main__':
                                         for c in clients:
                                             c.pseudo_label_received = server.pseudo_label_to_send[c.id_]
                                         rd = RecordData(clients, server)
-                                        data_to_pickle[net_cluster_technique.name][net_type.name][num_cluster][server_input_tech.name][cluster_technique.name][server_feedback_technique.name]  = rd
-
-                                        pik_name = net_cluster_technique.name +"_" +net_type.name+"_" + str(num_cluster)+"_" +server_input_tech.name+"_" +cluster_technique.name+"_" +server_feedback_technique.name
-                                        pickle_file_path = pik_name +"__.pkl"
+                                        data_to_pickle[data_type.name][mix_percentage_name][net_type.name][net_cluster_technique.name][num_cluster][server_input_tech.name][
+                                            cluster_technique.name][server_feedback_technique.name] = rd
+                                        pik_name = data_type.name+"_"+mix_percentage_name+"_"+net_type.name+"_"+str(num_cluster)+"_"+net_cluster_technique.name+"_"+server_input_tech.name+"_"+cluster_technique.name +"_"+server_feedback_technique.name
+                                        #pik_name = net_cluster_technique.name +"_" +net_type.name+"_" + str(num_cluster)+"_" +server_input_tech.name+"_" +cluster_technique.name+"_" +server_feedback_technique.name
+                                        pickle_file_path = pik_name +".pkl"
 
                                         with open(pickle_file_path, "wb") as file:
                                             pickle.dump(data_to_pickle, file)
