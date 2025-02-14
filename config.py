@@ -3,6 +3,28 @@ from random import random
 
 from matplotlib import pyplot as plt
 
+cifar100_label_to_superclass = {
+    0: 0,  1: 0,  2: 0,  3: 0,  4: 0,     # Aquatic mammals
+    5: 1,  6: 1,  7: 1,  8: 1,  9: 1,     # Fish
+    10: 2, 11: 2, 12: 2, 13: 2, 14: 2,    # Flowers
+    15: 3, 16: 3, 17: 3, 18: 3, 19: 3,    # Food containers
+    20: 4, 21: 4, 22: 4, 23: 4, 24: 4,    # Fruit and vegetables
+    25: 5, 26: 5, 27: 5, 28: 5, 29: 5,    # Household electrical devices
+    30: 6, 31: 6, 32: 6, 33: 6, 34: 6,    # Household furniture
+    35: 7, 36: 7, 37: 7, 38: 7, 39: 7,    # Insects
+    40: 8, 41: 8, 42: 8, 43: 8, 44: 8,    # Large carnivores
+    45: 9, 46: 9, 47: 9, 48: 9, 49: 9,    # Large man-made outdoor things
+    50: 10, 51: 10, 52: 10, 53: 10, 54: 10,  # Large natural outdoor scenes
+    55: 11, 56: 11, 57: 11, 58: 11, 59: 11,  # Large omnivores and herbivores
+    60: 12, 61: 12, 62: 12, 63: 12, 64: 12,  # Medium-sized mammals
+    65: 13, 66: 13, 67: 13, 68: 13, 69: 13,  # Non-insect invertebrates
+    70: 14, 71: 14, 72: 14, 73: 14, 74: 14,  # People
+    75: 15, 76: 15, 77: 15, 78: 15, 79: 15,  # Reptiles
+    80: 16, 81: 16, 82: 16, 83: 16, 84: 16,  # Small mammals
+    85: 17, 86: 17, 87: 17, 88: 17, 89: 17,  # Trees
+    90: 18, 91: 18, 92: 18, 93: 18, 94: 18,  # Vehicles 1
+    95: 19, 96: 19, 97: 19, 98: 19, 99: 19   # Vehicles 2
+}
 
 class ServerInputTech(Enum):
     mean = 1
@@ -46,6 +68,8 @@ class NetClusterTechnique(Enum):
 
 class ExperimentConfig:
     def __init__(self):
+        self.number_of_optimal_clusters = 10
+        self.known_clusters = None
         self.number_of_classes_in_non_iid_customer = 2
         self.num_rounds_multi_head = 2
         self.server_input_tech = None
@@ -102,9 +126,9 @@ class ExperimentConfig:
         if net_type == NetsType.C_alex_S_alex:
             self.client_net_type = NetType.ALEXNET
             self.server_net_type = NetType.ALEXNET
-            self.learning_rate_train_c = 0.001
+            self.learning_rate_train_c = 0.0001
             self.learning_rate_fine_tune_c = 0.001
-            self.learning_rate_train_s = 0.0001
+            self.learning_rate_train_s = 0.001
             self.with_server_net = True
             self.epochs_num_train_server = 10
             self.epochs_num_input_fine_tune_clients = 10

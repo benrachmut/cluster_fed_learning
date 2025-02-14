@@ -123,7 +123,7 @@ def get_server_model():
     if experiment_config.net_cluster_technique== NetClusterTechnique.multi_head:
         num_heads = experiment_config.num_clusters
         if isinstance(num_heads, str):
-            num_heads = 5
+            num_heads = experiment_config.number_of_optimal_clusters
     else:
         num_heads = 1
 
@@ -148,7 +148,7 @@ class LearningEntity(ABC):
         self.model=None
         #self.weights = None
         self.accuracy_per_client_1 = {}
-        self.accuracy_per_client_5 = {}
+        #self.accuracy_per_client_5 = {}
 
         #self.accuracy_pl_measures= {}
         #self.accuracy_test_measures_k_half_cluster = {}
@@ -225,10 +225,6 @@ class LearningEntity(ABC):
        #print(f"Shape of the 2D pseudo-label matrix: {all_probs.shape}")
         return all_probs
 
-
-
-
-
     def evaluate_accuracy(self, data_, model=None, k=1, cluster_id=None):
         if model is None:
             model = self.model
@@ -260,12 +256,12 @@ class LearningEntity(ABC):
                 # Forward pass through the specific cluster head
                 outputs = model(inputs, cluster_id=cluster_id)
 
-                # Get the top-k predictions
-                _, top_k_preds = torch.topk(outputs, 1, dim=1)
+                # Get the top-1 predictions directly
+                top_1_preds = outputs.argmax(dim=1)
 
                 # Update the total number of predictions and correct predictions
                 total += targets.size(0)
-                correct += (top_k_preds == targets.view(-1, 1)).sum().item()
+                correct += (top_1_preds == targets).sum().item()
 
         # Calculate accuracy as a percentage
         accuracy = 100 * correct / total if total > 0 else 0.0
@@ -333,21 +329,24 @@ class Client(LearningEntity):
 
     def iteration_context(self, t):
         self.current_iteration = t
-        for _ in range(3):
-            if t>0:
-                train_loss = self.train(self.pseudo_label_received)
-            train_loss = self.fine_tune()
-            self.pseudo_label_to_send = self.evaluate()
-            acc = self.evaluate_accuracy(self.local_test_set)
-            if isinstance(experiment_config.num_classes,int):
-                num_classes = experiment_config.num_classes
-            else:
-                num_classes = 5
+        #for _ in range(100):
+        if t>0:
+            train_loss = self.train(self.pseudo_label_received)
+        train_loss = self.fine_tune()
+        self.pseudo_label_to_send = self.evaluate()
+        acc = self.evaluate_accuracy(self.local_test_set)
 
-            if self.evaluate_accuracy(self.test_global_data) != experiment_config.num_classes:
-                break
-            else:
-                self.model.apply(self.initialize_weights)
+        acc_test = self.evaluate_accuracy(self.test_global_data)
+            #if experiment_config.data_set_selected == DataSet.CIFAR100:
+            #    if acc_test != 1:
+            #        break
+            #    else:
+            #        self.model.apply(self.initialize_weights)
+            #if experiment_config.data_set_selected == DataSet.CIFAR10:
+            #    if acc_test != 10:
+            #        break
+            #    else:
+            #        self.model.apply(self.initialize_weights)
 
         #if t > 0:
         #    client_cluster = self.get_client_cluster(t)
@@ -355,7 +354,7 @@ class Client(LearningEntity):
         #        raise Exception("above method is not working well")
         #    self.accuracy_test_measures_at_server[t] = self.server.evaluate_accuracy(self.test_set, model=None, k=1, cluster_id=client_cluster)
         self.accuracy_per_client_1[t] = self.evaluate_accuracy(self.local_test_set, k=1)
-        self.accuracy_per_client_5[t] = self.evaluate_accuracy(self.local_test_set, k=5)
+        #self.accuracy_per_client_5[t] = self.evaluate_accuracy(self.local_test_set, k=5)
 
         self.accuracy_test_global_data[t] = self.evaluate_accuracy(self.test_global_data, k=1)
         self.accuracy_global_data[t] = self.evaluate_accuracy(self.global_data, k=1)
@@ -565,7 +564,7 @@ class Server(LearningEntity):
         if isinstance(experiment_config.num_clusters,int):
             num_clusters = experiment_config.num_clusters
         else:
-            num_clusters = 5
+            num_clusters = experiment_config.number_of_optimal_clusters
 
         self.accuracy_server_test_1 = {}
         self.accuracy_global_data_1 = {}
@@ -595,7 +594,7 @@ class Server(LearningEntity):
         self.accuracy_per_client_1_max = {}
         for client_id in self.clients_ids:
             self.accuracy_per_client_1[client_id]={}
-            self.accuracy_per_client_5[client_id]={}
+            #self.accuracy_per_client_5[client_id]={}
             self.accuracy_per_client_1_max[client_id]={}
 
         #self.accuracy_aggregated_head = {}
@@ -709,7 +708,7 @@ class Server(LearningEntity):
         if isinstance(experiment_config.num_clusters,int):
             num_clusters =experiment_config.num_clusters
         else:
-            num_clusters =5
+            num_clusters =experiment_config.number_of_optimal_clusters
 
         for cluster_id in range(num_clusters):
             if experiment_config.net_cluster_technique == NetClusterTechnique.multi_model:
@@ -725,6 +724,7 @@ class Server(LearningEntity):
             self.accuracy_global_data_1[cluster_id][t] = self.evaluate_accuracy(self.global_data,
                                                                                 model=selected_model, k=1,
                                                                                 cluster_id=cluster_id_to_examine)
+
         for client_id in self.clients_ids:
             test_data_per_clients = self.clients_test_data_dict[client_id]
             cluster_id_for_client = self.get_cluster_of_client(client_id, t)
@@ -741,10 +741,10 @@ class Server(LearningEntity):
             self.accuracy_per_client_1[client_id][t] = self.evaluate_accuracy(test_data_per_clients,
                                                                               model=selected_model, k=1,
                                                                               cluster_id=cluster_id_for_client)
-            print("client_id",client_id,"accuracy_per_client_5")
-            self.accuracy_per_client_5[client_id][t] = self.evaluate_accuracy(test_data_per_clients,
-                                                                              model=selected_model, k=5,
-                                                                              cluster_id=cluster_id_for_client)
+            #print("client_id",client_id,"accuracy_per_client_5")
+            #self.accuracy_per_client_5[client_id][t] = self.evaluate_accuracy(test_data_per_clients,
+             #                                                                 model=selected_model, k=5,
+             #                                                                 cluster_id=cluster_id_for_client)
             l1 = []
             l2 = []
             l3 = []
@@ -1056,14 +1056,39 @@ class Server(LearningEntity):
 
         non_center_to_which_center_dict = self.get_non_center_to_which_center_dict(L2_of_non_centers)
         ans = self.prep_clusters(non_center_to_which_center_dict)
+        centers_to_add = self.get_centers_to_add(clusters_centers_dict,ans)
+        temp_ans = {}
+        if len(centers_to_add)>0:
+            for cluster_id in range(max(ans.keys())+1,max(ans.keys())+1+len(centers_to_add)):
+                index = cluster_id-(max(ans.keys())+1)
+                temp_ans[cluster_id]=centers_to_add[index]
+        for k,v in temp_ans.items():
+            ans[k]=v
+
+
+
         return ans
+    def get_centers_to_add(self,clusters_centers_dict,ans):
+        centers_to_add =[]
+        for center_id in clusters_centers_dict.keys():
+            center_to_add = self.center_id_not_in_ans(ans, center_id)
+            if center_to_add is not None:
+                centers_to_add.append(center_to_add)
+        return centers_to_add
+    def center_id_not_in_ans(self,ans,center_id):
+        for list_of_id in ans.values():
+            if center_id in list_of_id:
+                return
+        return center_id
+
+
 
     def manual_grouping(self):
         clusters_client_id_dict = {}
         if isinstance(experiment_config.num_clusters,int):
             num_clusters = experiment_config.num_clusters
         else:
-            num_clusters = 5
+            num_clusters = experiment_config.number_of_optimal_clusters
 
         if num_clusters == 1:
             clusters_client_id_dict[0]=self.clients_ids
@@ -1083,13 +1108,8 @@ class Server(LearningEntity):
 
         flag = False
         if experiment_config.num_clusters == "known_labels":
-            ans = {}
-            ans[0] = [0,1]
-            ans[1] = [2, 3]
-            ans[2] = [4, 5]
-            ans[3] = [6, 7]
-            ans[4] = [8, 9]
-            clusters_client_id_dict = ans
+
+            clusters_client_id_dict = experiment_config.known_clusters
             flag = True
         if experiment_config.cluster_technique == ClusterTechnique.kmeans and not flag:
             clusters_client_id_dict = self.k_means_grouping()

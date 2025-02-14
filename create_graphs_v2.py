@@ -43,7 +43,7 @@ def get_dat_server_clients(cluster_amount):
     try:
 
 
-        single_data = data_[data_type][str(percent_mix)][net_type][server_arch][cluster_amount][server_input_tech][cluster_tech][feedback]
+        single_data = data_[type_data][data_type][amount_of_clients][str(percent_mix)][net_type][server_arch][cluster_amount][server_input_tech][cluster_tech][feedback]
 
         client_data = None
         server_data = None
@@ -140,7 +140,7 @@ def create_graph():
     plt.xlabel("Iterations")
     plt.ylabel("Accuracy Percentage_" + measure.name)
     plt.title(graph_name)
-
+    plt.ylim(25,75)
     # Move the legend to the right outside the plot
     plt.legend(title="Entity and clusters #", loc="center left", bbox_to_anchor=(1, 0.5))
 
@@ -158,12 +158,14 @@ if __name__ == '__main__':
 
 
     create_jpeg=False
-    file_name = "NonIID_20_C_alex_S_vgg_known_labels_multi_head_max_manual_similar_to_cluster.pkl"
+    file_name = "increase num_of clients cifar 10/CIFAR10_NonIID_50_20_C_alex_S_alex_5_multi_head_max_manual_similar_to_cluster.pkl"
     data_ = extract_data()
+    type_data = "CIFAR10"
     data_type = "NonIID"
+    amount_of_clients = 25
     percent_mix = 20
-    net_type = "C_alex_S_vgg" #C_alex_S_vgg
-    server_arch = "multi_head"#"multi_head"#"multi_model"
+    net_type = "C_alex_S_alex"#C_alex_S_vgg
+    server_arch = "multi_model"#"multi_head"#"multi_model"
     cluster_num_list = ["known_labels",1,3,5]
     server_input_tech = "max"
     cluster_tech = "manual"
