@@ -448,7 +448,7 @@ def change_format_of_clients_data_dict(client_data_sets):
     return clients_data_dict
 
 
-def get_data_set(data_type,is_train ):
+def get_data_set(is_train ):
     transform = transforms.Compose([
         transforms.RandomHorizontalFlip(),  # Data augmentation
         transforms.RandomCrop(32, padding=4),  # Data augmentation
@@ -465,12 +465,9 @@ def get_data_set(data_type,is_train ):
 
     data_by_classification_dict = get_data_by_classification(train_set)
     selected_classes_list = sorted(data_by_classification_dict.keys())[:experiment_config.num_classes]
-    if data_type == DataType.IID:
-        clients_data_dict, server_data = split_clients_server_data_IID(train_set, experiment_config.server_split_ratio)
 
-    if data_type == DataType.NonIID:
 
-        clients_data_dict, server_data = split_clients_server_data_Non_IID(data_by_classification_dict, selected_classes_list)
+    clients_data_dict, server_data = split_clients_server_data_Non_IID(data_by_classification_dict, selected_classes_list)
 
     return selected_classes_list, clients_data_dict, server_data
 
@@ -523,14 +520,9 @@ def print_data_for_debug(clients_data_dict,server_data, test_set):
     check_data_targets(test_set, "test" + str(counter))
 
 
-def create_data(data_type):
-
-
-    selected_classes_list, clients_train_data_dict, server_train_data = get_data_set(data_type, is_train = True)
-    selected_test_classes_list, clients_test_data_dict, server_test_data = get_data_set(data_type, is_train = False)
-
-
-
+def create_data():
+    selected_classes_list, clients_train_data_dict, server_train_data = get_data_set( is_train = True)
+    selected_test_classes_list, clients_test_data_dict, server_test_data = get_data_set( is_train = False)
     return clients_train_data_dict, server_train_data, clients_test_data_dict, server_test_data
 
 #### ----------------- SPLIT DATA BETWEEN SERVER AND CLIENTS ----------------- ####

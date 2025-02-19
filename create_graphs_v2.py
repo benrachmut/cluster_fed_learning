@@ -71,28 +71,15 @@ def get_ana_data(cluster_num_list):
         server_data, client_data = get_dat_server_clients(cluster_num)
         if server_data is None:
             break
-        ans[cluster_num]= {}
+        if cluster_num == "known_labels":
+            cluster_num= "Optimal"
+
+        ans[cluster_num] = {}
 
         ans[cluster_num]["server"] = server_data
         ans[cluster_num]["clients"] = client_data
     return ans
 
-
-
-    for cluster_amount in  cluster_num_list:
-        ans[cluster_amount] = {}
-        for server_input_tech in server_input_tech_list:
-            ans[cluster_amount][server_input_tech] = {}
-            for feedback in feedback_list:
-                server_data, client_data = get_dat_server_clients (cluster_amount,feedback,server_input_tech)
-                if server_data is None:
-                    break
-                ans[cluster_amount][server_input_tech][feedback] = {}
-
-                ans[cluster_amount][server_input_tech][feedback]["server"] = server_data
-                ans[cluster_amount][server_input_tech][feedback]["clients"] = client_data
-
-    return ans
 
 def twist_data():
     ans = {}
@@ -140,7 +127,7 @@ def create_graph():
     plt.xlabel("Iterations")
     plt.ylabel("Accuracy Percentage_" + measure.name)
     plt.title(graph_name)
-    plt.ylim(25,75)
+    #plt.ylim(25,75)
     # Move the legend to the right outside the plot
     plt.legend(title="Entity and clusters #", loc="center left", bbox_to_anchor=(1, 0.5))
 
@@ -157,18 +144,18 @@ def create_graph():
 if __name__ == '__main__':
 
 
-    create_jpeg=False
-    file_name = "increase num_of clients cifar 10/CIFAR10_NonIID_50_20_C_alex_S_alex_5_multi_head_max_manual_similar_to_cluster.pkl"
+    create_jpeg=True
+    file_name = "cifar 100 amount clients and cluster difference/CIFAR100_NonIID_100_20_C_alex_S_alex_known_labels_multi_model_max_kmeans_similar_to_cluster.pkl"
     data_ = extract_data()
-    type_data = "CIFAR10"
+    type_data = "CIFAR100"
     data_type = "NonIID"
-    amount_of_clients = 25
+    amount_of_clients = 50
     percent_mix = 20
     net_type = "C_alex_S_alex"#C_alex_S_vgg
     server_arch = "multi_model"#"multi_head"#"multi_model"
-    cluster_num_list = ["known_labels",1,3,5]
+    cluster_num_list = ["known_labels",10,1,5]
     server_input_tech = "max"
-    cluster_tech = "manual"
+    cluster_tech = "kmeans"#"kmeans"#"manual"#"kmeans"
     feedback = "similar_to_cluster"
 
 
@@ -176,7 +163,7 @@ if __name__ == '__main__':
 
     data_ = get_ana_data(cluster_num_list)
     #data_ = twist_data()
-    first_part_graph_name = server_arch + "_" + net_type + "_" + str(percent_mix)
+    first_part_graph_name = server_arch + "_" + net_type + "_" + str(percent_mix)+"_"+cluster_tech
 
 
     graph_name = first_part_graph_name
