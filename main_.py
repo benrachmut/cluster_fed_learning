@@ -31,7 +31,7 @@ if __name__ == '__main__':
 
 
     exp_type = ExpType.full
-    num_clients_list = [50]
+    num_clients_list = [20]
 
     data_types =[DataType.NonIID]
     mix_percentage_list = [0.2]
@@ -52,7 +52,7 @@ if __name__ == '__main__':
         for data_type in data_types:
             data_to_pickle[data_set.name][data_type.name] ={}
             if data_type == DataType.NonIID:
-                num_cluster_list = ["Optimal",10, 5,1]
+                num_cluster_list = [5,1,"Optimal", 3]
             else:
                 num_cluster_list = [1, 5, 2,3,4]
                 mix_percentage_list = [1]

@@ -68,7 +68,7 @@ class NetClusterTechnique(Enum):
 
 class ExperimentConfig:
     def __init__(self):
-        self.number_of_optimal_clusters = 10
+        self.number_of_optimal_clusters = 5
         self.known_clusters = None
         self.number_of_classes_in_non_iid_customer = 2
         self.num_rounds_multi_head = 2

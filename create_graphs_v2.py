@@ -158,17 +158,17 @@ if __name__ == '__main__':
 
 
     create_jpeg=False
-    file_name = "CIFAR100_NonIID_50_20_C_alex_S_alex_10_multi_model_max_manual_similar_to_cluster.pkl"
+    file_name = "CIFAR100_NonIID_20_20_C_alex_S_vgg_1_multi_model_max_kmeans_similar_to_cluster.pkl"
     data_ = extract_data()
     type_data = "CIFAR100"
     data_type = "NonIID"
-    amount_of_clients = 50
+    amount_of_clients = 20
     percent_mix = 20
-    net_type = "C_alex_S_alex"#C_alex_S_vgg
+    net_type = "C_alex_S_vgg"#C_alex_S_vgg
     server_arch = "multi_model"#"multi_head"#"multi_model"
-    cluster_num_list = [10]#["Optimal",1,5,10]
+    cluster_num_list = [5,1]#["Optimal",1,5,10]
     server_input_tech = "max"
-    cluster_tech = "manual"#"kmeans"
+    cluster_tech ="kmeans" #"manual"#"kmeans"
     feedback = "similar_to_cluster"
 
 
