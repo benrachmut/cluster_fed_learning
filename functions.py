@@ -448,7 +448,7 @@ def change_format_of_clients_data_dict(client_data_sets):
     return clients_data_dict
 
 
-def get_data_set(data_type,is_train ):
+def get_data_set(is_train ):
     transform = transforms.Compose([
         transforms.RandomHorizontalFlip(),  # Data augmentation
         transforms.RandomCrop(32, padding=4),  # Data augmentation
@@ -465,12 +465,9 @@ def get_data_set(data_type,is_train ):
 
     data_by_classification_dict = get_data_by_classification(train_set)
     selected_classes_list = sorted(data_by_classification_dict.keys())[:experiment_config.num_classes]
-    if data_type == DataType.IID:
-        clients_data_dict, server_data = split_clients_server_data_IID(train_set, experiment_config.server_split_ratio)
 
-    if data_type == DataType.NonIID:
 
-        clients_data_dict, server_data = split_clients_server_data_Non_IID(data_by_classification_dict, selected_classes_list)
+    clients_data_dict, server_data = split_clients_server_data_Non_IID(data_by_classification_dict, selected_classes_list)
 
     return selected_classes_list, clients_data_dict, server_data
 
@@ -523,11 +520,11 @@ def print_data_for_debug(clients_data_dict,server_data, test_set):
     check_data_targets(test_set, "test" + str(counter))
 
 
-def create_data(data_type):
+def create_data():
 
 
-    selected_classes_list, clients_train_data_dict, server_train_data = get_data_set(data_type, is_train = True)
-    selected_test_classes_list, clients_test_data_dict, server_test_data = get_data_set(data_type, is_train = False)
+    selected_classes_list, clients_train_data_dict, server_train_data = get_data_set( is_train = True)
+    selected_test_classes_list, clients_test_data_dict, server_test_data = get_data_set( is_train = False)
 
 
 
@@ -627,11 +624,18 @@ def create_clients(client_data_dict,server_data,test_set,server_test_data):
         known_clusters[cluster_num] = []
 
         data_index = 0
+
         for data_ in data_list:
             ids_list.append(id_)
             known_clusters[cluster_num].append(id_)
-            ans.append(Client(id_=id_, client_data=data_, global_data=server_data, global_test_data=server_test_data,
-                              local_test_data=test_set[group_name][data_index]))
+            if experiment_config.algorithm_selection ==AlgorithmSelected.PseudoLabelsClusters:
+                c = Client(id_=id_, client_data=data_, global_data=server_data, global_test_data=server_test_data,
+                              local_test_data=test_set[group_name][data_index])
+            if experiment_config.algorithm_selection ==AlgorithmSelected.NoFederatedLearning:
+
+                c = Client_NoFederatedLearning(id_=id_, client_data=data_, global_data=server_data, global_test_data=server_test_data,
+                           local_test_data=test_set[group_name][data_index],evaluate_every=experiment_config.epochs_num_input_fine_tune_clients)
+            ans.append(c)
             clients_test_by_id_dict[id_] = test_set[group_name][data_index]
             data_index = data_index+1
             id_ = id_+1

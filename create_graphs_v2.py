@@ -1,6 +1,7 @@
 # File path to your pickle file
 import pickle
 from itertools import cycle
+from sys import orig_argv
 
 import matplotlib.pyplot as plt
 from sklearn.metrics import accuracy_score
@@ -15,7 +16,9 @@ import os
 
 def extract_data():
     with open(file_name, 'rb') as file:
-        return pickle.load(file)
+        ans =  pickle.load(file)
+    return ans[data_set][num_clients][num_opt_clusters][mix_percentage][server_split_ratio]
+
 
 
 class Measure (Enum):
@@ -43,8 +46,8 @@ def get_dat_server_clients(cluster_amount):
     try:
 
 
-        single_data = data_[type_data][data_type][amount_of_clients][str(percent_mix)][net_type][server_arch][cluster_amount][server_input_tech][cluster_tech][feedback]
-
+        #single_data = data_[type_data][data_type][amount_of_clients][str(percent_mix)][net_type][server_arch][cluster_amount][server_input_tech][cluster_tech][feedback]
+        single_data = data_[cluster_amount]
         client_data = None
         server_data = None
         if measure == Measure.Local_Client_Validation:
@@ -79,20 +82,7 @@ def get_ana_data(cluster_num_list):
 
 
 
-    for cluster_amount in  cluster_num_list:
-        ans[cluster_amount] = {}
-        for server_input_tech in server_input_tech_list:
-            ans[cluster_amount][server_input_tech] = {}
-            for feedback in feedback_list:
-                server_data, client_data = get_dat_server_clients (cluster_amount,feedback,server_input_tech)
-                if server_data is None:
-                    break
-                ans[cluster_amount][server_input_tech][feedback] = {}
 
-                ans[cluster_amount][server_input_tech][feedback]["server"] = server_data
-                ans[cluster_amount][server_input_tech][feedback]["clients"] = client_data
-
-    return ans
 
 def twist_data():
     ans = {}
@@ -154,34 +144,93 @@ def create_graph():
     else:
         plt.show()
 
+def handle_data_PseudoLabelsClusters():
+    ans = {}
+    for cluster_num in num_cluster_list:
+        server_data, client_data = get_dat_server_clients(cluster_num)
+        if server_data is None:
+            break
+        ans[cluster_num] = {}
+
+        ans[cluster_num]["server"] = server_data
+        ans[cluster_num]["clients"] = client_data
+    return ans
+
+
+def get_dat_clients_NoFederatedLearning():
+    clients_dict = data_.client_accuracy_per_client_1
+    acc_per_iteration={}
+    for client_id,dict_ in clients_dict.items():
+        for epoch, acc in dict_.items():
+            if epoch not in acc_per_iteration:
+                acc_per_iteration[epoch]=[]
+            acc_per_iteration[epoch].append(acc)
+    ans = {}
+    counter = 0
+    for epoch,acc_list in acc_per_iteration.items():
+        ans[counter] = sum(acc_list)/len(acc_list)
+        counter = counter+1
+    return ans
+
+
+def handle_data_NoFederatedLearning():
+    ans = get_dat_clients_NoFederatedLearning()
+
+    return ans
+
+
 if __name__ == '__main__':
 
 
     create_jpeg=False
-    file_name = "CIFAR100_NonIID_20_20_C_alex_S_vgg_1_multi_model_max_kmeans_similar_to_cluster.pkl"
+    #file_name = "CIFAR100_50_10_2_NoFederatedLearning_C_alex_S_alex.pkl"
+    file_name = "CIFAR100_50_10_PseudoLabelsClusters_C_alex_S_alex_multi_model_kmeans_1.pkl"
+    # data
+    data_set = "CIFAR100"
+    num_clients = 50
+    num_opt_clusters = 10
+    mix_percentage = 0.2
+    server_split_ratio = 0.2
+
     data_ = extract_data()
-    type_data = "CIFAR100"
-    data_type = "NonIID"
-    amount_of_clients = 20
-    percent_mix = 20
-    net_type = "C_alex_S_vgg"#C_alex_S_vgg
-    server_arch = "multi_model"#"multi_head"#"multi_model"
-    cluster_num_list = [5,1]#["Optimal",1,5,10]
-    server_input_tech = "max"
-    cluster_tech ="kmeans" #"manual"#"kmeans"
-    feedback = "similar_to_cluster"
+
+    data_per_algo = {}
+    algorithm_selection_list = [AlgorithmSelected.PseudoLabelsClusters]
+    data_for_graph = {}
+    for algorithm_selection in algorithm_selection_list:
+        if algorithm_selection ==AlgorithmSelected.NoFederatedLearning:
+            nets_type = "C_alex_S_alex"
+            data_ = data_[algorithm_selection.name][nets_type]
+
+            data_for_graph = handle_data_NoFederatedLearning()
+        if algorithm_selection == AlgorithmSelected.PseudoLabelsClusters:
+            nets_type = "C_alex_S_alex"
+            net_cluster_technique = "multi_model"
+            server_input_tech = "max"
+            cluster_technique = "kmeans"  # [ClusterTechnique.kmeans,ClusterTechnique.manual]
+            server_feedback_technique = "similar_to_cluster"  # [ServerFeedbackTechnique.similar_to_cluster,ServerFeedbackTechnique.similar_to_client]
+            data_ = data_[algorithm_selection.name][nets_type][net_cluster_technique][server_input_tech][cluster_technique][server_feedback_technique]
+            num_cluster_list = [5, 1, "Optimal", 10]
+            measure = Measure.Local_Client_Validation
+            data_for_graph = handle_data_PseudoLabelsClusters()
+            print()
 
 
-    measure = Measure.Local_Client_Validation
 
-    data_ = get_ana_data(cluster_num_list)
+
+
+
+
+    #measure = Measure.Local_Client_Validation
+
+    #data_ = get_ana_data(cluster_num_list)
     #data_ = twist_data()
-    first_part_graph_name = server_arch + "_" + net_type + "_" + str(percent_mix)
+    #first_part_graph_name = server_arch + "_" + net_type + "_" + str(percent_mix)
 
 
-    graph_name = first_part_graph_name
-    data_for_graph = data_
-    create_graph()
+    graph_name = ""
+    #data_for_graph = data_
+    #create_graph()
 
 
 

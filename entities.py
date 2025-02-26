@@ -537,6 +537,46 @@ class Client(LearningEntity):
 
         return  result_to_print
 
+class Client_NoFederatedLearning(Client):
+    def __init__(self,id_, client_data, global_data,global_test_data,local_test_data,evaluate_every):
+        Client.__init__(self,id_, client_data, global_data,global_test_data,local_test_data)
+        self.evaluate_every = evaluate_every
+
+    def fine_tune(self):
+        print("*** " + self.__str__() + " fine-tune ***")
+
+        fine_tune_loader = DataLoader(self.local_data, batch_size=experiment_config.batch_size, shuffle=True)
+        self.model.train()  # Set the model to training mode
+
+        # Define loss function and optimizer
+
+        criterion = nn.CrossEntropyLoss()
+
+        optimizer = torch.optim.Adam(self.model.parameters(), lr=experiment_config.learning_rate_fine_tune_c)
+
+        epochs = experiment_config.epochs_num_input_fine_tune_clients_no_fl
+        for epoch in range(epochs):
+            self.epoch_count += 1
+            epoch_loss = 0
+            for inputs, targets in fine_tune_loader:
+                inputs, targets = inputs.to(device), targets.to(device)
+                optimizer.zero_grad()
+                outputs = self.model(inputs)
+
+                loss = criterion(outputs, targets)
+
+                # Backward pass and optimization
+                loss.backward()
+                optimizer.step()
+                epoch_loss += loss.item()
+            if   epoch % self.evaluate_every == 0 and epoch!=0:
+                self.accuracy_per_client_1[epoch] = self.evaluate_accuracy(self.local_test_set, k=1)
+
+            result_to_print = epoch_loss / len(fine_tune_loader)
+            print(f"Epoch [{epoch + 1}/{epochs}], Loss: {result_to_print:.4f}")
+        #self.weights = self.model.state_dict()self.weights = self.model.state_dict()
+
+        return  result_to_print
 
 class Server(LearningEntity):
     def __init__(self,id_,global_data,test_data, clients_ids,clients_test_data_dict):
@@ -1085,7 +1125,6 @@ class Server(LearningEntity):
 
         flag = False
         if experiment_config.num_clusters == "Optimal":
-
             clusters_client_id_dict = experiment_config.known_clusters
             flag = True
         if experiment_config.cluster_technique == ClusterTechnique.kmeans and not flag:
