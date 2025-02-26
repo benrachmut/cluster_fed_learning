@@ -2,6 +2,7 @@ import copy
 
 import pandas as pd
 from scipy.stats import ansari
+from sympy.physics.units import percent
 from torch.utils.data import TensorDataset, random_split, Subset, Dataset
 from torchvision.transforms import transforms
 
@@ -86,6 +87,9 @@ def get_mix_torch(data_to_mix_list):
     rnd.shuffle(all_mix_tuples)
     return split_list(all_mix_tuples, experiment_config.num_clients, 1357)
 
+
+
+
 def get_data_to_mix_and_data_to_leave(classes_data_dict):
     data_to_mix_list = []
     clients_original_data_dict = {}
@@ -155,8 +159,118 @@ def get_match_mix_clients(mix_tensor_list,clients_tensor_list):
         ans.append(transform_to_TensorDataset(data_per_client_list))
     return ans
 
+def group_labels_cifar100(label_dict, number_of_optimal_clusters):
+    # Sort the labels to ensure sequential order
+    labels = sorted(label_dict.keys())
+    num_in_group = len(labels)/number_of_optimal_clusters
 
-def get_split_train_client_data(classes_data_dict):
+    # Create the groups dynamically based on the desired group_size
+    groups = {
+        f"group_{i // num_in_group + 1}": labels[i:i + int(num_in_group)]
+        for i in range(0, len(labels), int(num_in_group))
+    }
+    ans = {}
+    for group_name,group_lists in groups.items():
+        data_per_group = []
+        for member in group_lists:
+            data_per_group.append(label_dict[member])
+        ans[group_name] = data_per_group
+    return ans
+
+def group_labels(label_dict, number_of_optimal_clusters):
+    # Sort the labels to ensure sequential order
+    labels = sorted(label_dict.keys())
+    num_in_group = len(labels) / number_of_optimal_clusters
+
+    groups = {
+        f"group_{i // num_in_group + 1}": labels[i:i + int(num_in_group)]
+        for i in range(0, len(labels), int(num_in_group))
+    }
+
+    ans = {}
+    for group_name,group_lists in groups.items():
+        data_per_group = []
+        for member in group_lists:
+            data_per_group.append(label_dict[member])
+        ans[group_name] = data_per_group
+    return ans
+
+
+
+
+def get_image_split_list_classes(tensor_list):
+    image_split_list_classes=[]
+    i=0
+    image_list = []
+
+    for tensor_col in tensor_list:
+        i = i + 1
+
+        for image in tensor_col:
+            image_list.append(image)
+    rnd.seed(543 + 5235 * (i + 3))
+    rnd.shuffle(image_list)
+    chunk_size = len(image_list) // experiment_config.identical_clients
+
+    image_split_list = [image_list[i * chunk_size: (i + 1) * chunk_size] for i in range(experiment_config.identical_clients)]
+    image_split_list_classes.append(image_split_list)
+    return image_split_list_classes
+
+def get_data_per_client_dict_and_mix_list(mix_list,target_original_data_dict,data_per_client_dict):
+    i = 0
+    for group_name, tensor_list in target_original_data_dict.items():
+        data_per_client_list = []
+        i = i + 1
+        image_split_list_classes = get_image_split_list_classes(tensor_list)
+
+        torch.manual_seed(42)
+
+        for identical_clients_index in range(len(image_split_list_classes[0])):
+
+            for amount_of_classes in range(len(image_split_list_classes)):
+                tt = []
+                images = image_split_list_classes[amount_of_classes][identical_clients_index]
+                size_to_mix = int(len(images) * experiment_config.mix_percentage)
+                size_to_leave = int(len(images) * (1 - experiment_config.mix_percentage))
+                splits = random_split(images, [size_to_mix, size_to_leave])
+
+                tt.extend(splits[1])
+                mix_list.extend(splits[0])
+            data_per_client_list.append(tt)
+        data_per_client_dict[group_name] = data_per_client_list
+    rnd.shuffle(mix_list)
+    mix_list = split_list(mix_list, experiment_config.num_clients, 1357)
+    return mix_list
+
+
+def get_clients_non_iid_data(target_original_data_dict):
+    mix_list = []
+    data_per_client_dict = {}
+
+    mix_list = get_data_per_client_dict_and_mix_list(mix_list,target_original_data_dict,data_per_client_dict)
+
+    i = 0
+    for group_name,image_lists in data_per_client_dict.items():
+        for image_list in image_lists:
+            image_list.extend(mix_list[i])
+            rnd.seed(523 + 412 * (i + 7))
+            rnd.shuffle(image_list)
+
+            i =i+1
+
+    #clients_tensor_list = get_mix_tensor_list(target_original_data_dict)
+
+    # if len(mix_tensor_list)!=len(clients_tensor_list):raise Exception("lists need to be same length")
+    # match_mix_clients = get_match_mix_clients(mix_tensor_list,clients_non_iid_data)
+    # ans = {}
+    # for i in range(len(match_mix_clients)):ans[i]=match_mix_clients[i]
+
+    # return ans
+
+    return data_per_client_dict
+
+
+def get_split_train_client_datav2(classes_data_dict):
     data_to_mix_list,target_original_data_dict = get_data_to_mix_and_data_to_leave(classes_data_dict)
     mix_tensor_list = get_mix_torch(data_to_mix_list)
     clients_tensor_list = get_mix_tensor_list(target_original_data_dict)
@@ -165,8 +279,18 @@ def get_split_train_client_data(classes_data_dict):
     ans = {}
     for i in range(len(match_mix_clients)):ans[i]=match_mix_clients[i]
 
+    return ans
 
+def get_split_train_client_data(classes_data_dict):
 
+    number_of_optimal_clusters =experiment_config.number_of_optimal_clusters
+    target_original_data_dict = group_labels(classes_data_dict,number_of_optimal_clusters)
+    clients_non_iid_data = get_clients_non_iid_data(target_original_data_dict)
+    ans = {}
+    for group_name, images_list in clients_non_iid_data.items():
+        ans[group_name] = []
+        for image_list in images_list:
+            ans[group_name].append(transform_to_TensorDataset(image_list))
     return ans
 
 
@@ -193,7 +317,6 @@ def get_split_train_client_data(classes_data_dict):
      #   rnd.seed(17)
     #    rnd.shuffle(data_to_mix)
     #return clients_original_data_dict,data_to_mix
-
 
 
 def complete_client_data(clients_data_dict, data_to_mix,data_size_per_client):
@@ -261,8 +384,6 @@ def transform_to_TensorDataset(data_):
     # Step 3: Create a TensorDataset from the images and targets
     return TensorDataset(images_tensor, targets_tensor)
 
-
-
 def cut_data_for_partial_use_of_data(class_target,data_by_classification_dict):
     data_of_class = data_by_classification_dict[class_target]
     train_set_size = len(data_of_class)
@@ -286,6 +407,7 @@ def split_clients_server_data_Non_IID(data_by_classification_dict, selected_clas
 
     clients_data_dict = get_split_train_client_data(classes_data_dict)
     return clients_data_dict,server_data
+
 
 
 
@@ -326,7 +448,7 @@ def change_format_of_clients_data_dict(client_data_sets):
     return clients_data_dict
 
 
-def get_data_set(data_type,is_train ):
+def get_data_set(is_train ):
     transform = transforms.Compose([
         transforms.RandomHorizontalFlip(),  # Data augmentation
         transforms.RandomCrop(32, padding=4),  # Data augmentation
@@ -334,15 +456,18 @@ def get_data_set(data_type,is_train ):
         transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5)),  # Normalize
     ])
 
+    if experiment_config.data_set_selected == DataSet.CIFAR100:
+        train_set = torchvision.datasets.CIFAR100(root='./data', train=is_train, download=True, transform=transform)
 
-    train_set = torchvision.datasets.CIFAR10(root='./data', train=is_train, download=True, transform=transform)
+    if experiment_config.data_set_selected == DataSet.CIFAR10:
+        train_set = torchvision.datasets.CIFAR10(root='./data', train=is_train, download=True, transform=transform)
+
+
     data_by_classification_dict = get_data_by_classification(train_set)
     selected_classes_list = sorted(data_by_classification_dict.keys())[:experiment_config.num_classes]
-    if data_type == DataType.IID:
-        clients_data_dict, server_data = split_clients_server_data_IID(train_set, experiment_config.server_split_ratio)
 
-    if data_type == DataType.NonIID:
-        clients_data_dict, server_data = split_clients_server_data_Non_IID(data_by_classification_dict, selected_classes_list)
+
+    clients_data_dict, server_data = split_clients_server_data_Non_IID(data_by_classification_dict, selected_classes_list)
 
     return selected_classes_list, clients_data_dict, server_data
 
@@ -395,16 +520,12 @@ def print_data_for_debug(clients_data_dict,server_data, test_set):
     check_data_targets(test_set, "test" + str(counter))
 
 
-def create_data(data_type):
-    selected_classes_list, clients_train_data_dict, server_train_data = get_data_set(data_type, is_train = True)
-    #train_set_size = get_train_set_size(clients_data_dict, server_data)
-    #test_set_size = train_set_size * experiment_config.percent_test_relative_to_train
-    selected_test_classes_list, clients_test_data_dict, server_test_data = get_data_set(data_type, is_train = False)
+def create_data():
 
-    #test_set = get_test_set(test_set_size,selected_classes_list)
-    # TODO get test data by what it if familar with + what it is not familiar with.
-    #test_set =transform_to_TensorDataset(test_set)
-   # print_data_for_debug(clients_data_dict,server_data, test_set)
+
+    selected_classes_list, clients_train_data_dict, server_train_data = get_data_set( is_train = True)
+    selected_test_classes_list, clients_test_data_dict, server_test_data = get_data_set( is_train = False)
+
 
 
     return clients_train_data_dict, server_train_data, clients_test_data_dict, server_test_data
@@ -491,16 +612,39 @@ def cut_data_v2(clients_train_data_dict, server_train_data, clients_test_data_di
 
 
 def create_clients(client_data_dict,server_data,test_set,server_test_data):
+    clients_test_by_id_dict = {}
     ans = []
     ids_list = []
+    id_ = 0
+    known_clusters = {}
+    cluster_num = -1
+
+    for group_name,data_list in client_data_dict.items():
+        cluster_num = cluster_num+1
+        known_clusters[cluster_num] = []
+
+        data_index = 0
+
+        for data_ in data_list:
+            ids_list.append(id_)
+            known_clusters[cluster_num].append(id_)
+            if experiment_config.algorithm_selection ==AlgorithmSelected.PseudoLabelsClusters:
+                c = Client(id_=id_, client_data=data_, global_data=server_data, global_test_data=server_test_data,
+                              local_test_data=test_set[group_name][data_index])
+            if experiment_config.algorithm_selection ==AlgorithmSelected.NoFederatedLearning:
+
+                c = Client_NoFederatedLearning(id_=id_, client_data=data_, global_data=server_data, global_test_data=server_test_data,
+                           local_test_data=test_set[group_name][data_index],evaluate_every=experiment_config.epochs_num_input_fine_tune_clients)
+            ans.append(c)
+            clients_test_by_id_dict[id_] = test_set[group_name][data_index]
+            data_index = data_index+1
+            id_ = id_+1
+    experiment_config.known_clusters = known_clusters
 
 
-    for id_, data_ in client_data_dict.items():
-        ids_list.append(id_)
-        ans.append(Client(id_ =id_,client_data = data_,global_data=server_data,global_test_data=server_test_data,local_test_data =test_set[id_]))
 
 
-    return ans,ids_list
+    return ans,ids_list,clients_test_by_id_dict
 
 
 def create_mean_df(clients, file_name):
