@@ -48,9 +48,6 @@ class NetsType(Enum):
     C_alex_S_alex = 2
 
 
-
-
-
 class ClusterTechnique(Enum):
     kmeans = 1
     manual = 2
@@ -68,6 +65,8 @@ class AlgorithmSelected(Enum):
     PseudoLabelsNoServerModel = 2
     ParametersHomogenousNets = 3
     NoFederatedLearning = 4
+    PseudoLabelsClusters_with_division = 5
+
 
 
 class ExperimentConfig:
