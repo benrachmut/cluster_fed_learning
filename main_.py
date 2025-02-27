@@ -131,12 +131,12 @@ if __name__ == '__main__':
     torch.manual_seed(experiment_config.seed_num)
 
     data_sets_list = [DataSet.CIFAR100]
-    num_clients_list = [50]
-    num_opt_clusters_list = [10]
+    num_clients_list = [25]
+    num_opt_clusters_list = [5]
     mix_percentage_list = [0.2]
     server_split_ratio_list = [0.2]
 
-    algorithm_selection_list = [AlgorithmSelected.PseudoLabelsClusters_with_division]
+    algorithm_selection_list = [AlgorithmSelected.PseudoLabelsClusters]
 
     #NoFederatedLearning
     nets_types_list_NoFederatedLearning  = [NetsType.C_alex_S_alex]#,NetsType.C_alex_S_vgg]#,NetsType.C_alex_S_vgg]
@@ -148,7 +148,7 @@ if __name__ == '__main__':
     server_input_tech_list = [ServerInputTech.max]
     cluster_technique_list = [ClusterTechnique.kmeans]#[ClusterTechnique.kmeans,ClusterTechnique.manual]
     server_feedback_technique_list = [ServerFeedbackTechnique.similar_to_cluster]#[ServerFeedbackTechnique.similar_to_cluster,ServerFeedbackTechnique.similar_to_client]
-    num_cluster_list = [10,"Optimal",5, 1]
+    num_cluster_list = [5,"Optimal", 1,3]
 
 
 
