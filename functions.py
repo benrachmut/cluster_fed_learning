@@ -611,6 +611,17 @@ def cut_data_v2(clients_train_data_dict, server_train_data, clients_test_data_di
 
 
 
+def fix_global_data(server_train_data):
+    torch.manual_seed(experiment_config.seed_num)
+    data = server_train_data
+    x = experiment_config.iterations
+    # Compute split sizes
+    split_sizes = [len(data) // x] * x
+    for i in range(len(data) % x):  # Handle remainder
+        split_sizes[i] += 1
+
+    # Split the dataset
+    return  random_split(data, split_sizes)
 def create_clients(client_data_dict,server_data,test_set,server_test_data):
     clients_test_by_id_dict = {}
     ans = []
@@ -635,6 +646,13 @@ def create_clients(client_data_dict,server_data,test_set,server_test_data):
 
                 c = Client_NoFederatedLearning(id_=id_, client_data=data_, global_data=server_data, global_test_data=server_test_data,
                            local_test_data=test_set[group_name][data_index],evaluate_every=experiment_config.epochs_num_input_fine_tune_clients)
+            if experiment_config.algorithm_selection == AlgorithmSelected.PseudoLabelsClusters_with_division:
+                c = Client_PseudoLabelsClusters_with_division(id_=id_, client_data=data_, global_data=server_data,
+                                               global_test_data=server_test_data,
+                                               local_test_data=test_set[group_name][data_index])
+
+
+
             ans.append(c)
             clients_test_by_id_dict[id_] = test_set[group_name][data_index]
             data_index = data_index+1

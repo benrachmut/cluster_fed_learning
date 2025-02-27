@@ -578,6 +578,11 @@ class Client_NoFederatedLearning(Client):
 
         return  result_to_print
 
+class Client_PseudoLabelsClusters_with_division(Client):
+    def __init__(self, id_, client_data, global_data, global_test_data, local_test_data):
+        Client.__init__(self,id_, client_data, global_data,global_test_data,local_test_data)
+        print()
+
 class Server(LearningEntity):
     def __init__(self,id_,global_data,test_data, clients_ids,clients_test_data_dict):
         LearningEntity.__init__(self, id_,global_data,test_data)
