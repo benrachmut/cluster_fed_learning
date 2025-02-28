@@ -25,9 +25,14 @@ class RecordData:
             self.client_accuracy_per_client_1[id_]=client.accuracy_per_client_1
 
 
+def clients_and_server_use_pseudo_labels():
+    pass
 
 
 def run_PseudoLabelsClusters():
+
+
+
     for net_type in nets_types_list_PseudoLabelsClusters:
         experiment_config.update_net_type(net_type)
         data_to_pickle[data_set.name][num_clients][num_opt_clusters][mix_percentage][server_split_ratio][
@@ -68,10 +73,11 @@ def run_PseudoLabelsClusters():
                                                                                                server_train_data_,
                                                                                                clients_test_data_dict,
                                                                                                server_test_data)
-                                server = Server(id_="server", global_data=server_train_data_, test_data=server_test_data,
+
+                                server = Server_PseudoLabelsClusters_with_division(id_="server", global_data=server_train_data_, test_data=server_test_data,
                                                 clients_ids=clients_ids, clients_test_data_dict=clients_test_by_id_dict)
 
-                            else:
+                            if algorithm_selection == AlgorithmSelected.PseudoLabelsClusters:
                                 clients, clients_ids, clients_test_by_id_dict = create_clients(clients_train_data_dict,
                                                                                            server_train_data,
                                                                                            clients_test_data_dict,
@@ -79,7 +85,15 @@ def run_PseudoLabelsClusters():
                                 server = Server(id_="server", global_data=server_train_data, test_data=server_test_data,
                                             clients_ids=clients_ids, clients_test_data_dict=clients_test_by_id_dict)
 
+                            if algorithm_selection == AlgorithmSelected.PseudoLabelsNoServerModel:
+                                clients, clients_ids, clients_test_by_id_dict = create_clients(clients_train_data_dict,
+                                                                                           server_train_data,
+                                                                                           clients_test_data_dict,
+                                                                                           server_test_data)
+                                server = Server_PseudoLabelsNoServerModel(id_="server", global_data=server_train_data, test_data=server_test_data,
+                                            clients_ids=clients_ids, clients_test_data_dict=clients_test_by_id_dict)
 
+                            clients_and_server_use_pseudo_labels()
                             for t in range(experiment_config.iterations):
                                     print("----------------------------iter number:" + str(t))
                                     for c in clients: c.iterate(t)
@@ -126,6 +140,8 @@ def run_NoFederatedLearning():
             pickle.dump(data_to_pickle, file)
 
 
+
+
 if __name__ == '__main__':
     print(device)
     torch.manual_seed(experiment_config.seed_num)
@@ -136,7 +152,7 @@ if __name__ == '__main__':
     mix_percentage_list = [0.2]
     server_split_ratio_list = [0.2]
 
-    algorithm_selection_list = [AlgorithmSelected.PseudoLabelsClusters]
+    algorithm_selection_list = [AlgorithmSelected.PseudoLabelsNoServerModel]
 
     #NoFederatedLearning
     nets_types_list_NoFederatedLearning  = [NetsType.C_alex_S_alex]#,NetsType.C_alex_S_vgg]#,NetsType.C_alex_S_vgg]
@@ -149,7 +165,6 @@ if __name__ == '__main__':
     cluster_technique_list = [ClusterTechnique.kmeans]#[ClusterTechnique.kmeans,ClusterTechnique.manual]
     server_feedback_technique_list = [ServerFeedbackTechnique.similar_to_cluster]#[ServerFeedbackTechnique.similar_to_cluster,ServerFeedbackTechnique.similar_to_client]
     num_cluster_list = [5,"Optimal", 1,3]
-
 
 
 
@@ -177,11 +192,21 @@ if __name__ == '__main__':
                         clients_train_data_dict, server_train_data, clients_test_data_dict, server_test_data = create_data()
 
                         for algorithm_selection in algorithm_selection_list:
+
+                            if algorithm_selection == AlgorithmSelected.PseudoLabelsNoServerModel:
+                                nets_types_list_PseudoLabelsClusters = [NetsType.C_alex]
+                                net_cluster_technique_list = [NetClusterTechnique.no_model]
+                                server_input_tech_list = [ServerInputTech.mean]
+                                cluster_technique_list = [ClusterTechnique.kmeans]
+                                server_feedback_technique_list = [ServerFeedbackTechnique.similar_to_cluster]  # [ServerFeedbackTechnique.similar_to_cluster,ServerFeedbackTechnique.similar_to_client]
+
+
                             experiment_config.algorithm_selection = algorithm_selection
                             data_to_pickle[data_set.name][num_clients][num_opt_clusters][mix_percentage][server_split_ratio][algorithm_selection.name] = {}
 
-                            if algorithm_selection ==AlgorithmSelected.PseudoLabelsClusters or algorithm_selection ==AlgorithmSelected.PseudoLabelsClusters_with_division:
+                            if algorithm_selection ==AlgorithmSelected.PseudoLabelsClusters or algorithm_selection == AlgorithmSelected.PseudoLabelsNoServerModel or algorithm_selection ==AlgorithmSelected.PseudoLabelsClusters_with_division:
                                 run_PseudoLabelsClusters()
-                            
+
+
                             if algorithm_selection ==AlgorithmSelected.NoFederatedLearning:
                                 run_NoFederatedLearning()

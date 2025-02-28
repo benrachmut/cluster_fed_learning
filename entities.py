@@ -581,12 +581,117 @@ class Client_NoFederatedLearning(Client):
 class Client_PseudoLabelsClusters_with_division(Client):
     def __init__(self, id_, client_data, global_data, global_test_data, local_test_data):
         Client.__init__(self,id_, client_data, global_data,global_test_data,local_test_data)
-        print()
+
+
+
+    def train(self,mean_pseudo_labels):
+
+        print(f"Mean pseudo-labels shape: {mean_pseudo_labels.shape}")  # Should be (num_data_points, num_classes)
+
+        print(f"*** {self.__str__()} train ***")
+        server_loader = DataLoader(self.global_data[self.current_iteration-1], batch_size=experiment_config.batch_size, shuffle=False, num_workers=0,
+                                   drop_last=True)
+        #server_loader = DataLoader(self.global_data, batch_size=experiment_config.batch_size, shuffle=False,
+        #                           num_workers=0)
+        #print(1)
+        self.model.train()
+        criterion = nn.KLDivLoss(reduction='batchmean')
+        optimizer = torch.optim.Adam( self.model.parameters(), lr=experiment_config.learning_rate_train_c)
+        #optimizer = torch.optim.Adam(self.model.parameters(), lr=experiment_config.learning_rate_train_c,
+        #                             weight_decay=1e-4)
+
+        pseudo_targets_all = mean_pseudo_labels.to(device)
+
+        for epoch in range(experiment_config.epochs_num_train_client):
+            #print(2)
+
+            self.epoch_count += 1
+            epoch_loss = 0
+
+            for batch_idx, (inputs, _) in enumerate(server_loader):
+                #print(batch_idx)
+
+                inputs = inputs.to(device)
+                optimizer.zero_grad()
+
+                outputs =  self.model(inputs)
+                # Check for NaN or Inf in outputs
+
+                # Convert model outputs to log probabilities
+                outputs_prob = F.log_softmax(outputs, dim=1)
+                # Slice pseudo_targets to match the input batch size
+                start_idx = batch_idx * experiment_config.batch_size
+                end_idx = start_idx + inputs.size(0)
+                pseudo_targets = pseudo_targets_all[start_idx:end_idx].to(device)
+
+                # Check if pseudo_targets size matches the input batch size
+                if pseudo_targets.size(0) != inputs.size(0):
+                    print(
+                        f"Skipping batch {batch_idx}: Expected pseudo target size {inputs.size(0)}, got {pseudo_targets.size(0)}")
+                    continue  # Skip the rest of the loop for this batch
+
+                # Check for NaN or Inf in pseudo targets
+                if torch.isnan(pseudo_targets).any() or torch.isinf(pseudo_targets).any():
+                    print(f"NaN or Inf found in pseudo targets at batch {batch_idx}: {pseudo_targets}")
+                    continue
+
+                # Normalize pseudo targets to sum to 1
+                pseudo_targets = F.softmax(pseudo_targets, dim=1)
+
+                # Calculate the loss
+                loss = criterion(outputs_prob, pseudo_targets)
+
+                # Check if the loss is NaN or Inf
+                if torch.isnan(loss) or torch.isinf(loss):
+                    print(f"NaN or Inf loss encountered at batch {batch_idx}: {loss}")
+                    continue
+
+                loss.backward()
+
+                # Clip gradients
+                torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
+
+                optimizer.step()
+                epoch_loss += loss.item()
+
+            avg_loss = epoch_loss / len(server_loader)
+            print(f"Epoch [{epoch + 1}/{experiment_config.epochs_num_train_client}], Loss: {avg_loss:.4f}")
+
+        #self.weights =self.model.state_dict()
+        return avg_loss
+
+
+    def evaluate(self, model=None):
+        if model is None:
+            model = self.model
+    #    print("*** Generating Pseudo-Labels with Probabilities ***")
+
+        # Create a DataLoader for the global data
+        global_data_loader = DataLoader(self.global_data[self.current_iteration], batch_size=experiment_config.batch_size, shuffle=False)
+
+        model.eval()  # Set the model to evaluation mode
+
+        all_probs = []  # List to store the softmax probabilities
+        with torch.no_grad():  # Disable gradient computation
+            for inputs, _ in global_data_loader:
+                inputs = inputs.to(device)
+                outputs = model(inputs)  # Forward pass
+
+                # Apply softmax to get the class probabilities
+                probs = F.softmax(outputs, dim=1)  # Apply softmax along the class dimension
+
+                all_probs.append(probs.cpu())  # Store the probabilities on CPU
+
+        # Concatenate all probabilities into a single tensor (2D matrix)
+        all_probs = torch.cat(all_probs, dim=0)
+
+       #print(f"Shape of the 2D pseudo-label matrix: {all_probs.shape}")
+        return all_probs
 
 class Server(LearningEntity):
     def __init__(self,id_,global_data,test_data, clients_ids,clients_test_data_dict):
         LearningEntity.__init__(self, id_,global_data,test_data)
-        
+
         self.num = (1000)*17
         self.pseudo_label_received = {}
         self.clusters_client_id_dict = {}
@@ -607,12 +712,14 @@ class Server(LearningEntity):
         self.accuracy_test_max = {}
         self.accuracy_global_max = {}
 
+        for cluster_id in  range(num_clusters):
+            self.previous_centroids_dict[cluster_id] = None
+
         if  experiment_config.net_cluster_technique == NetClusterTechnique.multi_head:
             self.model = get_server_model()
             self.model.apply(self.initialize_weights)
 
             for cluster_id in  range(num_clusters):
-                self.previous_centroids_dict[cluster_id] = None
                 self.accuracy_server_test_1[cluster_id] = {}
                 self.accuracy_global_data_1[cluster_id] ={}
 
@@ -621,7 +728,6 @@ class Server(LearningEntity):
 
 
             for cluster_id in  range(num_clusters):
-                self.previous_centroids_dict[cluster_id] = None
                 self.multi_model_dict[cluster_id] = get_server_model()
                 self.multi_model_dict[cluster_id].apply(self.initialize_weights)
                 self.accuracy_server_test_1[cluster_id] = {}
@@ -756,9 +862,9 @@ class Server(LearningEntity):
             self.accuracy_server_test_1[cluster_id][t] = self.evaluate_accuracy(self.test_global_data,
                                                                                 model=selected_model, k=1,
                                                                                 cluster_id=cluster_id_to_examine)
-            self.accuracy_global_data_1[cluster_id][t] = self.evaluate_accuracy(self.global_data,
-                                                                                model=selected_model, k=1,
-                                                                                cluster_id=cluster_id_to_examine)
+            #self.accuracy_global_data_1[cluster_id][t] = self.evaluate_accuracy(self.global_data,
+            #                                                                    model=selected_model, k=1,
+            #                                                                    cluster_id=cluster_id_to_examine)
 
         for client_id in self.clients_ids:
             test_data_per_clients = self.clients_test_data_dict[client_id]
@@ -1213,7 +1319,136 @@ class Server(LearningEntity):
         print()
 
 
+class Server_PseudoLabelsClusters_with_division(Server):
+    def __init__(self, id_, global_data, test_data, clients_ids, clients_test_data_dict):
+        Server.__init__(self, id_, global_data, test_data, clients_ids, clients_test_data_dict)
+
+    def evaluate_for_cluster(self, cluster_id, model=None):
+        """
+        Evaluate the model using the specified cluster head on the validation data.
+
+        Args:
+            cluster_id (int): The ID of the cluster head to evaluate.
+            model (nn.Module, optional): The model to evaluate. Defaults to `self.model`.
+
+        Returns:
+            torch.Tensor: The concatenated probabilities for the specified cluster head.
+        """
+        if model is None:
+            model = self.model
+
+        print(f"*** Evaluating Cluster {cluster_id} Head ***")
+        model.eval()  # Set the model to evaluation mode
+
+        # Use the global validation data for the evaluation
+        global_data_loader = DataLoader(self.global_data[self.current_iteration], batch_size=experiment_config.batch_size, shuffle=False)
+
+        # List to store the probabilities for this cluster
+        cluster_probs = []
+
+        with torch.no_grad():  # Disable gradient computation
+            for inputs, _ in global_data_loader:
+                inputs = inputs.to(device)
+
+                # Evaluate the model using the specified cluster head
+                if experiment_config.net_cluster_technique == NetClusterTechnique.multi_head:
+                    outputs = model(inputs, cluster_id=cluster_id)
+                if experiment_config.net_cluster_technique == NetClusterTechnique.multi_model:
+                    outputs = model(inputs, cluster_id=0)
+
+                # Apply softmax to get class probabilities
+                probs = F.softmax(outputs, dim=1)
+
+                # Store probabilities for this cluster head
+                cluster_probs.append(probs.cpu())
+
+        # Concatenate all probabilities into a single tensor
+        cluster_probs = torch.cat(cluster_probs, dim=0)
+
+        return cluster_probs
+
+
+    def train(self, mean_pseudo_labels,  cluster_num="0",selected_model=None):
+
+        print(f"Mean pseudo-labels shape: {mean_pseudo_labels.shape}")  # Should be (num_data_points, num_classes)
+
+        print(f"*** {self.__str__()} train *** Cluster: {cluster_num} ***")
+        server_loader = DataLoader(self.global_data[self.current_iteration] , batch_size=experiment_config.batch_size, shuffle=False,
+                                   num_workers=0, drop_last=True)
 
 
 
 
+        if selected_model is None:
+            selected_model_train = self.model
+        else:
+            selected_model_train = selected_model
+
+        selected_model_train.train()
+        criterion = nn.KLDivLoss(reduction='batchmean')
+        optimizer = torch.optim.Adam(selected_model_train.parameters(), lr=experiment_config.learning_rate_train_s)
+        pseudo_targets_all = mean_pseudo_labels.to(device)
+
+        for epoch in range(experiment_config.epochs_num_train_server):
+            self.epoch_count += 1
+            epoch_loss = 0
+
+            for batch_idx, (inputs, _) in enumerate(server_loader):
+                inputs = inputs.to(device)
+                optimizer.zero_grad()
+
+                # Pass `cluster_id` to the model
+                outputs = selected_model_train(inputs, cluster_id=cluster_num)
+
+                # Convert model outputs to log probabilities
+                outputs_prob = F.log_softmax(outputs, dim=1)
+
+                # Slice pseudo_targets to match the input batch size
+                start_idx = batch_idx * experiment_config.batch_size
+                end_idx = start_idx + inputs.size(0)
+                pseudo_targets = pseudo_targets_all[start_idx:end_idx].to(device)
+
+                # Check if pseudo_targets size matches the input batch size
+                if pseudo_targets.size(0) != inputs.size(0):
+                    print(
+                        f"Skipping batch {batch_idx}: Expected pseudo target size {inputs.size(0)}, got {pseudo_targets.size(0)}"
+                    )
+                    continue
+
+                # Normalize pseudo targets to sum to 1
+                pseudo_targets = F.softmax(pseudo_targets, dim=1)
+
+                # Calculate the loss
+                loss = criterion(outputs_prob, pseudo_targets)
+
+                # Skip batch if the loss is NaN or Inf
+                if torch.isnan(loss) or torch.isinf(loss):
+                    print(f"NaN or Inf loss encountered at batch {batch_idx}: {loss}")
+                    continue
+
+                loss.backward()
+
+                # Clip gradients
+                torch.nn.utils.clip_grad_norm_(selected_model_train.parameters(), max_norm=1.0)
+
+                optimizer.step()
+                epoch_loss += loss.item()
+
+            avg_loss = epoch_loss / len(server_loader)
+            print(f"Epoch [{epoch + 1}/{experiment_config.epochs_num_train_server}], Loss: {avg_loss:.4f}")
+
+        return avg_loss
+
+
+class Server_PseudoLabelsNoServerModel(Server):
+    def __init__(self, id_, global_data, test_data, clients_ids, clients_test_data_dict):
+        Server.__init__(self, id_, global_data, test_data, clients_ids, clients_test_data_dict)
+
+    def iteration_context(self,t):
+        self.current_iteration = t
+        mean_pseudo_labels_per_cluster_dict, self.clusters_client_id_dict[t] = self.get_pseudo_labels_input_per_cluster()  # #
+
+
+        for cluster_id,pseudo_labels_for_cluster in mean_pseudo_labels_per_cluster_dict.items():
+            for client_id in self.clusters_client_id_dict[t][cluster_id]:
+                self.pseudo_label_to_send[client_id] = pseudo_labels_for_cluster
