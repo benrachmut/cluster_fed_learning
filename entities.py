@@ -691,7 +691,7 @@ class Client_PseudoLabelsClusters_with_division(Client):
 class Server(LearningEntity):
     def __init__(self,id_,global_data,test_data, clients_ids,clients_test_data_dict):
         LearningEntity.__init__(self, id_,global_data,test_data)
-        
+
         self.num = (1000)*17
         self.pseudo_label_received = {}
         self.clusters_client_id_dict = {}
@@ -712,12 +712,14 @@ class Server(LearningEntity):
         self.accuracy_test_max = {}
         self.accuracy_global_max = {}
 
+        for cluster_id in  range(num_clusters):
+            self.previous_centroids_dict[cluster_id] = None
+
         if  experiment_config.net_cluster_technique == NetClusterTechnique.multi_head:
             self.model = get_server_model()
             self.model.apply(self.initialize_weights)
 
             for cluster_id in  range(num_clusters):
-                self.previous_centroids_dict[cluster_id] = None
                 self.accuracy_server_test_1[cluster_id] = {}
                 self.accuracy_global_data_1[cluster_id] ={}
 
@@ -726,7 +728,6 @@ class Server(LearningEntity):
 
 
             for cluster_id in  range(num_clusters):
-                self.previous_centroids_dict[cluster_id] = None
                 self.multi_model_dict[cluster_id] = get_server_model()
                 self.multi_model_dict[cluster_id].apply(self.initialize_weights)
                 self.accuracy_server_test_1[cluster_id] = {}
@@ -1437,3 +1438,17 @@ class Server_PseudoLabelsClusters_with_division(Server):
             print(f"Epoch [{epoch + 1}/{experiment_config.epochs_num_train_server}], Loss: {avg_loss:.4f}")
 
         return avg_loss
+
+
+class Server_PseudoLabelsNoServerModel(Server):
+    def __init__(self, id_, global_data, test_data, clients_ids, clients_test_data_dict):
+        Server.__init__(self, id_, global_data, test_data, clients_ids, clients_test_data_dict)
+
+    def iteration_context(self,t):
+        self.current_iteration = t
+        mean_pseudo_labels_per_cluster_dict, self.clusters_client_id_dict[t] = self.get_pseudo_labels_input_per_cluster()  # #
+
+
+        for cluster_id,pseudo_labels_for_cluster in mean_pseudo_labels_per_cluster_dict.items():
+            for client_id in self.clusters_client_id_dict[t][cluster_id]:
+                self.pseudo_label_to_send[client_id] = pseudo_labels_for_cluster
