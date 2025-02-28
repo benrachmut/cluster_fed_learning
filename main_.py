@@ -68,7 +68,8 @@ def run_PseudoLabelsClusters():
                                                                                                server_train_data_,
                                                                                                clients_test_data_dict,
                                                                                                server_test_data)
-                                server = Server(id_="server", global_data=server_train_data_, test_data=server_test_data,
+
+                                server = Server_PseudoLabelsClusters_with_division(id_="server", global_data=server_train_data_, test_data=server_test_data,
                                                 clients_ids=clients_ids, clients_test_data_dict=clients_test_by_id_dict)
 
                             else:
@@ -136,7 +137,7 @@ if __name__ == '__main__':
     mix_percentage_list = [0.2]
     server_split_ratio_list = [0.2]
 
-    algorithm_selection_list = [AlgorithmSelected.PseudoLabelsClusters]
+    algorithm_selection_list = [AlgorithmSelected.PseudoLabelsNoServerModel]
 
     #NoFederatedLearning
     nets_types_list_NoFederatedLearning  = [NetsType.C_alex_S_alex]#,NetsType.C_alex_S_vgg]#,NetsType.C_alex_S_vgg]

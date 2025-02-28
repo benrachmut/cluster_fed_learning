@@ -2,6 +2,7 @@ import copy
 
 import pandas as pd
 from scipy.stats import ansari
+from sympy.core.random import shuffle
 from sympy.physics.units import percent
 from torch.utils.data import TensorDataset, random_split, Subset, Dataset
 from torchvision.transforms import transforms
@@ -609,19 +610,42 @@ def cut_data_v2(clients_train_data_dict, server_train_data, clients_test_data_di
     server_test_data = get_random_dataset(server_test_data)
     return clients_train_data_dict, server_train_data, clients_test_data_dict, server_test_data
 
+def divide_list(lst, x):
+    """Divide a list into x groups as equally as possible."""
+    rnd.seed(experiment_config.seed_num)
+    rnd.shuffle(lst)
 
+    avg = len(lst) // x
+    remainder = len(lst) % x
+    groups = []
+    start = 0
+
+    for i in range(x):
+        end = start + avg + (1 if i < remainder else 0)
+        groups.append(lst[start:end])
+        start = end
+
+    return groups
 
 def fix_global_data(server_train_data):
     torch.manual_seed(experiment_config.seed_num)
     data = server_train_data
     x = experiment_config.iterations
     # Compute split sizes
-    split_sizes = [len(data) // x] * x
-    for i in range(len(data) % x):  # Handle remainder
-        split_sizes[i] += 1
+    images = []
+    for image in data:
+        images.append(image)
+    divided_list = divide_list(images,x)
+    ans = []
+    for lst in divided_list:
+        ans.append(transform_to_TensorDataset(lst))
+    return ans
+    #split_sizes = [len(data) // x] * x
+    #for i in range(len(data) % x):  # Handle remainder
+    #    split_sizes[i] += 1
 
     # Split the dataset
-    return  random_split(data, split_sizes)
+    #return  random_split(data, split_sizes)
 def create_clients(client_data_dict,server_data,test_set,server_test_data):
     clients_test_by_id_dict = {}
     ans = []
@@ -663,6 +687,8 @@ def create_clients(client_data_dict,server_data,test_set,server_test_data):
 
 
     return ans,ids_list,clients_test_by_id_dict
+
+
 
 
 def create_mean_df(clients, file_name):

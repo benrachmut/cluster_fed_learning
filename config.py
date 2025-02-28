@@ -63,9 +63,8 @@ class NetClusterTechnique(Enum):
 class AlgorithmSelected(Enum):
     PseudoLabelsClusters = 1
     PseudoLabelsNoServerModel = 2
-    ParametersHomogenousNets = 3
-    NoFederatedLearning = 4
-    PseudoLabelsClusters_with_division = 5
+    NoFederatedLearning = 3
+    PseudoLabelsClusters_with_division = 4
 
 
 
@@ -73,7 +72,7 @@ class ExperimentConfig:
     def __init__(self):
 
         self.seed_num = 1
-        self.iterations = 11
+        self.iterations = 10
 
         # CIFAR10/CIFAR 100
         self.data_set_selected = None # selected in main
