@@ -1,7 +1,6 @@
 # File path to your pickle file
 import pickle
 from itertools import cycle
-from sys import orig_argv
 
 import matplotlib.pyplot as plt
 from sklearn.metrics import accuracy_score
@@ -184,11 +183,11 @@ if __name__ == '__main__':
 
     create_jpeg=False
     #file_name = "CIFAR100_50_10_2_NoFederatedLearning_C_alex_S_alex.pkl"
-    file_name = "CIFAR100_50_10_PseudoLabelsClusters_C_alex_S_alex_multi_model_kmeans_1.pkl"
+    file_name = "data/CIFAR100_25_5_2_PseudoLabelsClusters_C_alex_S_alex_multi_model_kmeans_1.pkl"
     # data
     data_set = "CIFAR100"
-    num_clients = 50
-    num_opt_clusters = 10
+    num_clients = 25
+    num_opt_clusters = 5
     mix_percentage = 0.2
     server_split_ratio = 0.2
 
@@ -203,6 +202,7 @@ if __name__ == '__main__':
             data_ = data_[algorithm_selection.name][nets_type]
 
             data_for_graph = handle_data_NoFederatedLearning()
+            print()
         if algorithm_selection == AlgorithmSelected.PseudoLabelsClusters:
             nets_type = "C_alex_S_alex"
             net_cluster_technique = "multi_model"
@@ -210,7 +210,7 @@ if __name__ == '__main__':
             cluster_technique = "kmeans"  # [ClusterTechnique.kmeans,ClusterTechnique.manual]
             server_feedback_technique = "similar_to_cluster"  # [ServerFeedbackTechnique.similar_to_cluster,ServerFeedbackTechnique.similar_to_client]
             data_ = data_[algorithm_selection.name][nets_type][net_cluster_technique][server_input_tech][cluster_technique][server_feedback_technique]
-            num_cluster_list = [5, 1, "Optimal", 10]
+            num_cluster_list = [5, 1, "Optimal"]
             measure = Measure.Local_Client_Validation
             data_for_graph = handle_data_PseudoLabelsClusters()
             print()
