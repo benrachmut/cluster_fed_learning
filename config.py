@@ -44,9 +44,11 @@ class DataType(Enum):
     NonIID = 2
 
 class NetsType(Enum):
-    C_alex = 3
     C_alex_S_vgg = 1
     C_alex_S_alex = 2
+    C_alex = 3
+    S_alex = 4
+    S_vgg = 5
 
 
 class ClusterTechnique(Enum):
@@ -66,14 +68,14 @@ class AlgorithmSelected(Enum):
     PseudoLabelsNoServerModel = 2
     NoFederatedLearning = 3
     PseudoLabelsClusters_with_division = 4
-
+    Centralized = 5
 
 
 class ExperimentConfig:
     def __init__(self):
 
         self.seed_num = 1
-        self.iterations = 10
+        self.iterations = 11
 
         # CIFAR10/CIFAR 100
         self.data_set_selected = None # selected in main
@@ -146,7 +148,7 @@ class ExperimentConfig:
 
 
     def update_net_type(self,net_type):
-        if net_type == NetsType.C_alex_S_alex or net_type == NetsType.C_alex:
+        if net_type == NetsType.C_alex_S_alex or net_type == NetsType.C_alex or net_type == NetsType.S_alex:
             self.client_net_type = NetType.ALEXNET
             self.server_net_type = NetType.ALEXNET
             self.learning_rate_train_c = 0.0001
@@ -156,7 +158,7 @@ class ExperimentConfig:
 
 
 
-        if net_type == NetsType.C_alex_S_vgg:
+        if net_type == NetsType.C_alex_S_vgg or net_type == NetsType.S_vgg:
             self.client_net_type = NetType.ALEXNET
             self.server_net_type = NetType.VGG
             self.learning_rate_train_c = 0.0001

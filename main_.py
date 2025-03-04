@@ -93,7 +93,6 @@ def run_PseudoLabelsClusters():
                                 server = Server_PseudoLabelsNoServerModel(id_="server", global_data=server_train_data, test_data=server_test_data,
                                             clients_ids=clients_ids, clients_test_data_dict=clients_test_by_id_dict)
 
-                            clients_and_server_use_pseudo_labels()
                             for t in range(experiment_config.iterations):
                                     print("----------------------------iter number:" + str(t))
                                     for c in clients: c.iterate(t)
@@ -140,6 +139,44 @@ def run_NoFederatedLearning():
             pickle.dump(data_to_pickle, file)
 
 
+def run_Centralized():
+
+    for net_type in nets_types_Centralized_list:
+        experiment_config.update_net_type(net_type)
+        data_to_pickle[data_set.name][num_clients][num_opt_clusters][mix_percentage][server_split_ratio][
+            algorithm_selection.name][net_type.name] = {}
+
+        for cluster_num in num_cluster_Centralized_list:
+            experiment_config.num_clusters =cluster_num
+            data_to_pickle[data_set.name][num_clients][num_opt_clusters][mix_percentage][server_split_ratio][
+                algorithm_selection.name][net_type.name][cluster_num] = {}
+            train_data = clients_train_data_dict
+            test_data = clients_test_data_dict
+
+
+            server = Server_Centralized(id_="server", train_data=train_data, test_data=test_data,
+                                   evaluate_every=experiment_config.epochs_num_input_fine_tune_clients)
+
+
+            #clients_and_server_use_pseudo_labels()
+            #for t in range(experiment_config.iterations):
+            #        print("----------------------------iter number:" + str(t))
+            #        for c in clients: c.iterate(t)
+            #        for c in clients: server.receive_single_pseudo_label(c.id_, c.pseudo_label_to_send)
+            #        server.iterate(t)
+            #        for c in clients: c.pseudo_label_received = server.pseudo_label_to_send[c.id_]
+            #        rd = RecordData(clients, server)
+
+            #        data_to_pickle[data_set.name][num_clients][num_opt_clusters][mix_percentage][
+            #            server_split_ratio][algorithm_selection.name][net_type.name][ net_cluster_technique.name][
+            #            server_input_tech.name][cluster_technique.name][server_feedback_technique.name][
+            #            num_cluster]  = rd
+            #        pik_name = data_set.name+"_"+str(num_clients)+"_"+str(num_opt_clusters)+"_"+str(int(10*(server_split_ratio)))+"_"+algorithm_selection.name+"_"+net_type.name+"_"+net_cluster_technique.name+"_"+cluster_technique.name+"_"+str(num_cluster)
+
+            #        pickle_file_path = pik_name + ".pkl"
+
+            #        with open(pickle_file_path, "wb") as file:
+            #            pickle.dump(data_to_pickle, file)
 
 
 if __name__ == '__main__':
@@ -152,7 +189,11 @@ if __name__ == '__main__':
     mix_percentage_list = [0.2]
     server_split_ratio_list = [0.2]
 
-    algorithm_selection_list = [AlgorithmSelected.PseudoLabelsNoServerModel]
+    algorithm_selection_list = [AlgorithmSelected.Centralized]
+
+
+    nets_types_Centralized_list = [NetsType.S_alex,NetsType.S_vgg]
+    num_cluster_Centralized_list = [ 1,"Optimal"]
 
     #NoFederatedLearning
     nets_types_list_NoFederatedLearning  = [NetsType.C_alex_S_alex]#,NetsType.C_alex_S_vgg]#,NetsType.C_alex_S_vgg]
@@ -210,3 +251,6 @@ if __name__ == '__main__':
 
                             if algorithm_selection ==AlgorithmSelected.NoFederatedLearning:
                                 run_NoFederatedLearning()
+                            
+                            if algorithm_selection == AlgorithmSelected.Centralized:
+                                run_Centralized()

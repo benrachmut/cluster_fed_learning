@@ -1452,3 +1452,18 @@ class Server_PseudoLabelsNoServerModel(Server):
         for cluster_id,pseudo_labels_for_cluster in mean_pseudo_labels_per_cluster_dict.items():
             for client_id in self.clusters_client_id_dict[t][cluster_id]:
                 self.pseudo_label_to_send[client_id] = pseudo_labels_for_cluster
+
+
+class Server_Centralized(Server):
+    def __init__(self,id_, train_data, test_data,evaluate_every):
+        LearningEntity.__init__ (self,id_,None,None)
+        if experiment_config.num_clusters == 1:
+            self.train_data = self.break_the_dict_structure(train_data)
+            self.test_data = self.break_the_dict_structure(test_data)
+        else:
+            self.train_data = train_data
+            self.test_data = test_data
+        self.evaluate_every = evaluate_every
+
+    def break_the_dict_structure(self,data_):
+        print()
