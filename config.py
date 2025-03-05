@@ -2,7 +2,9 @@ from enum import Enum
 from random import random
 from xml.dom import NoDataAllowedErr
 
+import torch
 from matplotlib import pyplot as plt
+from torch.utils.data import TensorDataset
 
 cifar100_label_to_superclass = {
     0: 0,  1: 0,  2: 0,  3: 0,  4: 0,     # Aquatic mammals
@@ -26,6 +28,21 @@ cifar100_label_to_superclass = {
     90: 18, 91: 18, 92: 18, 93: 18, 94: 18,  # Vehicles 1
     95: 19, 96: 19, 97: 19, 98: 19, 99: 19   # Vehicles 2
 }
+
+
+
+def transform_to_TensorDataset(data_):
+    images = [item[0] for item in data_]  # Extract the image tensors (index 0 of each tuple)
+    targets = [item[1] for item in data_]
+
+    # Step 2: Convert the lists of images and targets into tensors (if not already)
+    images_tensor = torch.stack(images)  # Stack the image tensors into a single tensor
+    targets_tensor = torch.tensor(targets)  # Convert the targets to a tensor
+
+
+    # Step 3: Create a TensorDataset from the images and targets
+    return TensorDataset(images_tensor, targets_tensor)
+
 
 class ServerInputTech(Enum):
     mean = 1
@@ -73,7 +90,7 @@ class AlgorithmSelected(Enum):
 
 class ExperimentConfig:
     def __init__(self):
-
+        self.which_net_arch = None
         self.seed_num = 1
         self.iterations = 11
 
@@ -112,6 +129,7 @@ class ExperimentConfig:
         self.epochs_num_input_fine_tune_clients = 10
         self.epochs_num_train_client = 10
         self.epochs_num_input_fine_tune_clients_no_fl = self.epochs_num_input_fine_tune_clients*self.iterations
+        self.epochs_num_input_fine_tune_centralized_server = self.epochs_num_input_fine_tune_clients*self.iterations
 
 
 
@@ -148,12 +166,15 @@ class ExperimentConfig:
 
 
     def update_net_type(self,net_type):
-        if net_type == NetsType.C_alex_S_alex or net_type == NetsType.C_alex or net_type == NetsType.S_alex:
+        if net_type == NetsType.C_alex_S_alex or net_type == NetsType.C_alex or net_type==NetsType.S_alex or net_type==NetsType.S_vgg:
             self.client_net_type = NetType.ALEXNET
             self.server_net_type = NetType.ALEXNET
             self.learning_rate_train_c = 0.0001
             self.learning_rate_fine_tune_c = 0.001
             self.learning_rate_train_s = 0.001
+
+
+
 
 
 

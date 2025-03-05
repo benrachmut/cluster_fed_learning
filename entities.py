@@ -1,7 +1,5 @@
-import numpy as np
-import torch
+
 import torchvision
-from torch import nn
 from torch.utils.data import DataLoader, Dataset
 from config import *
 import torch.nn.functional as F
@@ -16,6 +14,8 @@ import numpy as np
 
 import torch
 import torch.nn as nn
+
+
 
 class AlexNet(nn.Module):
     def __init__(self, num_classes, num_clusters=1):
@@ -1457,13 +1457,94 @@ class Server_PseudoLabelsNoServerModel(Server):
 class Server_Centralized(Server):
     def __init__(self,id_, train_data, test_data,evaluate_every):
         LearningEntity.__init__ (self,id_,None,None)
-        if experiment_config.num_clusters == 1:
-            self.train_data = self.break_the_dict_structure(train_data)
-            self.test_data = self.break_the_dict_structure(test_data)
-        else:
-            self.train_data = train_data
-            self.test_data = test_data
+
+
+
+        self.train_data =self.break_the_dict_structure(train_data)
+        self.test_data  = self.break_the_dict_structure(test_data)
+
         self.evaluate_every = evaluate_every
 
+        self.num = (1000) * 17
+
+
+        if experiment_config.net_cluster_technique == NetClusterTechnique.multi_head:
+            raise Exception("todo")
+
+        if experiment_config.net_cluster_technique == NetClusterTechnique.multi_model:
+            self.multi_model_dict = {}
+
+            self.accuracy_per_cluster_model = {}
+
+            for cluster_id in self.train_data.keys():
+                self.multi_model_dict[cluster_id] = get_server_model()
+                self.multi_model_dict[cluster_id].apply(self.initialize_weights)
+                self.accuracy_per_cluster_model[cluster_id] = {}
+
+
+
+
+    def iteration_context(self,t):
+        for cluster_id,model in self.multi_model_dict.items():
+            self.fine_tune(model,cluster_id,self.train_data[cluster_id],self.test_data[cluster_id])
+
+
+    def fine_tune(self,model,cluster_id,train,test):
+        print("*** " + self.__str__() + " fine-tune ***")
+
+        fine_tune_loader = DataLoader(train, batch_size=experiment_config.batch_size, shuffle=True)
+        model.train()  # Set the model to training mode
+
+        # Define loss function and optimizer
+
+        criterion = nn.CrossEntropyLoss()
+
+        optimizer = torch.optim.Adam(model.parameters(), lr=0.0001)#experiment_config.learning_rate_train_s)
+
+        epochs = experiment_config.epochs_num_input_fine_tune_centralized_server
+        for epoch in range(epochs):
+            self.epoch_count += 1
+            epoch_loss = 0
+            for inputs, targets in fine_tune_loader:
+                inputs, targets = inputs.to(device), targets.to(device)
+                optimizer.zero_grad()
+                outputs = model(inputs)
+
+                loss = criterion(outputs, targets)
+
+                # Backward pass and optimization
+                loss.backward()
+                optimizer.step()
+                epoch_loss += loss.item()
+            if   epoch % self.evaluate_every == 0 and epoch!=0:
+                self.accuracy_per_cluster_model[cluster_id][epoch] = self.evaluate_accuracy(test,model=model, k=1)
+
+            result_to_print = epoch_loss / len(fine_tune_loader)
+            print(f"Epoch [{epoch + 1}/{epochs}], Loss: {result_to_print:.4f}")
+        #self.weights = self.model.state_dict()self.weights = self.model.state_dict()
+
     def break_the_dict_structure(self,data_):
-        print()
+        ans = {}
+        if isinstance(experiment_config.num_clusters, int):
+            if experiment_config.num_clusters !=1:
+                raise Exception("program only 1 cluster case")
+
+            images = []
+            for group_name, torches_list in data_.items():
+                for single_torch in torches_list:
+                    for image in single_torch:
+                        images.append(image)
+            ans["group_1.0"] = transform_to_TensorDataset(images)
+
+        else:
+            if experiment_config.num_clusters != "Optimal":
+                raise Exception("program only Optimal case")
+            for group_name, torches_list in data_.items():
+                images_per_torch_list = []
+                for single_torch in torches_list:
+                    for image in single_torch:
+                        images_per_torch_list.append(image)
+                ans[group_name] = transform_to_TensorDataset(images_per_torch_list)
+
+        return ans
+

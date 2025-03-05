@@ -183,7 +183,7 @@ if __name__ == '__main__':
 
     create_jpeg=False
     #file_name = "CIFAR100_50_10_2_NoFederatedLearning_C_alex_S_alex.pkl"
-    file_name = "data/CIFAR100_25_5_2_PseudoLabelsClusters_C_alex_S_alex_multi_model_kmeans_1.pkl"
+    file_name = "CIFAR100_25_5_2_Centralized_S_alex_multi_model_Optimal.pkl"
     # data
     data_set = "CIFAR100"
     num_clients = 25
