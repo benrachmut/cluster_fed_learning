@@ -194,7 +194,7 @@ if __name__ == '__main__':
     mix_percentage_list = [0.2]
     server_split_ratio_list = [0.2]
 
-    algorithm_selection_list = [AlgorithmSelected.Centralized]
+    algorithm_selection_list = [AlgorithmSelected.PseudoLabelsClusters]
 
     # centralized
     nets_types_Centralized_list = [NetsType.S_alex,NetsType.S_vgg]
@@ -209,9 +209,9 @@ if __name__ == '__main__':
     nets_types_list_PseudoLabelsClusters  = [NetsType.C_alex_S_alex]#,NetsType.C_alex_S_vgg]#,NetsType.C_alex_S_vgg]
     net_cluster_technique_list = [NetClusterTechnique.multi_model]#,NetClusterTechnique.multi_head]
     server_input_tech_list = [ServerInputTech.max]
-    cluster_technique_list = [ClusterTechnique.kmeans]#[ClusterTechnique.kmeans,ClusterTechnique.manual]
+    cluster_technique_list = [ClusterTechnique.manual_single_iter,ClusterTechnique.manual,ClusterTechnique.kmeans]
     server_feedback_technique_list = [ServerFeedbackTechnique.similar_to_cluster]#[ServerFeedbackTechnique.similar_to_cluster,ServerFeedbackTechnique.similar_to_client]
-    num_cluster_list = [5,"Optimal", 1,3]
+    num_cluster_list = [5]
 
 
 
@@ -245,7 +245,7 @@ if __name__ == '__main__':
                                 net_cluster_technique_list = [NetClusterTechnique.no_model]
                                 server_input_tech_list = [ServerInputTech.mean]
                                 cluster_technique_list = [ClusterTechnique.kmeans]
-                                server_feedback_technique_list = [ServerFeedbackTechnique.similar_to_cluster]  # [ServerFeedbackTechnique.similar_to_cluster,ServerFeedbackTechnique.similar_to_client]
+                                server_feedback_technique_list = [ServerFeedbackTechnique.similar_to_cluster,ServerFeedbackTechnique.similar_to_client]  # [ServerFeedbackTechnique.similar_to_cluster,ServerFeedbackTechnique.similar_to_client]
 
 
                             experiment_config.algorithm_selection = algorithm_selection

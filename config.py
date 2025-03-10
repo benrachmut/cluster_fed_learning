@@ -71,6 +71,7 @@ class NetsType(Enum):
 class ClusterTechnique(Enum):
     kmeans = 1
     manual = 2
+    manual_single_iter = 3
 
 class ServerFeedbackTechnique(Enum):
     similar_to_client = 1
