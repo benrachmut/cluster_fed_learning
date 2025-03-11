@@ -1,5 +1,6 @@
 
 import torchvision
+from sympy.abc import epsilon
 from torch.utils.data import DataLoader, Dataset
 from config import *
 import torch.nn.functional as F
@@ -705,6 +706,7 @@ class Server(LearningEntity):
         self.reset_clients_received_pl()
         self.clients_test_data_dict=clients_test_data_dict
         #if experiment_config.server_learning_technique == ServerLearningTechnique.multi_head:
+        self.accuracy_per_client_1_max = {}
 
         self.previous_centroids_dict = {}
         self.pseudo_label_to_send = {}
@@ -737,10 +739,12 @@ class Server(LearningEntity):
 
 
         self.accuracy_per_client_1_max = {}
+
+        for client_id in self.clients_ids:
+            self.accuracy_per_client_1[client_id] = {}
+            self.accuracy_per_client_1_max[client_id] = {}
+
         if num_clusters>0:
-            for client_id in self.clients_ids:
-                self.accuracy_per_client_1[client_id]={}
-                self.accuracy_per_client_1_max[client_id]={}
             for cluster_id in  range(num_clusters):
                 self.accuracy_server_test_1[cluster_id] = {}
                 self.accuracy_global_data_1[cluster_id] ={}
@@ -1247,10 +1251,15 @@ class Server(LearningEntity):
             flag = True
 
         if (experiment_config.cluster_technique == ClusterTechnique.greedy_elimination_cross_entropy or experiment_config.cluster_technique == ClusterTechnique.greedy_elimination_L2) and not flag:
-            if t == 0:
-                self.calc_epsilon
-                self.c, clusters_client_id_dict = self.greedy_elimination()
-            else
+            clusters_client_id_dict = self.greedy_elimination(t)
+
+
+
+
+
+
+
+
 
 
 
@@ -1345,6 +1354,41 @@ class Server(LearningEntity):
                 if client_id in clients_id_list:
                     return cluster_id
             print()
+
+    def init_models_measures(self):
+        num_clusters = experiment_config.num_clusters
+        for cluster_id in range(num_clusters):
+            self.previous_centroids_dict[cluster_id] = None
+            self.accuracy_server_test_1[cluster_id] = {}
+            self.accuracy_global_data_1[cluster_id] = {}
+            self.multi_model_dict[cluster_id] = get_server_model()
+            self.multi_model_dict[cluster_id].apply(self.initialize_weights)
+
+    def greedy_elimination(self, t):
+        distance_dict = self.get_distance_dict()
+
+        # Example list of client IDs
+
+
+        if t == 0:
+            epsilon_ = self.calc_epsilon()
+            experiment_config.num_clusters, clusters_client_id_dict = self.greedy_elimination_t0(epsilon_=epsilon_,
+                                                                                                 k=None)
+            self.init_models_measures()
+        else:
+            experiment_config.num_clusters, clusters_client_id_dict = self.greedy_elimination_t_larger(epsilon_=None,
+                                                                                                       k=experiment_config.num_clusters)
+
+    def get_distance_dict(self):
+        pairs = list(combinations(self.clients_ids, 2))
+        distance_dict = {}
+        for pair in pairs:
+            if experiment_config.cluster_technique == ClusterTechnique.greedy_elimination_L2:
+                distance_dict[pair] = self.calc_L2(pair).item()
+            if experiment_config.cluster_technique == ClusterTechnique.greedy_elimination_cross_entropy:
+                distance_dict[pair] = self.calc_cross_entropy(pair).item()
+
+        return pairs
 
 
 class Server_PseudoLabelsClusters_with_division(Server):

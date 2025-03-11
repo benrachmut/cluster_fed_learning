@@ -122,7 +122,7 @@ def run_PseudoLabelsClusters():
 
                                     with open(pickle_file_path, "wb") as file:
                                         pickle.dump(data_to_pickle, file)
-                            if experiment_config.cluster_technique == ClusterTechnique.greedy_elimination_cross_entropy:
+                            if experiment_config.cluster_technique == ClusterTechnique.greedy_elimination_cross_entropy or   experiment_config.cluster_technique == ClusterTechnique.greedy_elimination_L2:
                                 break
 
 def run_NoFederatedLearning():
