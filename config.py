@@ -72,6 +72,8 @@ class ClusterTechnique(Enum):
     kmeans = 1
     manual = 2
     manual_single_iter = 3
+    greedy_elimination_cross_entropy = 4
+    greedy_elimination_L2 = 4
 
 class ServerFeedbackTechnique(Enum):
     similar_to_client = 1

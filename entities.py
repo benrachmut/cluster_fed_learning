@@ -333,7 +333,7 @@ class Client(LearningEntity):
 
     def iteration_context(self, t):
         self.current_iteration = t
-        for _ in range(100):
+        for _ in range(10000):
             if t>0:
                 train_loss = self.train(self.pseudo_label_received)
             train_loss = self.fine_tune()
@@ -718,32 +718,32 @@ class Server(LearningEntity):
         self.accuracy_test_max = {}
         self.accuracy_global_max = {}
 
-        for cluster_id in  range(num_clusters):
-            self.previous_centroids_dict[cluster_id] = None
+        if num_clusters>0:
+            for cluster_id in  range(num_clusters):
+                self.previous_centroids_dict[cluster_id] = None
 
         if  experiment_config.net_cluster_technique == NetClusterTechnique.multi_head:
             self.model = get_server_model()
             self.model.apply(self.initialize_weights)
 
-            for cluster_id in  range(num_clusters):
-                self.accuracy_server_test_1[cluster_id] = {}
-                self.accuracy_global_data_1[cluster_id] ={}
 
         if  experiment_config.net_cluster_technique == NetClusterTechnique.multi_model:
             self.multi_model_dict = {}
 
+            if num_clusters>0:
+                for cluster_id in  range(num_clusters):
+                    self.multi_model_dict[cluster_id] = get_server_model()
+                    self.multi_model_dict[cluster_id].apply(self.initialize_weights)
 
-            for cluster_id in  range(num_clusters):
-                self.multi_model_dict[cluster_id] = get_server_model()
-                self.multi_model_dict[cluster_id].apply(self.initialize_weights)
-                self.accuracy_server_test_1[cluster_id] = {}
-                self.accuracy_global_data_1[cluster_id] ={}
 
         self.accuracy_per_client_1_max = {}
-        for client_id in self.clients_ids:
-            self.accuracy_per_client_1[client_id]={}
-            self.accuracy_per_client_1_max[client_id]={}
-
+        if num_clusters>0:
+            for client_id in self.clients_ids:
+                self.accuracy_per_client_1[client_id]={}
+                self.accuracy_per_client_1_max[client_id]={}
+            for cluster_id in  range(num_clusters):
+                self.accuracy_server_test_1[cluster_id] = {}
+                self.accuracy_global_data_1[cluster_id] ={}
         #self.accuracy_aggregated_head = {}
         #self.accuracy_pl_measures[cluster_id] = {}
 
@@ -1245,6 +1245,15 @@ class Server(LearningEntity):
         if experiment_config.num_clusters == "Optimal":
             clusters_client_id_dict = experiment_config.known_clusters
             flag = True
+
+        if (experiment_config.cluster_technique == ClusterTechnique.greedy_elimination_cross_entropy or experiment_config.cluster_technique == ClusterTechnique.greedy_elimination_L2) and not flag:
+            if t == 0:
+                self.calc_epsilon
+                self.c, clusters_client_id_dict = self.greedy_elimination()
+            else
+
+
+
         if experiment_config.cluster_technique == ClusterTechnique.kmeans and not flag:
             clusters_client_id_dict = self.k_means_grouping()
 
