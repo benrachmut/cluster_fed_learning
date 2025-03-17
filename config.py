@@ -97,7 +97,7 @@ class ExperimentConfig:
     def __init__(self):
         self.which_net_arch = None
         self.seed_num = 1
-        self.iterations = 11
+        self.iterations = 10
 
         # CIFAR10/CIFAR 100
         self.data_set_selected = None # selected in main
