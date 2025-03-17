@@ -69,8 +69,14 @@ def run_PseudoLabelsClusters():
                             server_split_ratio][algorithm_selection.name][net_type.name][net_cluster_technique.name][
                             server_input_tech.name][cluster_technique.name][server_feedback_technique.name] = {}
 
+
+
+
                         for num_cluster in num_cluster_list:
-                            experiment_config.num_clusters = num_cluster
+                            if experiment_config.cluster_technique == ClusterTechnique.greedy_elimination_cross_entropy:
+                                experiment_config.num_clusters = -1
+                            else:
+                                experiment_config.num_clusters = num_cluster
 
                             if experiment_config.algorithm_selection == AlgorithmSelected.PseudoLabelsClusters_with_division:
                                 server_train_data_ = fix_global_data(server_train_data)
@@ -116,7 +122,8 @@ def run_PseudoLabelsClusters():
 
                                     with open(pickle_file_path, "wb") as file:
                                         pickle.dump(data_to_pickle, file)
-
+                            if experiment_config.cluster_technique == ClusterTechnique.greedy_elimination_cross_entropy or   experiment_config.cluster_technique == ClusterTechnique.greedy_elimination_L2:
+                                break
 
 def run_NoFederatedLearning():
 
@@ -189,8 +196,8 @@ if __name__ == '__main__':
     torch.manual_seed(experiment_config.seed_num)
 
     data_sets_list = [DataSet.CIFAR100]
-    num_clients_list = [25]
-    num_opt_clusters_list = [5]
+    num_clients_list = [25]#[25]
+    num_opt_clusters_list =[5] #[5]
     mix_percentage_list = [0.2]
     server_split_ratio_list = [0.2]
 
@@ -209,7 +216,7 @@ if __name__ == '__main__':
     nets_types_list_PseudoLabelsClusters  = [NetsType.C_alex_S_alex]#,NetsType.C_alex_S_vgg]#,NetsType.C_alex_S_vgg]
     net_cluster_technique_list = [NetClusterTechnique.multi_model]#,NetClusterTechnique.multi_head]
     server_input_tech_list = [ServerInputTech.max]
-    cluster_technique_list = [ClusterTechnique.manual_single_iter,ClusterTechnique.manual,ClusterTechnique.kmeans]
+    cluster_technique_list = [ClusterTechnique.manual_cross_entropy,ClusterTechnique.manual_L2,ClusterTechnique.kmeans]#[ClusterTechnique.manual_single_iter,ClusterTechnique.manual,ClusterTechnique.kmeans]
     server_feedback_technique_list = [ServerFeedbackTechnique.similar_to_cluster]#[ServerFeedbackTechnique.similar_to_cluster,ServerFeedbackTechnique.similar_to_client]
     num_cluster_list = [5]
 

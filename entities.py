@@ -1,5 +1,6 @@
 
 import torchvision
+from sympy.abc import epsilon
 from torch.utils.data import DataLoader, Dataset
 from config import *
 import torch.nn.functional as F
@@ -333,7 +334,7 @@ class Client(LearningEntity):
 
     def iteration_context(self, t):
         self.current_iteration = t
-        for _ in range(100):
+        for _ in range(10000):
             if t>0:
                 train_loss = self.train(self.pseudo_label_received)
             train_loss = self.fine_tune()
@@ -705,6 +706,7 @@ class Server(LearningEntity):
         self.reset_clients_received_pl()
         self.clients_test_data_dict=clients_test_data_dict
         #if experiment_config.server_learning_technique == ServerLearningTechnique.multi_head:
+        self.accuracy_per_client_1_max = {}
 
         self.previous_centroids_dict = {}
         self.pseudo_label_to_send = {}
@@ -718,32 +720,34 @@ class Server(LearningEntity):
         self.accuracy_test_max = {}
         self.accuracy_global_max = {}
 
-        for cluster_id in  range(num_clusters):
-            self.previous_centroids_dict[cluster_id] = None
+        if num_clusters>0:
+            for cluster_id in  range(num_clusters):
+                self.previous_centroids_dict[cluster_id] = None
 
         if  experiment_config.net_cluster_technique == NetClusterTechnique.multi_head:
             self.model = get_server_model()
             self.model.apply(self.initialize_weights)
 
-            for cluster_id in  range(num_clusters):
-                self.accuracy_server_test_1[cluster_id] = {}
-                self.accuracy_global_data_1[cluster_id] ={}
 
         if  experiment_config.net_cluster_technique == NetClusterTechnique.multi_model:
             self.multi_model_dict = {}
 
+            if num_clusters>0:
+                for cluster_id in  range(num_clusters):
+                    self.multi_model_dict[cluster_id] = get_server_model()
+                    self.multi_model_dict[cluster_id].apply(self.initialize_weights)
 
-            for cluster_id in  range(num_clusters):
-                self.multi_model_dict[cluster_id] = get_server_model()
-                self.multi_model_dict[cluster_id].apply(self.initialize_weights)
-                self.accuracy_server_test_1[cluster_id] = {}
-                self.accuracy_global_data_1[cluster_id] ={}
 
         self.accuracy_per_client_1_max = {}
-        for client_id in self.clients_ids:
-            self.accuracy_per_client_1[client_id]={}
-            self.accuracy_per_client_1_max[client_id]={}
 
+        for client_id in self.clients_ids:
+            self.accuracy_per_client_1[client_id] = {}
+            self.accuracy_per_client_1_max[client_id] = {}
+
+        if num_clusters>0:
+            for cluster_id in  range(num_clusters):
+                self.accuracy_server_test_1[cluster_id] = {}
+                self.accuracy_global_data_1[cluster_id] ={}
         #self.accuracy_aggregated_head = {}
         #self.accuracy_pl_measures[cluster_id] = {}
 
@@ -1073,14 +1077,14 @@ class Server(LearningEntity):
         sum_squared = torch.sum(squared_difference)  # Sum of squared differences
         return torch.sqrt(sum_squared)  # Take the square root
 
-    def get_L2_of_all_clients(self):
+    #def get_L2_of_all_clients(self):
 
         # Example list of client IDs
-        pairs = list(combinations(self.clients_ids, 2))
-        ans_dict = {}
-        for pair in pairs:
-            ans_dict[pair] = self.calc_L2(pair).item()
-        return ans_dict
+        #pairs = list(combinations(self.clients_ids, 2))
+        #ans_dict = {}
+        #for pair in pairs:
+        #    ans_dict[pair] = self.calc_L2(pair).item()
+        #return ans_dict
 
     def initiate_clusters_centers_dict(self,L2_of_all_clients):
         max_pair = max(L2_of_all_clients.items(), key=lambda item: item[1])
@@ -1089,7 +1093,7 @@ class Server(LearningEntity):
                                  max_pair_keys[1]: self.pseudo_label_received[max_pair_keys[1]]}
         return clusters_centers_dict
 
-    def update_L2_of_all_clients(self,L2_of_all_clients,clusters_centers_dict):
+    def update_distance_of_all_clients(self, L2_of_all_clients, clusters_centers_dict):
         L2_temp = {}
         for pair in L2_of_all_clients.keys():
             id1, id2 = pair
@@ -1130,14 +1134,14 @@ class Server(LearningEntity):
             cluster_counter =  experiment_config.num_clusters -2
 
         while cluster_counter > 0:
-            L2_of_all_clients = self.get_L2_of_all_clients()
-            L2_of_all_clients = self.update_L2_of_all_clients(L2_of_all_clients,clusters_centers_dict)
-            new_center = self.get_l2_of_non_centers(L2_of_all_clients,clusters_centers_dict)
+            distance_of_all_clients = self.get_distance_dict()
+            distance_of_all_clients = self.update_distance_of_all_clients(distance_of_all_clients, clusters_centers_dict)
+            new_center = self.get_l2_of_non_centers(distance_of_all_clients,clusters_centers_dict)
             clusters_centers_dict[new_center] = self.pseudo_label_received[new_center]
             cluster_counter = cluster_counter-1
-        L2_of_all_clients = self.get_L2_of_all_clients()
-        L2_of_all_clients = self.update_L2_of_all_clients(L2_of_all_clients, clusters_centers_dict)
-        return L2_of_all_clients,clusters_centers_dict
+        distance_of_all_clients = self.get_distance_dict()
+        distance_of_all_clients = self.update_distance_of_all_clients(distance_of_all_clients, clusters_centers_dict)
+        return distance_of_all_clients,clusters_centers_dict
 
     def get_l2_of_non_center_to_center(self,L2_from_center_clients,clusters_centers_dict):
         ans ={}
@@ -1183,7 +1187,7 @@ class Server(LearningEntity):
 
 
     def get_clusters_centers_dict(self):
-        L2_of_all_clients = self.get_L2_of_all_clients()
+        L2_of_all_clients = self.get_distance_dict()
         clusters_centers_dict = self.initiate_clusters_centers_dict(L2_of_all_clients)
         L2_from_center_clients,clusters_centers_dict = self.complete_clusters_centers_and_L2_of_all_clients(clusters_centers_dict)
         L2_of_non_centers = self.get_l2_of_non_center_to_center(L2_from_center_clients,clusters_centers_dict)
@@ -1245,10 +1249,14 @@ class Server(LearningEntity):
         if experiment_config.num_clusters == "Optimal":
             clusters_client_id_dict = experiment_config.known_clusters
             flag = True
+
+        if (experiment_config.cluster_technique == ClusterTechnique.greedy_elimination_cross_entropy or experiment_config.cluster_technique == ClusterTechnique.greedy_elimination_L2) and not flag:
+            clusters_client_id_dict = self.greedy_elimination(t)
+
         if experiment_config.cluster_technique == ClusterTechnique.kmeans and not flag:
             clusters_client_id_dict = self.k_means_grouping()
 
-        if experiment_config.cluster_technique == ClusterTechnique.manual  and not flag:
+        if (experiment_config.cluster_technique == ClusterTechnique.manual_L2 or experiment_config.cluster_technique == ClusterTechnique.manual_cross_entropy) and not flag:
             clusters_client_id_dict = self.manual_grouping()
 
         if experiment_config.cluster_technique == ClusterTechnique.manual_single_iter  and not flag:
@@ -1337,6 +1345,49 @@ class Server(LearningEntity):
                     return cluster_id
             print()
 
+    def init_models_measures(self):
+        num_clusters = experiment_config.num_clusters
+        for cluster_id in range(num_clusters):
+            self.previous_centroids_dict[cluster_id] = None
+            self.accuracy_server_test_1[cluster_id] = {}
+            self.accuracy_global_data_1[cluster_id] = {}
+            self.multi_model_dict[cluster_id] = get_server_model()
+            self.multi_model_dict[cluster_id].apply(self.initialize_weights)
+
+    def greedy_elimination(self, t):
+        distance_dict = self.get_distance_dict()
+        #distance_per_client = self.get_distance_per_client()
+        # Example list of client IDs
+
+
+        if t == 0:
+            pass
+            #epsilon_ = self.calc_epsilon()
+            #experiment_config.num_clusters, clusters_client_id_dict = self.greedy_elimination_t0(epsilon_=epsilon_,
+            #                                                                                     k=None)
+            #self.init_models_measures()
+        else:
+            pass
+            #experiment_config.num_clusters, clusters_client_id_dict = self.greedy_elimination_t_larger(epsilon_=None,
+            #                                                                                           k=experiment_config.num_clusters)
+
+    def get_distance_dict(self):
+        pairs = list(combinations(self.clients_ids, 2))
+        distance_dict = {}
+        for pair in pairs:
+            if experiment_config.cluster_technique == ClusterTechnique.greedy_elimination_L2 or  experiment_config.cluster_technique == ClusterTechnique.manual_L2:
+                distance_dict[pair] = self.calc_L2(pair).item()
+            if experiment_config.cluster_technique == ClusterTechnique.greedy_elimination_cross_entropy or experiment_config.cluster_technique == ClusterTechnique.manual_cross_entropy:
+                distance_dict[pair] = self.calc_cross_entropy(pair).item()
+        return distance_dict
+
+    def calc_cross_entropy(self, pair):
+        first_pl = self.pseudo_label_received[pair[0]]
+        second_pl = self.pseudo_label_received[pair[1]]
+        loss1 = -(first_pl * torch.log(second_pl)).sum(dim=1).mean()
+        loss2 = -(second_pl * torch.log(first_pl.clamp(min=1e-9))).sum(dim=1).mean()
+        loss = 0.5 * (loss1 + loss2)
+        return loss
 
 class Server_PseudoLabelsClusters_with_division(Server):
     def __init__(self, id_, global_data, test_data, clients_ids, clients_test_data_dict):

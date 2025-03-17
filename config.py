@@ -70,8 +70,12 @@ class NetsType(Enum):
 
 class ClusterTechnique(Enum):
     kmeans = 1
-    manual = 2
-    manual_single_iter = 3
+    manual_L2 = 2
+    manual_cross_entropy = 3
+
+    manual_single_iter = 4
+    greedy_elimination_cross_entropy = 5
+    greedy_elimination_L2 = 6
 
 class ServerFeedbackTechnique(Enum):
     similar_to_client = 1
