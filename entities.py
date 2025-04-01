@@ -1,3 +1,4 @@
+import copy
 
 import torchvision
 from sympy.abc import epsilon
@@ -544,6 +545,9 @@ class Client(LearningEntity):
 
         return  result_to_print
 
+
+class Client_FedAvg(Client):
+    TODO
 class Client_NoFederatedLearning(Client):
     def __init__(self,id_, client_data, global_data,global_test_data,local_test_data,evaluate_every):
         Client.__init__(self,id_, client_data, global_data,global_test_data,local_test_data)
@@ -1072,11 +1076,9 @@ class Server(LearningEntity):
     def calc_L2(self,pair):
         first_pl = self.pseudo_label_received[pair[0]]
         second_pl = self.pseudo_label_received[pair[1]]
-        difference = first_pl - second_pl  # Element-wise difference
-        squared_difference = difference ** 2  # Square the differences
-        sum_squared = torch.sum(squared_difference)  # Sum of squared differences
-        return torch.sqrt(sum_squared)  # Take the square root
 
+
+        return  Server.calc_L2_given_pls(first_pl,second_pl)
     #def get_L2_of_all_clients(self):
 
         # Example list of client IDs
@@ -1086,6 +1088,12 @@ class Server(LearningEntity):
         #    ans_dict[pair] = self.calc_L2(pair).item()
         #return ans_dict
 
+    @staticmethod
+    def calc_L2_given_pls(pl1,pl2):
+        difference = pl1 - pl2  # Element-wise difference
+        squared_difference = difference ** 2  # Square the differences
+        sum_squared = torch.sum(squared_difference)  # Sum of squared differences
+        return torch.sqrt(sum_squared).item()  # Take the square root
     def initiate_clusters_centers_dict(self,L2_of_all_clients):
         max_pair = max(L2_of_all_clients.items(), key=lambda item: item[1])
         max_pair_keys = max_pair[0]
@@ -1251,7 +1259,11 @@ class Server(LearningEntity):
             flag = True
 
         if (experiment_config.cluster_technique == ClusterTechnique.greedy_elimination_cross_entropy or experiment_config.cluster_technique == ClusterTechnique.greedy_elimination_L2) and not flag:
-            clusters_client_id_dict = self.greedy_elimination(t)
+            if t == 0:
+                clusters_client_id_dict = self.greedy_elimination()
+            else:
+                clusters_client_id_dict = self.clusters_client_id_dict_per_iter[0]
+
 
         if experiment_config.cluster_technique == ClusterTechnique.kmeans and not flag:
             clusters_client_id_dict = self.k_means_grouping()
@@ -1354,20 +1366,32 @@ class Server(LearningEntity):
             self.multi_model_dict[cluster_id] = get_server_model()
             self.multi_model_dict[cluster_id].apply(self.initialize_weights)
 
-    def greedy_elimination(self, t):
+    def get_distance_per_client(self,distance_dict):
+        ans = {}
+        for pair, dist in distance_dict.items():
+            first_id = pair[0]
+            second_id = pair[1]
+            if first_id not in ans:
+                ans[first_id] = {}
+            if second_id not in ans:
+                ans[second_id] = {}
+            ans[first_id][second_id] = dist
+            ans[second_id][first_id] = dist
+
+        return ans
+
+
+
+
+    def greedy_elimination(self):
         distance_dict = self.get_distance_dict()
-        #distance_per_client = self.get_distance_per_client()
-        # Example list of client IDs
+        distance_per_client = self.get_distance_per_client(distance_dict)
+        epsilon_ = self.calc_epsilon()
+        clusters_client_id_dict = self.greedy_elimination_t0(epsilon_,distance_per_client)
+        experiment_config.num_clusters = len(clusters_client_id_dict)
+        l = experiment_config.known_clusters
+        self.init_models_measures()
 
-
-        if t == 0:
-            pass
-            #epsilon_ = self.calc_epsilon()
-            #experiment_config.num_clusters, clusters_client_id_dict = self.greedy_elimination_t0(epsilon_=epsilon_,
-            #                                                                                     k=None)
-            #self.init_models_measures()
-        else:
-            pass
             #experiment_config.num_clusters, clusters_client_id_dict = self.greedy_elimination_t_larger(epsilon_=None,
             #                                                                                           k=experiment_config.num_clusters)
 
@@ -1376,18 +1400,111 @@ class Server(LearningEntity):
         distance_dict = {}
         for pair in pairs:
             if experiment_config.cluster_technique == ClusterTechnique.greedy_elimination_L2 or  experiment_config.cluster_technique == ClusterTechnique.manual_L2:
-                distance_dict[pair] = self.calc_L2(pair).item()
+                distance_dict[pair] = self.calc_L2(pair)
             if experiment_config.cluster_technique == ClusterTechnique.greedy_elimination_cross_entropy or experiment_config.cluster_technique == ClusterTechnique.manual_cross_entropy:
-                distance_dict[pair] = self.calc_cross_entropy(pair).item()
+                distance_dict[pair] = self.calc_cross_entropy(pair)
         return distance_dict
 
     def calc_cross_entropy(self, pair):
         first_pl = self.pseudo_label_received[pair[0]]
         second_pl = self.pseudo_label_received[pair[1]]
+        return Server.calc_cross_entropy_given_pl(first_pl,second_pl)
+
+
+    @staticmethod
+    def calc_cross_entropy_given_pl(first_pl,second_pl):
         loss1 = -(first_pl * torch.log(second_pl)).sum(dim=1).mean()
         loss2 = -(second_pl * torch.log(first_pl.clamp(min=1e-9))).sum(dim=1).mean()
         loss = 0.5 * (loss1 + loss2)
-        return loss
+        return loss.item()
+
+
+    def get_pseudo_label_in_cluster(self,clusters_client_id_dict):
+        pseudo_labels_in_cluster = {}
+        for cluster_id, clients in clusters_client_id_dict.items():
+            pseudo_labels_in_cluster[cluster_id] = []
+            for client_id in clients:
+                pl = self.pseudo_label_received[client_id]
+                pseudo_labels_in_cluster[cluster_id].append(pl)
+        return pseudo_labels_in_cluster
+
+    def calc_epsilon(self):
+        clusters_client_id_dict = experiment_config.known_clusters
+        pseudo_labels_in_cluster = self.get_pseudo_label_in_cluster(clusters_client_id_dict)
+
+        center_of_cluster = {}
+        for cluster_id,list_of_pseudo_labels in pseudo_labels_in_cluster.items():
+            center_of_cluster[cluster_id] = torch.stack(list_of_pseudo_labels).mean(dim=0)
+
+        if experiment_config.cluster_technique == ClusterTechnique.greedy_elimination_cross_entropy:
+            distance_dict = self.compute_distances(center_of_cluster,Server.calc_cross_entropy_given_pl)
+        else:
+            distance_dict = self.compute_distances(center_of_cluster, Server.calc_L2_given_pls)
+
+        min_distance = min(distance_dict.values())
+        return min_distance*(4.2/5)
+
+
+
+    def compute_distances(self,id_label_dict, distance_function):
+        """
+        Given a dictionary of {id: pseudo_label}, compute the pairwise distances.
+
+        Args:
+        id_label_dict (dict): Dictionary where keys are IDs and values are pseudo labels.
+        distance_function (function): Function that computes distance between two pseudo labels.
+
+        Returns:
+        dict: Dictionary where keys are (id1, id2) tuples and values are distances.
+        """
+        distance_dict = {}
+        ids = list(id_label_dict.keys())
+
+        for i in range(len(ids)):
+            for j in range(i + 1, len(ids)):
+                id1, id2 = ids[i], ids[j]
+                distance = distance_function(id_label_dict[id1], id_label_dict[id2])
+                distance_dict[(id1, id2)] = distance
+
+        return distance_dict
+
+    def filter_far_clients(self,distance_per_client,epsilon):
+        for client, distance_dict in distance_per_client.items():
+            far_clients = []
+            for other_client, distance in distance_dict.items():
+                if distance > epsilon:
+                    far_clients.append(other_client)
+            for other_client in far_clients:
+                del distance_dict[other_client]
+
+    def greedy_elimination_t0(self, epsilon_, distance_per_client):
+        self.filter_far_clients(distance_per_client,epsilon_)#what is the distance between 10 and 11
+        clusters_client_id_dict = {}
+        counter = -1
+        while len(distance_per_client)>0:
+            counter = counter + 1
+
+            max_client = max(distance_per_client, key=lambda k: len(distance_per_client[k]))
+            others_to_remove = list(distance_per_client[max_client].keys())
+            lst = copy.deepcopy(others_to_remove)
+            lst.append(max_client)
+            clusters_client_id_dict[counter] =lst
+            for other in clusters_client_id_dict[counter]:
+                for other_in_distance_per_client in distance_per_client.values():
+                    if other in other_in_distance_per_client:
+                        del other_in_distance_per_client[other]
+                del distance_per_client[other]
+        return clusters_client_id_dict
+
+
+
+
+
+
+
+
+
+
 
 class Server_PseudoLabelsClusters_with_division(Server):
     def __init__(self, id_, global_data, test_data, clients_ids, clients_test_data_dict):

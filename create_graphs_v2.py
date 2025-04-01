@@ -213,7 +213,7 @@ if __name__ == '__main__':
             num_cluster_list = [5, 1, "Optimal"]
             measure = Measure.Local_Client_Validation
             data_for_graph = handle_data_PseudoLabelsClusters()
-            print()
+
 
 
 
