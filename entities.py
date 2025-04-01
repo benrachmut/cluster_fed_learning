@@ -545,6 +545,9 @@ class Client(LearningEntity):
 
         return  result_to_print
 
+
+class Client_FedAvg(Client):
+    TODO
 class Client_NoFederatedLearning(Client):
     def __init__(self,id_, client_data, global_data,global_test_data,local_test_data,evaluate_every):
         Client.__init__(self,id_, client_data, global_data,global_test_data,local_test_data)

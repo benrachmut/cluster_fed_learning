@@ -91,6 +91,7 @@ class AlgorithmSelected(Enum):
     NoFederatedLearning = 3
     PseudoLabelsClusters_with_division = 4
     Centralized = 5
+    FedAvg = 6
 
 
 class ExperimentConfig:
