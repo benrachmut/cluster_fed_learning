@@ -547,7 +547,79 @@ class Client(LearningEntity):
 
 
 class Client_FedAvg(Client):
-    TODO
+    def __init__(self, id_, client_data, global_data, global_test_data, local_test_data):
+        Client.__init__(self, id_, client_data, global_data, global_test_data, local_test_data)
+        self.weights_received = None
+        self.weights_to_send = None
+
+    def iteration_context(self, t):
+
+        self.current_iteration = t
+        for _ in range(10000):
+            if t > 0:
+                self.model.load_state_dict(self.weights_received)
+            self.weights_to_send  = self.fine_tune()
+
+            acc = self.evaluate_accuracy(self.local_test_set)
+
+            acc_test = self.evaluate_accuracy(self.test_global_data)
+            if experiment_config.data_set_selected == DataSet.CIFAR100:
+                if acc_test != 1:
+                    break
+                else:
+                    self.model.apply(self.initialize_weights)
+            if experiment_config.data_set_selected == DataSet.CIFAR10:
+                if acc_test != 10:
+                    break
+                else:
+                    self.model.apply(self.initialize_weights)
+
+        self.accuracy_per_client_1[t] = self.evaluate_accuracy(self.local_test_set, k=1)
+
+
+
+    def fine_tune(self):
+        print("*** " + self.__str__() + " fine-tune ***")
+
+        # Load the weights into the model
+        #if self.weights is  None:
+        #    self.model.apply(self.initialize_weights)
+        #else:
+        #    self.model.load_state_dict(self.weights)
+
+        # Create a DataLoader for the local data
+        fine_tune_loader = DataLoader(self.local_data, batch_size=experiment_config.batch_size, shuffle=True)
+        self.model.train()  # Set the model to training mode
+
+        # Define loss function and optimizer
+
+        criterion = nn.CrossEntropyLoss()
+
+        optimizer = torch.optim.Adam(self.model.parameters(), lr=experiment_config.learning_rate_fine_tune_c)
+
+        epochs = experiment_config.epochs_num_input_fine_tune_clients
+        for epoch in range(epochs):
+            self.epoch_count += 1
+            epoch_loss = 0
+            for inputs, targets in fine_tune_loader:
+                inputs, targets = inputs.to(device), targets.to(device)
+                optimizer.zero_grad()
+                outputs = self.model(inputs)
+
+                loss = criterion(outputs, targets)
+
+                # Backward pass and optimization
+                loss.backward()
+                optimizer.step()
+                epoch_loss += loss.item()
+
+            result_to_print = epoch_loss / len(fine_tune_loader)
+            print(f"Epoch [{epoch + 1}/{epochs}], Loss: {result_to_print:.4f}")
+        ans = self.model.state_dict()
+
+        return  ans
+
+
 class Client_NoFederatedLearning(Client):
     def __init__(self,id_, client_data, global_data,global_test_data,local_test_data,evaluate_every):
         Client.__init__(self,id_, client_data, global_data,global_test_data,local_test_data)
@@ -1735,3 +1807,74 @@ class Server_Centralized(Server):
 
         return ans
 
+class ServerFedAvg(Server):
+    def __init__(self, id_, global_data, test_data, clients_ids, clients_test_data_dict):
+        Server.__init__(self, id_, global_data, test_data, clients_ids, clients_test_data_dict)
+        self.received_weights = {}
+        self.weights_to_send = None
+
+    def iteration_context(self,t):
+        self.current_iteration = t
+        weights_per_cluster, self.clusters_client_id_dict_per_iter[t] = self.get_weights_per_cluster(
+            t)  # #
+
+        #if experiment_config.net_cluster_technique == NetClusterTechnique.multi_head:
+        #    self.create_feed_back_to_clients_multihead(pseudo_labels_per_cluster, t)
+        #if experiment_config.net_cluster_technique == NetClusterTechnique.multi_model:
+            #self.create_feed_back_to_clients_multimodel(pseudo_labels_per_cluster, t)
+
+        #self.evaluate_results(t)
+        #self.reset_clients_received_pl()
+
+    def get_weights_per_cluster(self,t):
+        mean_per_cluster = {}
+
+        flag = False
+        clusters_client_id_dict = None
+        if experiment_config.num_clusters == "Optimal":
+            clusters_client_id_dict = experiment_config.known_clusters
+            flag = True
+
+        elif experiment_config.num_clusters == 1:
+            clusters_client_id_dict={0:[]}
+            for client_id in self.clients_ids:
+                clusters_client_id_dict[0].append(client_id)
+
+        else:
+            raise Exception("implemented 1 and optimal only")
+
+
+
+        cluster_weights_dict = self.get_cluster_weights_dict(clusters_client_id_dict)
+
+        #if experiment_config.num_clusters>1:
+        for cluster_id, weights in cluster_weights_dict.items():
+            mean_per_cluster[cluster_id] = self.average_weights(weights)
+        return mean_per_cluster, clusters_client_id_dict
+
+    def average_weights(self,weights_list):
+        """
+        Averages a list of state_dicts (model weights) using Federated Averaging (FedAvg).
+
+        :param weights_list: List of model state_dicts
+        :return: Averaged state_dict
+        """
+        if not weights_list:
+            raise ValueError("The weights list is empty")
+
+        # Initialize an empty dictionary to store averaged weights
+        avg_weights = {}
+
+        # Iterate through each parameter key in the model
+        for key in weights_list[0].keys():
+            # Stack all weights along a new dimension and take the mean
+            avg_weights[key] = torch.stack([weights[key] for weights in weights_list]).mean(dim=0)
+
+        return avg_weights
+    def get_cluster_weights_dict(self,clusters_client_id_dict):
+        ans = {}
+        for cluster_id, clients_ids in clusters_client_id_dict.items():
+            ans[cluster_id] = []
+            for client_id in clients_ids:
+                ans[cluster_id].append(self.pseudo_label_received[client_id])
+        return ans
