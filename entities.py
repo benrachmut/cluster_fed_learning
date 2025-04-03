@@ -555,9 +555,13 @@ class Client_FedAvg(Client):
     def iteration_context(self, t):
 
         self.current_iteration = t
+        flag = False
         for _ in range(10000):
             if t > 0:
-                self.model.load_state_dict(self.weights_received)
+                if flag:
+                    self.model.apply(self.initialize_weights)
+                else:
+                    self.model.load_state_dict(self.weights_received)
             self.weights_to_send  = self.fine_tune()
 
             acc = self.evaluate_accuracy(self.local_test_set)
@@ -567,12 +571,13 @@ class Client_FedAvg(Client):
                 if acc_test != 1:
                     break
                 else:
-                    self.model.apply(self.initialize_weights)
+                    flag = True
             if experiment_config.data_set_selected == DataSet.CIFAR10:
                 if acc_test != 10:
                     break
                 else:
-                    self.model.apply(self.initialize_weights)
+                    flag = True
+                    #self.model.apply(self.initialize_weights)
 
         self.accuracy_per_client_1[t] = self.evaluate_accuracy(self.local_test_set, k=1)
 
@@ -1811,29 +1816,23 @@ class ServerFedAvg(Server):
     def __init__(self, id_, global_data, test_data, clients_ids, clients_test_data_dict):
         Server.__init__(self, id_, global_data, test_data, clients_ids, clients_test_data_dict)
         self.received_weights = {}
-        self.weights_to_send = None
+        self.weights_to_send = {}
 
     def iteration_context(self,t):
         self.current_iteration = t
         weights_per_cluster, self.clusters_client_id_dict_per_iter[t] = self.get_weights_per_cluster(
             t)  # #
-        need to fixs weights to send to clients dict
-        #if experiment_config.net_cluster_technique == NetClusterTechnique.multi_head:
-        #    self.create_feed_back_to_clients_multihead(pseudo_labels_per_cluster, t)
-        #if experiment_config.net_cluster_technique == NetClusterTechnique.multi_model:
-            #self.create_feed_back_to_clients_multimodel(pseudo_labels_per_cluster, t)
+        for cluster_id, clients_ids_list in self.clusters_client_id_dict_per_iter[t].items():
+            for client_id in clients_ids_list:
+                self.weights_to_send[client_id] =weights_per_cluster[cluster_id]
 
-        #self.evaluate_results(t)
-        #self.reset_clients_received_pl()
+
 
     def get_weights_per_cluster(self,t):
         mean_per_cluster = {}
 
-        flag = False
-        clusters_client_id_dict = None
         if experiment_config.num_clusters == "Optimal":
             clusters_client_id_dict = experiment_config.known_clusters
-            flag = True
 
         elif experiment_config.num_clusters == 1:
             clusters_client_id_dict={0:[]}
@@ -1871,10 +1870,11 @@ class ServerFedAvg(Server):
             avg_weights[key] = torch.stack([weights[key] for weights in weights_list]).mean(dim=0)
 
         return avg_weights
+
     def get_cluster_weights_dict(self,clusters_client_id_dict):
         ans = {}
         for cluster_id, clients_ids in clusters_client_id_dict.items():
             ans[cluster_id] = []
             for client_id in clients_ids:
-                ans[cluster_id].append(self.pseudo_label_received[client_id])
+                ans[cluster_id].append(self.received_weights[client_id])
         return ans

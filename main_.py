@@ -272,7 +272,7 @@ if __name__ == '__main__':
     mix_percentage_list = [0.2]
     server_split_ratio_list = [0.2]
 
-    algorithm_selection_list = [AlgorithmSelected.PseudoLabelsClusters]
+    algorithm_selection_list = [AlgorithmSelected.FedAvg]
 
     # centralized
     nets_types_Centralized_list = [NetsType.S_alex,NetsType.S_vgg]
@@ -293,7 +293,7 @@ if __name__ == '__main__':
 
 
     # parameters for fedAvg
-    num_cluster_list_fedAVG = [1,"Optimal"] # dont touch
+    num_cluster_list_fedAVG = ["Optimal"] # dont touch
     nets_types_list_fedAVG  = [NetsType.C_alex_S_alex] # dont touch
     cluster_technique_list_fedAVG = [ClusterTechnique.kmeans] # we need this because of logic in num_cluster_list_fedAVG
 
@@ -321,7 +321,7 @@ if __name__ == '__main__':
                         clients_train_data_dict, server_train_data, clients_test_data_dict, server_test_data = create_data()
 
                         for algorithm_selection in algorithm_selection_list:
-
+                            experiment_config.algorithm_selection = algorithm_selection
                             if algorithm_selection == AlgorithmSelected.PseudoLabelsNoServerModel:
 
                                 nets_types_list_PseudoLabelsClusters = [NetsType.C_alex]
