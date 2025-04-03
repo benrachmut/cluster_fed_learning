@@ -1817,7 +1817,7 @@ class ServerFedAvg(Server):
         self.current_iteration = t
         weights_per_cluster, self.clusters_client_id_dict_per_iter[t] = self.get_weights_per_cluster(
             t)  # #
-
+        need to fixs weights to send to clients dict
         #if experiment_config.net_cluster_technique == NetClusterTechnique.multi_head:
         #    self.create_feed_back_to_clients_multihead(pseudo_labels_per_cluster, t)
         #if experiment_config.net_cluster_technique == NetClusterTechnique.multi_model:
