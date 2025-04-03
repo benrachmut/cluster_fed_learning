@@ -64,9 +64,25 @@ def get_data_for_graph_algo_Centralized(algo):
     #                data_for_graph[algo_name] = get_avg_of_entity(rd.server_accuracy_per_client_1_max)
 
 
+def get_data_for_graph_algo_FedAvg(algo):
+    algo_name = algo_names[algo] + " (Clients)"
+    rd = dict_per_algo["C_alex_S_alex"]["multi_model"]["max"]["kmeans"]["similar_to_cluster"]["Optimal"]
+
+    data_ = get_avg_of_entity(rd.client_accuracy_per_client_1)
+    updated_data = {}
+    for k, v in data_.items():
+        updated_data[k] = v
+    data_for_graph[algo_name] = updated_data
+
+
 if __name__ == '__main__':
 
-    algo_names={AlgorithmSelected.PseudoLabelsClusters.name:"C-PL",AlgorithmSelected.PseudoLabelsNoServerModel.name:"C-PL-NSM",AlgorithmSelected.NoFederatedLearning.name:"No FL",AlgorithmSelected.Centralized.name:"Centralized"  }
+    algo_names={AlgorithmSelected.PseudoLabelsClusters.name:"C-PL"
+        ,AlgorithmSelected.PseudoLabelsNoServerModel.name:"C-PL-NSM",
+        AlgorithmSelected.NoFederatedLearning.name:"No FL",
+        AlgorithmSelected.Centralized.name:"Centralized",
+                AlgorithmSelected.FedAvg.name:"FedAvg",
+                }
 
 
     all_data = read_all_pkls("Graph_diff_algos")
@@ -85,11 +101,13 @@ if __name__ == '__main__':
             get_data_for_graph_algo_NoFederatedLearning(algo)
         if algo == AlgorithmSelected.Centralized.name:
             get_data_for_graph_algo_Centralized(algo)
+        if algo == AlgorithmSelected.FedAvg.name:
+            get_data_for_graph_algo_FedAvg(algo)
 
     plt.figure(figsize=(7, 5))
 
     # Define a color cycle for different algorithms
-    colors = ["red", "orange", "green","blue" , "purple","Gray"]
+    colors = ["red", "orange", "green","blue" , "purple","Gray","brown"]
     for i, (algorithm, points) in enumerate(data_for_graph.items()):
         x_values = list(points.keys())
         y_values = list(points.values())
@@ -100,8 +118,8 @@ if __name__ == '__main__':
     plt.title("Algorithm Performance")
 
     # Move the legend outside the plot
-    #plt.legend(title="Algorithm", bbox_to_anchor=(1.05, 1), loc='upper left')
-    #plt.tight_layout()  # Adjust layout to make room for the legend
+    plt.legend(title="Algorithm", bbox_to_anchor=(1.05, 1), loc='upper left')
+    plt.tight_layout()  # Adjust layout to make room for the legend
 
     plt.xlim(0,9)
     plt.savefig("algorithm_comparison.png", bbox_inches="tight", dpi=300)
