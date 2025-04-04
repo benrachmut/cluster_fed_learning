@@ -150,6 +150,7 @@ class LearningEntity(ABC):
         self.model=None
         #self.weights = None
         self.accuracy_per_client_1 = {}
+        self.size_sent = {}
         #self.accuracy_per_client_5 = {}
 
         #self.accuracy_pl_measures= {}
@@ -175,7 +176,16 @@ class LearningEntity(ABC):
         #    self.model.apply(self.initialize_weights)
         #else:
         #    self.model.apply(self.weights)
+    def get_pseudo_label_L2(self,pseudo_labels):
+        loader = DataLoader(self.global_data, batch_size=len(self.global_data))
+        X_tensor, Y_tensor = next(iter(loader))  # Gets all data
+        # Convert to NumPy (if needed)
+        ground_truth = Y_tensor.numpy()
 
+        num_classes = pseudo_labels.shape[1]
+        ground_truth_onehot = F.one_hot(torch.tensor(ground_truth), num_classes=num_classes).float().numpy()
+
+        return  np.mean(np.linalg.norm(pseudo_labels - ground_truth_onehot, axis=1) ** 2)
     def iterate(self,t):
         #self.set_weights()
         torch.manual_seed(self.num+t*17)
@@ -332,6 +342,8 @@ class Client(LearningEntity):
         #self.weights = None
         self.global_data =global_data
         self.server = None
+        self.pseudo_label_L2 = {}
+
 
     def iteration_context(self, t):
         self.current_iteration = t
@@ -340,6 +352,15 @@ class Client(LearningEntity):
                 train_loss = self.train(self.pseudo_label_received)
             train_loss = self.fine_tune()
             self.pseudo_label_to_send = self.evaluate()
+            what_to_send = self.pseudo_label_to_send
+            self.size_sent[t] = (what_to_send.numel() * what_to_send.element_size()) / (1024 * 1024)
+            self.pseudo_label_L2[t] = self.get_pseudo_label_L2(what_to_send)
+
+
+
+
+
+
             acc = self.evaluate_accuracy(self.local_test_set)
 
             acc_test = self.evaluate_accuracy(self.test_global_data)
@@ -546,6 +567,8 @@ class Client(LearningEntity):
         return  result_to_print
 
 
+
+
 class Client_FedAvg(Client):
     def __init__(self, id_, client_data, global_data, global_test_data, local_test_data):
         Client.__init__(self, id_, client_data, global_data, global_test_data, local_test_data)
@@ -564,6 +587,10 @@ class Client_FedAvg(Client):
                     self.model.load_state_dict(self.weights_received)
             self.weights_to_send  = self.fine_tune()
 
+            total_size = 0
+            for param in self.weights_to_send.values():
+                total_size += param.numel() * param.element_size()
+            self.size_sent[t] =total_size / (1024 * 1024)
             acc = self.evaluate_accuracy(self.local_test_set)
 
             acc_test = self.evaluate_accuracy(self.test_global_data)
@@ -780,6 +807,7 @@ class Server(LearningEntity):
     def __init__(self,id_,global_data,test_data, clients_ids,clients_test_data_dict):
         LearningEntity.__init__(self, id_,global_data,test_data)
 
+        self.pseudo_label_before_net = {}
         self.num = (1000)*17
         self.pseudo_label_received = {}
         self.clusters_client_id_dict_per_iter = {}
@@ -997,13 +1025,15 @@ class Server(LearningEntity):
     def iteration_context(self,t):
         self.current_iteration = t
         pseudo_labels_per_cluster, self.clusters_client_id_dict_per_iter[t] = self.get_pseudo_labels_input_per_cluster(t)  # #
-
+        self.pseudo_label_before_net[t]={}
+        for cluster_id, pl in pseudo_labels_per_cluster.items():
+            self.pseudo_label_before_net[t][cluster_id] = self.get_pseudo_label_L2(pl)
 
         if experiment_config.net_cluster_technique == NetClusterTechnique.multi_head:
             self.create_feed_back_to_clients_multihead(pseudo_labels_per_cluster,t)
         if experiment_config.net_cluster_technique == NetClusterTechnique.multi_model:
             self.create_feed_back_to_clients_multimodel(pseudo_labels_per_cluster,t)
-
+        need to meaasure feed back and then add it and pseudo_label_before_net and client: pseudo_label_L2 to RD
         self.evaluate_results(t)
         self.reset_clients_received_pl()
 
@@ -1466,9 +1496,8 @@ class Server(LearningEntity):
         epsilon_ = self.calc_epsilon()
         clusters_client_id_dict = self.greedy_elimination_t0(epsilon_,distance_per_client)
         experiment_config.num_clusters = len(clusters_client_id_dict)
-        l = experiment_config.known_clusters
         self.init_models_measures()
-
+        return clusters_client_id_dict
             #experiment_config.num_clusters, clusters_client_id_dict = self.greedy_elimination_t_larger(epsilon_=None,
             #                                                                                           k=experiment_config.num_clusters)
 

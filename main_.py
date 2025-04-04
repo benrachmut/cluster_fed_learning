@@ -16,8 +16,11 @@ from entities import *
 class RecordData:
     def __init__(self, clients, server=None):#loss_measures,accuracy_measures,accuracy_pl_measures,accuracy_measures_k,accuracy_pl_measures_k):
         self.summary = experiment_config.to_dict()
+        self.size_of_client_message = {}
+
         if server is not None and isinstance(server,Server_Centralized):
             self.server_accuracy_per_cluster = server.accuracy_per_cluster_model
+
 
 
         else:
@@ -28,6 +31,11 @@ class RecordData:
             for client in clients:
                 id_ = client.id_
                 self.client_accuracy_per_client_1[id_]=client.accuracy_per_client_1
+
+        if experiment_config.algorithm_selection == AlgorithmSelected.PseudoLabelsClusters or experiment_config.algorithm_selection == AlgorithmSelected.FedAvg:
+            for client in clients:
+                id_ = client.id_
+                self.size_of_client_message[id_] = client.size_sent
 
 
 def clients_and_server_use_pseudo_labels():
@@ -175,7 +183,12 @@ def run_PseudoLabelsClusters():
                             for t in range(experiment_config.iterations):
                                     print("----------------------------iter number:" + str(t))
                                     for c in clients: c.iterate(t)
-                                    for c in clients: server.receive_single_pseudo_label(c.id_, c.pseudo_label_to_send)
+
+                                    for c in clients:
+                                        what_to_send = c.pseudo_label_to_send
+
+
+                                        server.receive_single_pseudo_label(c.id_, what_to_send)
                                     server.iterate(t)
                                     for c in clients: c.pseudo_label_received = server.pseudo_label_to_send[c.id_]
                                     rd = RecordData(clients, server)
@@ -272,7 +285,7 @@ if __name__ == '__main__':
     mix_percentage_list = [0.2]
     server_split_ratio_list = [0.2]
 
-    algorithm_selection_list = [AlgorithmSelected.FedAvg]
+    algorithm_selection_list = [ AlgorithmSelected.PseudoLabelsClusters,AlgorithmSelected.PseudoLabelsClusters]
 
     # centralized
     nets_types_Centralized_list = [NetsType.S_alex,NetsType.S_vgg]
@@ -293,7 +306,7 @@ if __name__ == '__main__':
 
 
     # parameters for fedAvg
-    num_cluster_list_fedAVG = ["Optimal"] # dont touch
+    num_cluster_list_fedAVG = [1,"Optimal"] # dont touch
     nets_types_list_fedAVG  = [NetsType.C_alex_S_alex] # dont touch
     cluster_technique_list_fedAVG = [ClusterTechnique.kmeans] # we need this because of logic in num_cluster_list_fedAVG
 
