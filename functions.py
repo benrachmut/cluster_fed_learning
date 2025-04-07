@@ -215,14 +215,75 @@ def get_image_split_list_classes(tensor_list):
 
     image_split_list = [image_list[i * chunk_size: (i + 1) * chunk_size] for i in range(experiment_config.identical_clients)]
     image_split_list_classes.append(image_split_list)
+
+
+
     return image_split_list_classes
 
+
+def get_image_split_list_classes_dich(tensor_list, num_clients, alpha=0.5):
+    """
+    Split the image dataset into non-IID partitions dynamically based on class data.
+
+    Args:
+        tensor_list (list): A list of tensors where each tensor contains images of one class.
+        num_clients (int): Number of clients to distribute data across.
+        alpha (float): Concentration parameter for Dirichlet distribution.
+
+    Returns:
+        image_split_list_classes (list): A list containing image splits for each client.
+    """
+    image_split_list_classes = []
+
+    num_classes = len(tensor_list)  # Number of classes is determined by the size of tensor_list
+
+    # Step 1: Create a Dirichlet distribution for each client
+    class_distributions = []
+
+    np.random.seed( 17)
+
+    for i in range(num_clients):
+        # Sample a Dirichlet distribution for each client (the sum of probs will be 1)
+
+        probs = np.random.dirichlet([alpha] * num_classes)  # Dirichlet concentration parameter for all classes
+        class_distributions.append(probs)
+
+    # Step 2: Assign images to clients based on their probabilities
+    for client_id in range(num_clients):
+        client_data = []
+
+        # Get the class distribution for the current client
+        probs = class_distributions[client_id]
+
+        # Step 3: Assign images based on the class probabilities
+        for class_id, prob in enumerate(probs):
+            data = tensor_list[class_id]  # Get all images for this class
+
+            # Calculate how many samples from this class the client should get
+            num_samples = int(prob * len(data))  # Multiply by total number of samples in this class
+
+            # Shuffle and assign the required number of samples
+            rnd.seed(543 + 5235 * (client_id + 3))
+            rnd.shuffle(data)
+            client_data.extend(data[:num_samples])  # Add selected samples for this class
+
+        # Add the client data split to the list
+        image_split_list_classes.append(client_data)
+
+    return image_split_list_classes
 def get_data_per_client_dict_and_mix_list(mix_list,target_original_data_dict,data_per_client_dict):
     i = 0
     for group_name, tensor_list in target_original_data_dict.items():
+        all_images_per_group = []
+
         data_per_client_list = []
         i = i + 1
-        image_split_list_classes = get_image_split_list_classes(tensor_list)
+        if experiment_config.data_dist_type == DataDistTypes.NaiveNonIID:
+            image_split_list_classes = get_image_split_list_classes(tensor_list)
+
+        else:
+            num_c = int(experiment_config.num_clients / experiment_config.number_of_optimal_clusters)
+            image_split_list_classes = get_image_split_list_classes_dich(tensor_list,num_c)
 
         torch.manual_seed(42)
 
@@ -240,6 +301,8 @@ def get_data_per_client_dict_and_mix_list(mix_list,target_original_data_dict,dat
             data_per_client_list.append(tt)
         data_per_client_dict[group_name] = data_per_client_list
     rnd.shuffle(mix_list)
+
+
     mix_list = split_list(mix_list, experiment_config.num_clients, 1357)
     return mix_list
 
@@ -438,6 +501,22 @@ def change_format_of_clients_data_dict(client_data_sets):
     return clients_data_dict
 
 
+def get_clients_mix_data(clients_data_dict):
+    ans = {}
+    for group_num,clients_data_list in clients_data_dict.items():
+        ans[group_num] =[]
+        for tens_data in clients_data_list:
+            for image in tens_data:
+                ans[group_num].append(image)
+    for group_num,images in ans.items():
+        rnd.seed(42)
+        rnd.shuffle(images)
+        ans[group_num] = transform_to_TensorDataset(images)
+    return ans
+
+
+
+
 def get_data_set(is_train ):
     transform = transforms.Compose([
         transforms.RandomHorizontalFlip(),  # Data augmentation
@@ -458,6 +537,7 @@ def get_data_set(is_train ):
 
 
     clients_data_dict, server_data = split_clients_server_data_Non_IID(data_by_classification_dict, selected_classes_list)
+
 
     return selected_classes_list, clients_data_dict, server_data
 
@@ -640,7 +720,7 @@ def fix_global_data(server_train_data):
 
 
 
-def create_clients(client_data_dict,server_data,test_set,server_test_data):
+def create_clients(client_data_dict,server_data,test_set,server_test_data,clients_data_train_list = None,clients_data_test_list = None):
     clients_test_by_id_dict = {}
     ans = []
     ids_list = []
@@ -659,7 +739,7 @@ def create_clients(client_data_dict,server_data,test_set,server_test_data):
             known_clusters[cluster_num].append(id_)
             if experiment_config.algorithm_selection ==AlgorithmSelected.PseudoLabelsClusters or experiment_config.algorithm_selection == AlgorithmSelected.PseudoLabelsNoServerModel:
                 c = Client(id_=id_, client_data=data_, global_data=server_data, global_test_data=server_test_data,
-                              local_test_data=test_set[group_name][data_index])
+                              local_test_data=clients_data_test_list[group_name][data_index])
             if experiment_config.algorithm_selection ==AlgorithmSelected.NoFederatedLearning:
 
                 c = Client_NoFederatedLearning(id_=id_, client_data=data_, global_data=server_data, global_test_data=server_test_data,
@@ -678,7 +758,6 @@ def create_clients(client_data_dict,server_data,test_set,server_test_data):
             data_index = data_index+1
             id_ = id_+1
     experiment_config.known_clusters = known_clusters
-
 
 
 

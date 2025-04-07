@@ -92,13 +92,15 @@ class AlgorithmSelected(Enum):
     PseudoLabelsClusters_with_division = 4
     Centralized = 5
     FedAvg = 6
-
+class DataDistTypes(Enum):
+    NaiveNonIID = 1
+    Dirichlet1 = 2
 
 class ExperimentConfig:
     def __init__(self):
         self.which_net_arch = None
         self.seed_num = 1
-        self.iterations = 10
+        self.iterations = 15
 
         # CIFAR10/CIFAR 100
         self.data_set_selected = None # selected in main
@@ -157,6 +159,9 @@ class ExperimentConfig:
         self.percent_train_data_use = 1
         self.percent_test_relative_to_train = 1
 
+        self.epsilon = None
+
+        self.data_dist_type = None
 
     def update_num_classes(self,data_set):
         self.data_set_selected = data_set

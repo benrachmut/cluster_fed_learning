@@ -176,6 +176,8 @@ class LearningEntity(ABC):
         #    self.model.apply(self.initialize_weights)
         #else:
         #    self.model.apply(self.weights)
+
+
     def get_pseudo_label_L2(self,pseudo_labels):
         loader = DataLoader(self.global_data, batch_size=len(self.global_data))
         X_tensor, Y_tensor = next(iter(loader))  # Gets all data
@@ -807,7 +809,8 @@ class Server(LearningEntity):
     def __init__(self,id_,global_data,test_data, clients_ids,clients_test_data_dict):
         LearningEntity.__init__(self, id_,global_data,test_data)
 
-        self.pseudo_label_before_net = {}
+        self.pseudo_label_before_net_L2 = {}
+        self.pseudo_label_after_net_L2 = {}
         self.num = (1000)*17
         self.pseudo_label_received = {}
         self.clusters_client_id_dict_per_iter = {}
@@ -938,6 +941,8 @@ class Server(LearningEntity):
                 self.pseudo_label_to_send[client_id] = pseudo_labels_to_send
 
     def create_feed_back_to_clients_multimodel(self,mean_pseudo_labels_per_cluster,t):
+        pl_per_cluster = {}
+
         for cluster_id, mean_pseudo_label_for_cluster in mean_pseudo_labels_per_cluster.items():
             selected_model = self.multi_model_dict[cluster_id]
             for _ in range(5):
@@ -950,19 +955,26 @@ class Server(LearningEntity):
                     break
             if experiment_config.server_feedback_technique == ServerFeedbackTechnique.similar_to_cluster:
                 pseudo_labels_for_cluster = self.evaluate_for_cluster(0,selected_model)
+                pl_per_cluster[cluster_id] = pseudo_labels_for_cluster
                 for client_id in self.clusters_client_id_dict_per_iter[t][cluster_id]:
                     self.pseudo_label_to_send[client_id] = pseudo_labels_for_cluster
         if experiment_config.server_feedback_technique == ServerFeedbackTechnique.similar_to_client:
             pseudo_labels_for_cluster_list = []
             for cluster_id, mean_pseudo_label_for_cluster in mean_pseudo_labels_per_cluster.items():
+                pl_per_cluster[cluster_id] = mean_pseudo_label_for_cluster
+
                 selected_model = self.multi_model_dict[cluster_id]
                 self.train(mean_pseudo_label_for_cluster, 0, selected_model)
-                pseudo_labels_for_cluster_list.append(self.evaluate_for_cluster(0,selected_model))
+                pl = self.evaluate_for_cluster(0,selected_model)
+
+                pseudo_labels_for_cluster_list.append(pl)
 
             pseudo_labels_to_send = self.select_confident_pseudo_labels(pseudo_labels_for_cluster_list)
 
             for client_id in self.clients_ids:
                 self.pseudo_label_to_send[client_id] = pseudo_labels_to_send
+
+        return pl_per_cluster
     def evaluate_results(self,t):
 
         if isinstance(experiment_config.num_clusters,int):
@@ -1025,15 +1037,44 @@ class Server(LearningEntity):
     def iteration_context(self,t):
         self.current_iteration = t
         pseudo_labels_per_cluster, self.clusters_client_id_dict_per_iter[t] = self.get_pseudo_labels_input_per_cluster(t)  # #
-        self.pseudo_label_before_net[t]={}
+        self.pseudo_label_before_net_L2[t]={}
         for cluster_id, pl in pseudo_labels_per_cluster.items():
-            self.pseudo_label_before_net[t][cluster_id] = self.get_pseudo_label_L2(pl)
+            self.pseudo_label_before_net_L2[t][cluster_id] = self.get_pseudo_label_L2(pl)
 
         if experiment_config.net_cluster_technique == NetClusterTechnique.multi_head:
             self.create_feed_back_to_clients_multihead(pseudo_labels_per_cluster,t)
         if experiment_config.net_cluster_technique == NetClusterTechnique.multi_model:
-            self.create_feed_back_to_clients_multimodel(pseudo_labels_per_cluster,t)
-        need to meaasure feed back and then add it and pseudo_label_before_net and client: pseudo_label_L2 to RD
+            pseudo_labels_for_cluster = self.create_feed_back_to_clients_multimodel(pseudo_labels_per_cluster,t)
+
+        self.pseudo_label_after_net_L2[t] = {}
+        #for cluster_id, pseudo_labels_per_client in pseudo_labels_for_cluster.items():
+
+
+
+
+
+        loader = DataLoader(self.global_data, batch_size=len(self.global_data))
+        X_tensor, Y_tensor = next(iter(loader))  # Gets all data
+        # Convert to NumPy (if needed)
+        ground_truth = Y_tensor.numpy()
+        num_classes = 100
+
+        gt_onehot = F.one_hot(torch.tensor(ground_truth), num_classes=num_classes).float().numpy()  # (N, C)
+
+        # Stack into a tensor of shape (K, N, C)
+        pseudo_stack = np.stack(pseudo_labels_for_cluster.values())  # (K, N, C)
+
+        # Compute squared L2 distances to one-hot ground truth → shape: (K, N)
+        l2_errors = np.linalg.norm(pseudo_stack - gt_onehot[None, :, :], axis=2) ** 2
+
+        # Take min L2 error for each data point → shape: (N,)
+        min_errors = np.min(l2_errors, axis=0)
+
+        self.pseudo_label_after_net_L2[t] = np.mean(min_errors)
+        print("PL after net",self.pseudo_label_after_net_L2[t])
+        # Return mean L2 error over all data points
+        #return np.mean(min_errors)
+
         self.evaluate_results(t)
         self.reset_clients_received_pl()
 
@@ -1548,7 +1589,7 @@ class Server(LearningEntity):
             distance_dict = self.compute_distances(center_of_cluster, Server.calc_L2_given_pls)
 
         min_distance = min(distance_dict.values())
-        return min_distance*(4.2/5)
+        return min_distance*experiment_config.epsilon#(4.2/5)
 
 
 
