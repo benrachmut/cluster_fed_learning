@@ -114,6 +114,32 @@ class VGGServer(nn.Module):
         return {f"head_{i}": head(x) for i, head in self.heads.items()}
 
 
+
+
+# Lightweight CNN (Teacher Model)
+class SmallCNN(nn.Module):
+    def __init__(self, num_classes=10):
+        super(SmallCNN, self).__init__()
+        self.feature_extractor = nn.Sequential(
+            nn.Conv2d(3, 32, kernel_size=3, padding=1),
+            nn.ReLU(),
+            nn.MaxPool2d(2, 2),
+            nn.Conv2d(32, 64, kernel_size=3, padding=1),
+            nn.ReLU(),
+            nn.MaxPool2d(2, 2)
+        )
+        self.classifier = nn.Sequential(
+            nn.Linear(64 * 8 * 8, 128),
+            nn.ReLU(),
+            nn.Linear(128, num_classes)
+        )
+
+    def forward(self, x):
+        features = self.feature_extractor(x)
+        features = features.view(features.size(0), -1)
+        logits = self.classifier(features)
+        return logits, features
+
 def get_client_model():
     if experiment_config.client_net_type == NetType.ALEXNET:
         return AlexNet(num_classes=experiment_config.num_classes).to(device)
@@ -245,6 +271,45 @@ class LearningEntity(ABC):
        #print(f"Shape of the 2D pseudo-label matrix: {all_probs.shape}")
         return all_probs
 
+    def evaluate_max_accuracy_per_point(self,models, data_, k=1, cluster_id=None):
+        """
+        Evaluate the per-point max accuracy across multiple models.
+
+        Args:
+            models (List[torch.nn.Module]): List of models to evaluate.
+            data_ (torch.utils.data.Dataset): The dataset to evaluate.
+            k (int): Top-k accuracy. Currently supports only top-1.
+            cluster_id (int or None): The cluster ID for multi-head models.
+
+        Returns:
+            float: Average of maximum accuracy per data point across all models.
+        """
+        assert k == 1, "Only top-1 accuracy is currently supported."
+        test_loader = DataLoader(data_, batch_size=1, shuffle=False)
+        total_points = len(data_)
+
+        # Initialize per-point correct predictions (rows: models, cols: data points)
+        model_correct_matrix = torch.zeros((len(models), total_points), dtype=torch.bool)
+
+        for model_idx, model in enumerate(models):
+            model.eval()
+            with torch.no_grad():
+                for i, (inputs, targets) in enumerate(test_loader):
+                    inputs, targets = inputs.to(device), targets.to(device)
+                    outputs = model(inputs, cluster_id=cluster_id)
+                    preds = outputs.argmax(dim=1)
+                    model_correct_matrix[model_idx, i] = (preds == targets).item()
+
+        # For each data point, check if any model got it correct
+        max_correct_per_point = model_correct_matrix.any(dim=0).float()
+
+        # Compute average over all data points
+        average_max_accuracy = max_correct_per_point.mean().item() * 100  # percent
+
+        print(f"Average max accuracy across models: {average_max_accuracy:.2f}%")
+        return average_max_accuracy
+
+
     def evaluate_accuracy(self, data_, model=None, k=1, cluster_id=None):
         if model is None:
             model = self.model
@@ -349,6 +414,7 @@ class Client(LearningEntity):
 
     def iteration_context(self, t):
         self.current_iteration = t
+
         for _ in range(10000):
             if t>0:
                 train_loss = self.train(self.pseudo_label_received)
@@ -569,6 +635,47 @@ class Client(LearningEntity):
         return  result_to_print
 
 
+
+
+class Client_pFedCK(Client):
+    def __init__(self, client_id, dataloader, num_classes=10):
+        self.id = client_id
+        self.dataloader = dataloader
+        self.personal_model = AlexNet(num_classes)
+        self.interaction_model = SmallCNN(num_classes)
+        self.device = 'cuda' if torch.cuda.is_available() else 'cpu'
+        self.personal_model.to(self.device)
+        self.interaction_model.to(self.device)
+
+    def train_local(self, criterion_ce, criterion_kd, criterion_mse, epochs=1, alpha=1.0, beta=1.0):
+        optimizer = torch.optim.Adam(list(self.personal_model.parameters()) + list(self.interaction_model.parameters()), lr=1e-3)
+        self.personal_model.train()
+        self.interaction_model.train()
+        for _ in range(epochs):
+            for x, y in self.dataloader:
+                x, y = x.to(self.device), y.to(self.device)
+                optimizer.zero_grad()
+
+                out_p, feat_p = self.personal_model(x)
+                out_i, feat_i = self.interaction_model(x)
+
+                loss_ce = criterion_ce(out_p, y)
+                loss_kd = criterion_kd(F.log_softmax(out_i, dim=1), F.softmax(out_p.detach(), dim=1))
+                loss_mse = criterion_mse(feat_i, feat_p.detach())
+                loss = loss_ce + alpha * loss_kd + beta * loss_mse
+                loss.backward()
+                optimizer.step()
+
+    def get_param_delta(self, initial_model):
+        delta = []
+        for p1, p2 in zip(self.interaction_model.parameters(), initial_model.parameters()):
+            delta.append((p1.data - p2.data).cpu().numpy().flatten())
+        return np.concatenate(delta)
+
+    def update_interaction_model(self, delta_avg, initial_model):
+        with torch.no_grad():
+            for param, base_param, delta in zip(self.interaction_model.parameters(), initial_model.parameters(), delta_avg):
+                param.data = base_param.data + torch.tensor(delta, device=self.device).view_as(param)
 
 
 class Client_FedAvg(Client):
@@ -981,7 +1088,8 @@ class Server(LearningEntity):
             num_clusters =experiment_config.num_clusters
         else:
             num_clusters =experiment_config.number_of_optimal_clusters
-
+        models_list = list(self.multi_model_dict.values())
+        self.accuracy_global_data_1[t] = self.evaluate_max_accuracy_per_point(models = models_list, data_ = self.global_data, k=1, cluster_id=None)
         for cluster_id in range(num_clusters):
             if experiment_config.net_cluster_technique == NetClusterTechnique.multi_model:
                 selected_model = self.multi_model_dict[cluster_id]
@@ -993,6 +1101,8 @@ class Server(LearningEntity):
             self.accuracy_server_test_1[cluster_id][t] = self.evaluate_accuracy(self.test_global_data,
                                                                                 model=selected_model, k=1,
                                                                                 cluster_id=cluster_id_to_examine)
+
+
             #self.accuracy_global_data_1[cluster_id][t] = self.evaluate_accuracy(self.global_data,
             #                                                                    model=selected_model, k=1,
             #                                                                    cluster_id=cluster_id_to_examine)

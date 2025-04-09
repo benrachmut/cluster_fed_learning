@@ -31,6 +31,30 @@ cifar100_label_to_superclass = {
 
 
 
+
+def transform_to_TensorDataset_v2(data_):
+    images = []
+    targets = []
+
+    for item in data_:
+        if isinstance(item, tuple) and len(item) == 2:
+            img, label = item
+        else:
+            raise ValueError(f"Expected tuple (image, label), but got: {type(item)} with value {item}")
+
+        # Convert 0-dim tensors to values if needed
+        if isinstance(label, torch.Tensor) and label.dim() == 0:
+            label = label.item()
+
+        images.append(img)
+        targets.append(label)
+
+    # Stack into tensors
+    images_tensor = torch.stack(images)
+    targets_tensor = torch.tensor(targets)
+
+    return TensorDataset(images_tensor, targets_tensor)
+
 def transform_to_TensorDataset(data_):
     images = [item[0] for item in data_]  # Extract the image tensors (index 0 of each tuple)
     targets = [item[1] for item in data_]
@@ -138,7 +162,7 @@ class ExperimentConfig:
         self.epochs_num_train_client = 10
         self.epochs_num_input_fine_tune_clients_no_fl = self.epochs_num_input_fine_tune_clients*self.iterations
         self.epochs_num_input_fine_tune_centralized_server = self.epochs_num_input_fine_tune_clients*self.iterations
-
+        self.alpha_dich = 100
 
 
 
@@ -161,7 +185,6 @@ class ExperimentConfig:
 
         self.epsilon = None
 
-        self.data_dist_type = None
 
     def update_num_classes(self,data_set):
         self.data_set_selected = data_set
@@ -212,6 +235,7 @@ class ExperimentConfig:
 
 
 experiment_config = ExperimentConfig()
+
 
 
 
