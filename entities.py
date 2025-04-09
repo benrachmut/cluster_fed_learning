@@ -1169,19 +1169,19 @@ class Server(LearningEntity):
         ground_truth = Y_tensor.numpy()
         num_classes = 100
 
-        gt_onehot = F.one_hot(torch.tensor(ground_truth), num_classes=num_classes).float().numpy()  # (N, C)
+        #gt_onehot = F.one_hot(torch.tensor(ground_truth), num_classes=num_classes).float().numpy()  # (N, C)
 
         # Stack into a tensor of shape (K, N, C)
-        pseudo_stack = np.stack(pseudo_labels_for_cluster.values())  # (K, N, C)
+        #pseudo_stack = np.stack(pseudo_labels_for_cluster.values())  # (K, N, C)
 
         # Compute squared L2 distances to one-hot ground truth → shape: (K, N)
-        l2_errors = np.linalg.norm(pseudo_stack - gt_onehot[None, :, :], axis=2) ** 2
+        #l2_errors = np.linalg.norm(pseudo_stack - gt_onehot[None, :, :], axis=2) ** 2
 
         # Take min L2 error for each data point → shape: (N,)
-        min_errors = np.min(l2_errors, axis=0)
+        #min_errors = np.min(l2_errors, axis=0)
 
-        self.pseudo_label_after_net_L2[t] = np.mean(min_errors)
-        print("PL after net",self.pseudo_label_after_net_L2[t])
+        self.pseudo_label_after_net_L2[t] = 0#np.mean(min_errors)
+        #print("PL after net",self.pseudo_label_after_net_L2[t])
         # Return mean L2 error over all data points
         #return np.mean(min_errors)
 
