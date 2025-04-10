@@ -455,7 +455,7 @@ if __name__ == '__main__':
     num_cluster_list = [1, "Optimal"]
     epsilons = [0.96,0.75]#0.96,0.5,0.75,1,1.25,1.5,1.75,2]
     print("epsilons:",epsilons)
-
+    print(("alpha_dichts" ,alpha_dichts))
     # parameters for fedAvg
     num_cluster_list_fedAVG = [1,"Optimal"] # dont touch
     nets_types_list_fedAVG  = [NetsType.C_alex_S_alex] # dont touch
