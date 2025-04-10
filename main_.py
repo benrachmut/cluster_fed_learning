@@ -433,9 +433,9 @@ if __name__ == '__main__':
     num_opt_clusters_list =[5] #[5]
     mix_percentage = 0.2
     server_split_ratio_list = [0.2]
-    alpha_dichts = [1]#,10,1,0.5]
+    alpha_dichts = [100,10,1,0.5]
 
-    algorithm_selection_list = [ AlgorithmSelected.PseudoLabelsClusters]#[ AlgorithmSelected.PseudoLabelsClusters,AlgorithmSelected.PseudoLabelsNoServerModel,AlgorithmSelected.FedAvg,AlgorithmSelected.Centralized,AlgorithmSelected.NoFederatedLearning]
+    algorithm_selection_list = [ AlgorithmSelected.Centralized]#[ AlgorithmSelected.PseudoLabelsClusters,AlgorithmSelected.PseudoLabelsNoServerModel,AlgorithmSelected.FedAvg,AlgorithmSelected.Centralized,AlgorithmSelected.NoFederatedLearning]
 
     # centralized
     nets_types_Centralized_list = [NetsType.S_alex,NetsType.S_vgg]
