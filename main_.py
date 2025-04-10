@@ -436,6 +436,7 @@ if __name__ == '__main__':
     alpha_dichts = [1000]#,10,1,0.5]
     epsilons = [1]#0.96,0.5,0.75,1,1.25,1.5,1.75,2]
 
+    print(alpha_dichts,epsilons)
     algorithm_selection_list = [ AlgorithmSelected.PseudoLabelsClusters]#[ AlgorithmSelected.PseudoLabelsClusters,AlgorithmSelected.PseudoLabelsNoServerModel,AlgorithmSelected.FedAvg,AlgorithmSelected.Centralized,AlgorithmSelected.NoFederatedLearning]
 
     # centralized
