@@ -36,16 +36,18 @@ class RecordData:
 
         self.client_accuracy_per_client_1 = {}
         self.clients_pseudo_label={}
-        for client in clients:
-            id_ = client.id_
-            self.client_accuracy_per_client_1[id_]=client.accuracy_per_client_1
-            if experiment_config.algorithm_selection == AlgorithmSelected.PseudoLabelsClusters:
-                self.clients_pseudo_label[id_] = client.pseudo_label_L2
 
-        if experiment_config.algorithm_selection == AlgorithmSelected.PseudoLabelsClusters or experiment_config.algorithm_selection == AlgorithmSelected.FedAvg:
+        if clients is not None:
             for client in clients:
                 id_ = client.id_
-                self.size_of_client_message[id_] = client.size_sent
+                self.client_accuracy_per_client_1[id_]=client.accuracy_per_client_1
+                if experiment_config.algorithm_selection == AlgorithmSelected.PseudoLabelsClusters:
+                    self.clients_pseudo_label[id_] = client.pseudo_label_L2
+
+            if experiment_config.algorithm_selection == AlgorithmSelected.PseudoLabelsClusters or experiment_config.algorithm_selection == AlgorithmSelected.FedAvg:
+                for client in clients:
+                    id_ = client.id_
+                    self.size_of_client_message[id_] = client.size_sent
 
 
 def clients_and_server_use_pseudo_labels():
@@ -433,11 +435,11 @@ if __name__ == '__main__':
     num_opt_clusters_list =[5] #[5]
     mix_percentage = 0.2
     server_split_ratio_list = [0.2]
-    alpha_dichts = [5]#,10,1,0.5]
-    epsilons = [1]#0.96,0.5,0.75,1,1.25,1.5,1.75,2]
-
-    print(alpha_dichts,epsilons)
-    algorithm_selection_list = [ AlgorithmSelected.PseudoLabelsClusters]#[ AlgorithmSelected.PseudoLabelsClusters,AlgorithmSelected.PseudoLabelsNoServerModel,AlgorithmSelected.FedAvg,AlgorithmSelected.Centralized,AlgorithmSelected.NoFederatedLearning]
+    alpha_dichts = [100,10,1,0.5]
+    epsilons = [1]  # 0.96,0.5,0.75,1,1.25,1.5,1.75,2]
+    print("epsilons:", epsilons)
+    print(("alpha_dichts", alpha_dichts))
+    algorithm_selection_list = [ AlgorithmSelected.Centralized]#[ AlgorithmSelected.PseudoLabelsClusters,AlgorithmSelected.PseudoLabelsNoServerModel,AlgorithmSelected.FedAvg,AlgorithmSelected.Centralized,AlgorithmSelected.NoFederatedLearning]
 
     # centralized
     nets_types_Centralized_list = [NetsType.S_alex,NetsType.S_vgg]
@@ -455,7 +457,6 @@ if __name__ == '__main__':
     cluster_technique_list = [ClusterTechnique.greedy_elimination_L2]#[ClusterTechnique.greedy_elimination_cross_entropy]#[ClusterTechnique.manual_single_iter,ClusterTechnique.manual,ClusterTechnique.kmeans]
     server_feedback_technique_list = [ServerFeedbackTechnique.similar_to_cluster]#[ServerFeedbackTechnique.similar_to_cluster,ServerFeedbackTechnique.similar_to_client]
     num_cluster_list = [1, "Optimal"]
-
 
     # parameters for fedAvg
     num_cluster_list_fedAVG = [1,"Optimal"] # dont touch
