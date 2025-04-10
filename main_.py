@@ -171,7 +171,7 @@ def run_PseudoLabelsClusters():
     for net_type in nets_types_list_PseudoLabelsClusters:
         experiment_config.update_net_type(net_type)
         if net_type == NetsType.C_alex_S_vgg:
-            experiment_config.batch_size=64
+            experiment_config.batch_size=32
         data_to_pickle[data_set.name][num_clients][num_opt_clusters][server_split_ratio][
                             alpha_dicht][algorithm_selection.name][net_type.name] = {}
 
