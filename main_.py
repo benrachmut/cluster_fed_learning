@@ -433,7 +433,7 @@ if __name__ == '__main__':
     num_opt_clusters_list =[5] #[5]
     mix_percentage = 0.2
     server_split_ratio_list = [0.2]
-    alpha_dichts = [100]#,10,1,0.5]
+    alpha_dichts = [1]#,10,1,0.5]
 
     algorithm_selection_list = [ AlgorithmSelected.PseudoLabelsClusters]#[ AlgorithmSelected.PseudoLabelsClusters,AlgorithmSelected.PseudoLabelsNoServerModel,AlgorithmSelected.FedAvg,AlgorithmSelected.Centralized,AlgorithmSelected.NoFederatedLearning]
 
@@ -453,7 +453,7 @@ if __name__ == '__main__':
     cluster_technique_list = [ClusterTechnique.greedy_elimination_L2]#[ClusterTechnique.greedy_elimination_cross_entropy]#[ClusterTechnique.manual_single_iter,ClusterTechnique.manual,ClusterTechnique.kmeans]
     server_feedback_technique_list = [ServerFeedbackTechnique.similar_to_cluster]#[ServerFeedbackTechnique.similar_to_cluster,ServerFeedbackTechnique.similar_to_client]
     num_cluster_list = [1, "Optimal"]
-    epsilons = [1.5]#0.96,0.5,0.75,1,1.25,1.5,1.75,2]
+    epsilons = [0.96,0.75]#0.96,0.5,0.75,1,1.25,1.5,1.75,2]
     print("epsilons:",epsilons)
 
     # parameters for fedAvg
