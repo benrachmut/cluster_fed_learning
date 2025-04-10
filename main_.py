@@ -171,7 +171,7 @@ def run_PseudoLabelsClusters():
     for net_type in nets_types_list_PseudoLabelsClusters:
         experiment_config.update_net_type(net_type)
         if net_type == NetsType.C_alex_S_vgg:
-            experiment_config.batch_size=32
+            experiment_config.batch_size=64
         data_to_pickle[data_set.name][num_clients][num_opt_clusters][server_split_ratio][
                             alpha_dicht][algorithm_selection.name][net_type.name] = {}
 
@@ -454,7 +454,7 @@ if __name__ == '__main__':
     nets_types_list_PseudoLabelsClusters  = [NetsType.C_alex_S_vgg,NetsType.C_alex_S_alex]#,NetsType.C_alex_S_vgg]#,NetsType.C_alex_S_vgg]
     net_cluster_technique_list = [NetClusterTechnique.multi_model]#,NetClusterTechnique.multi_head]
     server_input_tech_list = [ServerInputTech.max]
-    cluster_technique_list = [ClusterTechnique.kmeans]#[ClusterTechnique.greedy_elimination_cross_entropy]#[ClusterTechnique.manual_single_iter,ClusterTechnique.manual,ClusterTechnique.kmeans]
+    cluster_technique_list = [ClusterTechnique.greedy_elimination_L2]#[ClusterTechnique.greedy_elimination_cross_entropy]#[ClusterTechnique.manual_single_iter,ClusterTechnique.manual,ClusterTechnique.kmeans]
     server_feedback_technique_list = [ServerFeedbackTechnique.similar_to_cluster]#[ServerFeedbackTechnique.similar_to_cluster,ServerFeedbackTechnique.similar_to_client]
     num_cluster_list = ["Optimal",1]
 

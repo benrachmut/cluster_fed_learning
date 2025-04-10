@@ -1195,7 +1195,9 @@ class Server(LearningEntity):
         print(f"Mean pseudo-labels shape: {mean_pseudo_labels.shape}")  # Should be (num_data_points, num_classes)
 
         print(f"*** {self.__str__()} train *** Cluster: {cluster_num} ***")
-        server_loader = DataLoader(self.global_data , batch_size=experiment_config.batch_size, shuffle=False,
+
+        #experiment_config.batch_size
+        server_loader = DataLoader(self.global_data , batch_size=32, shuffle=False,
                                    num_workers=0, drop_last=True)
 
 
