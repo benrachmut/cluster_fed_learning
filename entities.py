@@ -1246,6 +1246,7 @@ class Server(LearningEntity):
                 # Skip batch if the loss is NaN or Inf
                 if torch.isnan(loss) or torch.isinf(loss):
                     print(f"NaN or Inf loss encountered at batch {batch_idx}: {loss}")
+                    experiment_config.learning_rate_train_s = 0.00001
                     continue
 
                 loss.backward()
