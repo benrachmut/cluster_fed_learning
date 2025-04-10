@@ -435,9 +435,11 @@ if __name__ == '__main__':
     num_opt_clusters_list =[5] #[5]
     mix_percentage = 0.2
     server_split_ratio_list = [0.2]
-    alpha_dichts = [100,10,1,0.5]
+    alpha_dichts =[100] #[100,10,5,1,0.5]
+    epsilons = [1] #0.96,0.5,0.75,1,1.25,1.5,1.75,2]
 
-    algorithm_selection_list = [ AlgorithmSelected.Centralized]#[ AlgorithmSelected.PseudoLabelsClusters,AlgorithmSelected.PseudoLabelsNoServerModel,AlgorithmSelected.FedAvg,AlgorithmSelected.Centralized,AlgorithmSelected.NoFederatedLearning]
+    # [ AlgorithmSelected.PseudoLabelsClusters,AlgorithmSelected.PseudoLabelsNoServerModel,AlgorithmSelected.FedAvg,AlgorithmSelected.Centralized,AlgorithmSelected.NoFederatedLearning]
+    algorithm_selection_list = [AlgorithmSelected.PseudoLabelsClusters]
 
     # centralized
     nets_types_Centralized_list = [NetsType.S_alex,NetsType.S_vgg]
@@ -449,13 +451,12 @@ if __name__ == '__main__':
 
 
     # parameters for PseudoLabelsClusters
-    nets_types_list_PseudoLabelsClusters  = [NetsType.C_alex_S_vgg,NetsType.C_alex_S_alex]#,NetsType.C_alex_S_vgg]#,NetsType.C_alex_S_vgg]
+    nets_types_list_PseudoLabelsClusters  = [NetsType.C_alex_S_vgg]#,NetsType.C_alex_S_vgg]#,NetsType.C_alex_S_vgg]
     net_cluster_technique_list = [NetClusterTechnique.multi_model]#,NetClusterTechnique.multi_head]
     server_input_tech_list = [ServerInputTech.max]
     cluster_technique_list = [ClusterTechnique.greedy_elimination_L2]#[ClusterTechnique.greedy_elimination_cross_entropy]#[ClusterTechnique.manual_single_iter,ClusterTechnique.manual,ClusterTechnique.kmeans]
     server_feedback_technique_list = [ServerFeedbackTechnique.similar_to_cluster]#[ServerFeedbackTechnique.similar_to_cluster,ServerFeedbackTechnique.similar_to_client]
     num_cluster_list = [1, "Optimal"]
-    epsilons = [0.96,0.75]#0.96,0.5,0.75,1,1.25,1.5,1.75,2]
     print("epsilons:",epsilons)
     print(("alpha_dichts" ,alpha_dichts))
     # parameters for fedAvg
@@ -484,7 +485,7 @@ if __name__ == '__main__':
                     experiment_config.mix_percentage = mix_percentage
 
                     for alpha_dicht in alpha_dichts:
-                        experiment_config.alpha_dicht =alpha_dicht
+                        experiment_config.alpha_dich =alpha_dicht
                         data_to_pickle[data_set.name][num_clients][num_opt_clusters][server_split_ratio][
                             alpha_dicht] = {}
                         clients_train_data_dict, server_train_data, clients_test_data_dict, server_test_data = create_data()

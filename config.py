@@ -162,7 +162,7 @@ class ExperimentConfig:
         self.epochs_num_train_client = 10
         self.epochs_num_input_fine_tune_clients_no_fl = self.epochs_num_input_fine_tune_clients*self.iterations
         self.epochs_num_input_fine_tune_centralized_server = self.epochs_num_input_fine_tune_clients*self.iterations
-        self.alpha_dich = 100
+        self.alpha_dich = None
 
 
 

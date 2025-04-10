@@ -221,7 +221,7 @@ def get_image_split_list_classes(tensor_list):
     return image_split_list_classes
 
 
-def get_image_split_list_classes_dich(tensor_list, num_clients, alpha=experiment_config.alpha_dich):
+def get_image_split_list_classes_dich(tensor_list, num_clients, alpha):
     """
     Splits images of each class among clients using Dirichlet distribution (non-IID).
 
@@ -279,7 +279,7 @@ def get_data_per_client_dict_and_mix_list(mix_list,target_original_data_dict,dat
         #else:
         image_split_list_classes=[]
         num_c = int(experiment_config.num_clients / experiment_config.number_of_optimal_clusters)
-        image_split_list_classes.append( get_image_split_list_classes_dich(tensor_list,num_c))
+        image_split_list_classes.append( get_image_split_list_classes_dich(tensor_list,num_c,experiment_config.alpha_dich))
 
         torch.manual_seed(42)
 
