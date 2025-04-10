@@ -453,7 +453,7 @@ if __name__ == '__main__':
     cluster_technique_list = [ClusterTechnique.greedy_elimination_L2]#[ClusterTechnique.greedy_elimination_cross_entropy]#[ClusterTechnique.manual_single_iter,ClusterTechnique.manual,ClusterTechnique.kmeans]
     server_feedback_technique_list = [ServerFeedbackTechnique.similar_to_cluster]#[ServerFeedbackTechnique.similar_to_cluster,ServerFeedbackTechnique.similar_to_client]
     num_cluster_list = [1, "Optimal"]
-    epsilons = [0.5]#0.96,0.5,0.75,1,1.25,1.5,1.75,2]
+    epsilons = [0.75]#0.96,0.5,0.75,1,1.25,1.5,1.75,2]
 
 
     # parameters for fedAvg
