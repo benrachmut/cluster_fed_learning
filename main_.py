@@ -36,16 +36,18 @@ class RecordData:
 
         self.client_accuracy_per_client_1 = {}
         self.clients_pseudo_label={}
-        for client in clients:
-            id_ = client.id_
-            self.client_accuracy_per_client_1[id_]=client.accuracy_per_client_1
-            if experiment_config.algorithm_selection == AlgorithmSelected.PseudoLabelsClusters:
-                self.clients_pseudo_label[id_] = client.pseudo_label_L2
 
-        if experiment_config.algorithm_selection == AlgorithmSelected.PseudoLabelsClusters or experiment_config.algorithm_selection == AlgorithmSelected.FedAvg:
+        if clients is not None:
             for client in clients:
                 id_ = client.id_
-                self.size_of_client_message[id_] = client.size_sent
+                self.client_accuracy_per_client_1[id_]=client.accuracy_per_client_1
+                if experiment_config.algorithm_selection == AlgorithmSelected.PseudoLabelsClusters:
+                    self.clients_pseudo_label[id_] = client.pseudo_label_L2
+
+            if experiment_config.algorithm_selection == AlgorithmSelected.PseudoLabelsClusters or experiment_config.algorithm_selection == AlgorithmSelected.FedAvg:
+                for client in clients:
+                    id_ = client.id_
+                    self.size_of_client_message[id_] = client.size_sent
 
 
 def clients_and_server_use_pseudo_labels():
