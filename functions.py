@@ -221,7 +221,7 @@ def get_image_split_list_classes(tensor_list):
     return image_split_list_classes
 
 
-def get_image_split_list_classes_dich(tensor_list, num_clients, alpha):
+def get_image_split_list_classes_dich(tensor_list, num_clients, alpha,i):
     """
     Splits images of each class among clients using Dirichlet distribution (non-IID).
 
@@ -237,11 +237,12 @@ def get_image_split_list_classes_dich(tensor_list, num_clients, alpha):
     image_split_list_classes = [[] for _ in range(num_clients)]  # One list per client
     num_classes = len(tensor_list)
 
-    np.random.seed(17)  # For reproducibility
 
     for class_id, class_data in enumerate(tensor_list):
+        np.random.seed(17+(i+1)*17+class_id)  # For reproducibility
+
         data = list(class_data)  # Convert to list for shuffling
-        rnd.seed(100 + class_id)
+        rnd.seed(13+(i+1)*123+class_id)
         rnd.shuffle(data)
 
         # Dirichlet distribution over clients (for this class)
@@ -279,7 +280,7 @@ def get_data_per_client_dict_and_mix_list(mix_list,target_original_data_dict,dat
         #else:
         image_split_list_classes=[]
         num_c = int(experiment_config.num_clients / experiment_config.number_of_optimal_clusters)
-        image_split_list_classes.append( get_image_split_list_classes_dich(tensor_list,num_c,experiment_config.alpha_dich))
+        image_split_list_classes.append( get_image_split_list_classes_dich(tensor_list,num_c,experiment_config.alpha_dich,i))
 
         torch.manual_seed(42)
 
