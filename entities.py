@@ -915,7 +915,7 @@ class Client_PseudoLabelsClusters_with_division(Client):
 class Server(LearningEntity):
     def __init__(self,id_,global_data,test_data, clients_ids,clients_test_data_dict):
         LearningEntity.__init__(self, id_,global_data,test_data)
-
+        self.local_batch = experiment_config.local_batch
         self.pseudo_label_before_net_L2 = {}
         self.pseudo_label_after_net_L2 = {}
         self.num = (1000)*17
@@ -1197,7 +1197,7 @@ class Server(LearningEntity):
         print(f"*** {self.__str__()} train *** Cluster: {cluster_num} ***")
 
         #experiment_config.batch_size
-        self.local_batch = 32
+        #self.local_batch = 32
         server_loader = DataLoader(self.global_data , batch_size=self.local_batch, shuffle=False,
                                    num_workers=0, drop_last=True)
 
@@ -1789,9 +1789,9 @@ class Server_PseudoLabelsClusters_with_division(Server):
         model.eval()  # Set the model to evaluation mode
 
         # Use the global validation data for the evaluation
-        #experiment_config.batch_size
+        #
 
-        global_data_loader = DataLoader(self.global_data[self.current_iteration], batch_size=self.local_batch, shuffle=False)
+        global_data_loader = DataLoader(self.global_data[self.current_iteration], batch_size=experiment_config.batch_size, shuffle=False)
 
         # List to store the probabilities for this cluster
         cluster_probs = []
