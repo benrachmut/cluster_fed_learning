@@ -116,7 +116,7 @@ def run_FedAvg():
                                         server_split_ratio][algorithm_selection.name][net_type.name][ net_cluster_technique.name][
                                         server_input_tech.name][cluster_technique.name][server_feedback_technique.name][
                                         num_cluster]  = rd
-                                    pik_name = data_set.name+"_"+str(num_clients)+"_"+str(num_opt_clusters)+"_"+str(int(10*(server_split_ratio)))+"_"+algorithm_selection.name+"_"+net_type.name+"_"+net_cluster_technique.name+"_"+cluster_technique.name+"_"+str(num_cluster)
+                                    pik_name = data_set.name+"_"+str(num_clients)+"_"+str(num_opt_clusters)+"_"+str(int(10*(server_split_ratio)))+"_"+algorithm_selection.name+"_"+net_type.name+"_"+net_cluster_technique.name+"_"+cluster_technique.name+"_"+str(num_cluster)+"_"+ str(experiment_config.alpha_dich)
 
                                     pickle_file_path = pik_name + ".pkl"
 
@@ -144,14 +144,18 @@ def iterate_fl_clusters(clients,server,net_type,net_cluster_technique,server_inp
                 algorithm_selection.name][net_type.name][net_cluster_technique.name][
                 server_input_tech.name][cluster_technique.name][server_feedback_technique.name][server_feedback_technique.name][
                 num_cluster] = rd
+            pik_name = data_set.name + "_" + str(num_clients) + "_" + str(
+                num_opt_clusters) + "_" + str(int(10 * (
+                server_split_ratio))) + "_" + algorithm_selection.name + "_" + net_type.name + "_" + net_cluster_technique.name + "_" + cluster_technique.name + "_" + str(
+                num_cluster) + "_" + str(experiment_config.alpha_dich)
         else:
             data_to_pickle[data_set.name][num_clients][num_opt_clusters][server_split_ratio][alpha_dicht][
                 algorithm_selection.name][net_type.name][net_cluster_technique.name][
                 server_input_tech.name][cluster_technique.name][server_feedback_technique.name][epsilon] = rd
-        pik_name = data_set.name + "_" + str(num_clients) + "_" + str(
-            num_opt_clusters) + "_" + str(int(10 * (
-            server_split_ratio))) + "_" + algorithm_selection.name + "_" + net_type.name + "_" + net_cluster_technique.name + "_" + cluster_technique.name + "_" + str(
-            num_cluster)
+            pik_name = data_set.name + "_" + str(num_clients) + "_" + str(
+                num_opt_clusters) + "_" + str(int(10 * (
+                server_split_ratio))) + "_" + algorithm_selection.name + "_" + net_type.name + "_" + net_cluster_technique.name + "_" + cluster_technique.name + "_" + str(
+                num_cluster) +"_"+ str(experiment_config.alpha_dich)+"_"+ str(epsilon)
 
 
         pickle_file_path = pik_name + ".pkl"
@@ -263,7 +267,7 @@ def run_NoFederatedLearning():
         data_to_pickle[data_set.name][num_clients][num_opt_clusters][
             server_split_ratio][algorithm_selection.name][net_type.name] = rd
         pik_name = data_set.name + "_" + str(num_clients) + "_" + str(num_opt_clusters) + "_" + str(int(10 * (
-            server_split_ratio))) + "_" + algorithm_selection.name + "_" + net_type.name
+            server_split_ratio))) + "_" + algorithm_selection.name + "_" + net_type.name+"_"+ str(experiment_config.alpha_dich)
 
         pickle_file_path = pik_name + ".pkl"
 
@@ -272,7 +276,7 @@ def run_NoFederatedLearning():
 
 
 def run_Centralized():
-
+    experiment_config.cluster_technique = ClusterTechnique.kmeans
     for net_type in nets_types_Centralized_list:
         experiment_config.which_net_arch = net_type
         experiment_config.update_net_type(net_type)
@@ -305,7 +309,7 @@ def run_Centralized():
 
                 pik_name = data_set.name + "_" + str(num_clients) + "_" + str(num_opt_clusters) + "_" + str(int(10 * (
                     server_split_ratio))) + "_" + algorithm_selection.name + "_" + net_type.name + "_" + net_cluster_technique.name + "_" + str(
-                    str(cluster_num))
+                    str(cluster_num))+"_"+ str(experiment_config.alpha_dich)
 
                 pickle_file_path = pik_name + ".pkl"
 
@@ -429,9 +433,9 @@ if __name__ == '__main__':
     num_opt_clusters_list =[5] #[5]
     mix_percentage = 0.2
     server_split_ratio_list = [0.2]
-    alpha_dichts = [100]
+    alpha_dichts = [100,10,1,0.5]
 
-    algorithm_selection_list = [ AlgorithmSelected.PseudoLabelsClusters]
+    algorithm_selection_list = [ AlgorithmSelected.PseudoLabelsClusters,AlgorithmSelected.PseudoLabelsNoServerModel,AlgorithmSelected.FedAvg,AlgorithmSelected.Centralized,AlgorithmSelected.NoFederatedLearning]
 
     # centralized
     nets_types_Centralized_list = [NetsType.S_alex,NetsType.S_vgg]
@@ -443,13 +447,13 @@ if __name__ == '__main__':
 
 
     # parameters for PseudoLabelsClusters
-    nets_types_list_PseudoLabelsClusters  = [NetsType.C_alex_S_vgg]#,NetsType.C_alex_S_vgg]#,NetsType.C_alex_S_vgg]
+    nets_types_list_PseudoLabelsClusters  = [NetsType.C_alex_S_vgg,NetsType.C_alex_S_alex]#,NetsType.C_alex_S_vgg]#,NetsType.C_alex_S_vgg]
     net_cluster_technique_list = [NetClusterTechnique.multi_model]#,NetClusterTechnique.multi_head]
     server_input_tech_list = [ServerInputTech.max]
-    cluster_technique_list = [ClusterTechnique.greedy_elimination_L2]#[ClusterTechnique.greedy_elimination_cross_entropy]#[ClusterTechnique.manual_single_iter,ClusterTechnique.manual,ClusterTechnique.kmeans]
+    cluster_technique_list = [ClusterTechnique.greedy_elimination_L2,ClusterTechnique.kmeans]#[ClusterTechnique.greedy_elimination_cross_entropy]#[ClusterTechnique.manual_single_iter,ClusterTechnique.manual,ClusterTechnique.kmeans]
     server_feedback_technique_list = [ServerFeedbackTechnique.similar_to_cluster]#[ServerFeedbackTechnique.similar_to_cluster,ServerFeedbackTechnique.similar_to_client]
-    num_cluster_list = [1]
-    epsilons = [4.8/5,0.5,0.75,0.25,1,1.25,1.5,1.75,2,10]
+    num_cluster_list = [1, "Optimal"]
+    epsilons = [4.8/5]#[4.8/5,0.5,0.75,0.25,1,1.25,1.5,1.75,2,10]
 
 
     # parameters for fedAvg
