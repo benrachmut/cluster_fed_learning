@@ -1197,7 +1197,8 @@ class Server(LearningEntity):
         print(f"*** {self.__str__()} train *** Cluster: {cluster_num} ***")
 
         #experiment_config.batch_size
-        server_loader = DataLoader(self.global_data , batch_size=32, shuffle=False,
+        self.local_batch = 32
+        server_loader = DataLoader(self.global_data , batch_size=self.local_batch, shuffle=False,
                                    num_workers=0, drop_last=True)
 
 
@@ -1228,7 +1229,7 @@ class Server(LearningEntity):
                 outputs_prob = F.log_softmax(outputs, dim=1)
 
                 # Slice pseudo_targets to match the input batch size
-                start_idx = batch_idx * experiment_config.batch_size
+                start_idx = batch_idx * self.local_batch
                 end_idx = start_idx + inputs.size(0)
                 pseudo_targets = pseudo_targets_all[start_idx:end_idx].to(device)
 
@@ -1570,7 +1571,8 @@ class Server(LearningEntity):
         model.eval()  # Set the model to evaluation mode
 
         # Use the global validation data for the evaluation
-        global_data_loader = DataLoader(self.global_data, batch_size=experiment_config.batch_size, shuffle=False)
+        # experiment_config.batch_size
+        global_data_loader = DataLoader(self.global_data, batch_size=self.local_batch, shuffle=False)
 
         # List to store the probabilities for this cluster
         cluster_probs = []
@@ -1787,7 +1789,9 @@ class Server_PseudoLabelsClusters_with_division(Server):
         model.eval()  # Set the model to evaluation mode
 
         # Use the global validation data for the evaluation
-        global_data_loader = DataLoader(self.global_data[self.current_iteration], batch_size=experiment_config.batch_size, shuffle=False)
+        #experiment_config.batch_size
+
+        global_data_loader = DataLoader(self.global_data[self.current_iteration], batch_size=self.local_batch, shuffle=False)
 
         # List to store the probabilities for this cluster
         cluster_probs = []
