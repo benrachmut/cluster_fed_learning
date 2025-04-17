@@ -435,7 +435,7 @@ if __name__ == '__main__':
     num_opt_clusters_list =[5] #[5]
     mix_percentage = 0.2
     server_split_ratio_list = [0.2]
-    alpha_dichts = [5]
+    alpha_dichts = [10,5,1,0.5,100]
     epsilons = [1,1.25]  # 0.96,0.5,0.75,1,1.25,1.5,1.75,2]
     print("epsilons:", epsilons)
     print(("alpha_dichts", alpha_dichts))
@@ -443,7 +443,7 @@ if __name__ == '__main__':
 
     # centralized
     nets_types_Centralized_list = [NetsType.S_vgg]
-    num_cluster_Centralized_list = [1,"Optimal"]
+    num_cluster_Centralized_list = ["Optimal",1]
     net_cluster_technique_Centralized_list = [NetClusterTechnique.multi_model]#,NetClusterTechnique.multi_head]
 
     #NoFederatedLearning
