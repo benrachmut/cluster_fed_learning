@@ -171,7 +171,7 @@ def run_PseudoLabelsClusters():
     for net_type in nets_types_list_PseudoLabelsClusters:
         experiment_config.update_net_type(net_type)
         if net_type == NetsType.C_alex_S_vgg:
-            experiment_config.batch_size=128
+            experiment_config.batch_size = 128
         data_to_pickle[data_set.name][num_clients][num_opt_clusters][server_split_ratio][
                             alpha_dicht][algorithm_selection.name][net_type.name] = {}
 
@@ -404,12 +404,60 @@ def run_pFedCK():
 
 
 
+def run_PseudoLabelsNoServerModel():
+    for net_type in [NetsType.C_alex_S_alex]:
+        experiment_config.update_net_type(net_type)
+        data_to_pickle[data_set.name][num_clients][num_opt_clusters][server_split_ratio][
+            alpha_dicht][algorithm_selection.name][net_type.name] = {}
 
+        for net_cluster_technique in [NetClusterTechnique.multi_model]:
+            experiment_config.net_cluster_technique = net_cluster_technique
+            data_to_pickle[data_set.name][num_clients][num_opt_clusters][server_split_ratio][
+                alpha_dicht][
+                algorithm_selection.name][net_type.name][net_cluster_technique.name] = {}
 
+            for num_cluster in [1,"Optimal"]:
+                experiment_config.num_clusters = num_cluster
 
+                clients, clients_ids, clients_test_by_id_dict = create_clients(clients_train_data_dict,
+                                                                               server_train_data,
+                                                                               clients_test_data_dict,
+                                                                               server_test_data)
+                server = Server_PseudoLabelsNoServerModel(id_="server", global_data=server_train_data,
+                                                          test_data=server_test_data,
+                                                          clients_ids=clients_ids,
+                                                          clients_test_data_dict=clients_test_by_id_dict)
+
+                for t in range(experiment_config.iterations):
+                    print("----------------------------iter number:" + str(t))
+                    for c in clients: c.iterate(t)
+
+                    for c in clients:
+                        what_to_send = c.pseudo_label_to_send
+
+                        server.receive_single_pseudo_label(c.id_, what_to_send)
+                    server.iterate(t)
+                    for c in clients: c.pseudo_label_received = server.pseudo_label_to_send[c.id_]
+                    rd = RecordData(clients, server)
+
+                    data_to_pickle[data_set.name][num_clients][num_opt_clusters][server_split_ratio][alpha_dicht][
+                        algorithm_selection.name][net_type.name][net_cluster_technique.name][
+                        num_cluster] = rd
+                    pik_name = data_set.name + "_" + str(num_clients) + "_" + str(
+                        num_opt_clusters) + "_" + str(int(10 * (
+                        server_split_ratio))) + "_" + algorithm_selection.name + "_" + net_type.name + "_" + net_cluster_technique.name +  "_" + str(
+                        num_cluster) + "_" + str(experiment_config.alpha_dich)
+
+                    pickle_file_path = pik_name + ".pkl"
+
+                    with open(pickle_file_path, "wb") as file:
+                        pickle.dump(data_to_pickle, file)
 def run_exp_by_algo():
-    if algorithm_selection == AlgorithmSelected.PseudoLabelsClusters or algorithm_selection == AlgorithmSelected.PseudoLabelsNoServerModel or algorithm_selection == AlgorithmSelected.PseudoLabelsClusters_with_division:
+    if algorithm_selection == AlgorithmSelected.PseudoLabelsClusters  or algorithm_selection == AlgorithmSelected.PseudoLabelsClusters_with_division:
         run_PseudoLabelsClusters()
+    if algorithm_selection == AlgorithmSelected.PseudoLabelsNoServerModel:
+        run_PseudoLabelsNoServerModel()
+
 
     if algorithm_selection == AlgorithmSelected.NoFederatedLearning:
         run_NoFederatedLearning()

@@ -1,6 +1,7 @@
 import copy
 
 import torchvision
+from sympy import AlgebraicField
 from sympy.abc import epsilon
 from sympy.physics.units import amount
 from torch.utils.data import DataLoader, Dataset
@@ -1519,6 +1520,9 @@ class Server(LearningEntity):
         if experiment_config.num_clusters == "Optimal":
             clusters_client_id_dict = experiment_config.known_clusters
             flag = True
+        if  experiment_config.num_clusters == 1:
+            clusters_client_id_dict = {0:copy.deepcopy(self.clients_ids)}
+            flag = True
 
         if (experiment_config.cluster_technique == ClusterTechnique.greedy_elimination_cross_entropy or experiment_config.cluster_technique == ClusterTechnique.greedy_elimination_L2) and not flag:
             if t == 0:
@@ -1527,7 +1531,7 @@ class Server(LearningEntity):
                 clusters_client_id_dict = self.clusters_client_id_dict_per_iter[0]
 
 
-        if experiment_config.cluster_technique == ClusterTechnique.kmeans and not flag:
+        if (experiment_config.cluster_technique == ClusterTechnique.kmeans) and not flag:
             clusters_client_id_dict = self.k_means_grouping()
 
         if (experiment_config.cluster_technique == ClusterTechnique.manual_L2 or experiment_config.cluster_technique == ClusterTechnique.manual_cross_entropy) and not flag:
@@ -1545,7 +1549,7 @@ class Server(LearningEntity):
         #if experiment_config.num_clusters>1:
         for cluster_id, pseudo_labels in cluster_mean_pseudo_labels_dict.items():
             pseudo_labels_list = list(pseudo_labels)
-            if experiment_config.server_input_tech ==  ServerInputTech.mean:
+            if experiment_config.server_input_tech ==  ServerInputTech.mean or experiment_config.algorithm_selection == AlgorithmSelected.PseudoLabelsNoServerModel:
                 stacked_labels = torch.stack(pseudo_labels_list)
                 # Average the pseudo labels across clients
                 average_pseudo_labels = torch.mean(stacked_labels, dim=0)
