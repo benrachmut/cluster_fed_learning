@@ -81,14 +81,16 @@ def run_FedAvg():
                 for cluster_technique in [ClusterTechnique.kmeans]:
                     experiment_config.cluster_technique = cluster_technique
                     data_to_pickle[data_set.name][num_clients][num_opt_clusters][
-                        server_split_ratio][algorithm_selection.name][net_type.name][net_cluster_technique.name][
+                        server_split_ratio][
+                            alpha_dicht][algorithm_selection.name][net_type.name][net_cluster_technique.name][
                         server_input_tech.name][cluster_technique.name] = {}
 
 
                     for server_feedback_technique in server_feedback_technique_list:
                         experiment_config.server_feedback_technique = server_feedback_technique
                         data_to_pickle[data_set.name][num_clients][num_opt_clusters][
-                            server_split_ratio][algorithm_selection.name][net_type.name][net_cluster_technique.name][
+                            server_split_ratio][
+                            alpha_dicht][algorithm_selection.name][net_type.name][net_cluster_technique.name][
                             server_input_tech.name][cluster_technique.name][server_feedback_technique.name] = {}
 
                         for num_cluster in num_cluster_list_fedAVG:
@@ -115,7 +117,7 @@ def run_FedAvg():
                                     rd = RecordData(clients, server)
 
                                     data_to_pickle[data_set.name][num_clients][num_opt_clusters][
-                                        server_split_ratio][algorithm_selection.name][net_type.name][ net_cluster_technique.name][
+                                        server_split_ratio][alpha_dicht][algorithm_selection.name][net_type.name][ net_cluster_technique.name][
                                         server_input_tech.name][cluster_technique.name][server_feedback_technique.name][
                                         num_cluster]  = rd
                                     pik_name = data_set.name+"_"+str(num_clients)+"_"+str(num_opt_clusters)+"_"+str(int(10*(server_split_ratio)))+"_"+algorithm_selection.name+"_"+net_type.name+"_"+net_cluster_technique.name+"_"+cluster_technique.name+"_"+str(num_cluster)+"_"+ str(experiment_config.alpha_dich)
@@ -488,7 +490,7 @@ if __name__ == '__main__':
     cluster_additions = [0]  # 0.96,0.5,0.75,1,1.25,1.5,1.75,2]
     print("epsilons:", cluster_additions)
     print(("alpha_dichts", alpha_dichts))
-    algorithm_selection_list = [AlgorithmSelected.PseudoLabelsNoServerModel]#[ AlgorithmSelected.PseudoLabelsClusters,AlgorithmSelected.PseudoLabelsNoServerModel,AlgorithmSelected.FedAvg,AlgorithmSelected.Centralized,AlgorithmSelected.NoFederatedLearning]
+    algorithm_selection_list = [AlgorithmSelected.FedAvg]#[ AlgorithmSelected.PseudoLabelsClusters,AlgorithmSelected.PseudoLabelsNoServerModel,AlgorithmSelected.FedAvg,AlgorithmSelected.Centralized,AlgorithmSelected.NoFederatedLearning]
 
     # centralized
     nets_types_Centralized_list = [NetsType.S_vgg]
