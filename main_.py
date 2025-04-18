@@ -456,9 +456,9 @@ def run_exp_by_algo():
     print(algorithm_selection.name)
     if algorithm_selection == AlgorithmSelected.PseudoLabelsClusters  or algorithm_selection == AlgorithmSelected.PseudoLabelsClusters_with_division:
         run_PseudoLabelsClusters()
+
     if algorithm_selection == AlgorithmSelected.PseudoLabelsNoServerModel:
         run_PseudoLabelsNoServerModel()
-
 
     if algorithm_selection == AlgorithmSelected.NoFederatedLearning:
         run_NoFederatedLearning()
@@ -484,7 +484,7 @@ if __name__ == '__main__':
     num_opt_clusters_list =[5] #[5]
     mix_percentage = 0.1
     server_split_ratio_list = [0.2]
-    alpha_dichts = [100,1,10,0.1]
+    alpha_dichts = [100,10,5,1]
     cluster_additions = [0]  # 0.96,0.5,0.75,1,1.25,1.5,1.75,2]
     print("epsilons:", cluster_additions)
     print(("alpha_dichts", alpha_dichts))
@@ -495,10 +495,6 @@ if __name__ == '__main__':
     num_cluster_Centralized_list = ["Optimal",1]
     net_cluster_technique_Centralized_list = [NetClusterTechnique.multi_model]#,NetClusterTechnique.multi_head]
 
-    #NoFederatedLearning
-    nets_types_list_NoFederatedLearning  = [NetsType.C_alex_S_alex]#,NetsType.C_alex_S_vgg]#,NetsType.C_alex_S_vgg]
-
-
     # parameters for PseudoLabelsClusters
     nets_types_list_PseudoLabelsClusters  = [NetsType.C_alex_S_vgg,NetsType.C_alex_S_alex]#,NetsType.C_alex_S_vgg]#,NetsType.C_alex_S_vgg]
     net_cluster_technique_list = [NetClusterTechnique.multi_model]#,NetClusterTechnique.multi_head]
@@ -506,6 +502,10 @@ if __name__ == '__main__':
     cluster_technique_list = [ClusterTechnique.greedy_elimination_L2]#[ClusterTechnique.greedy_elimination_cross_entropy]#[ClusterTechnique.manual_single_iter,ClusterTechnique.manual,ClusterTechnique.kmeans]
     server_feedback_technique_list = [ServerFeedbackTechnique.similar_to_cluster]#[ServerFeedbackTechnique.similar_to_cluster,ServerFeedbackTechnique.similar_to_client]
     num_cluster_list = [1]#[1,"Optimal"]
+
+    #NoFederatedLearning
+    nets_types_list_NoFederatedLearning  = [NetsType.C_alex_S_alex]#,NetsType.C_alex_S_vgg]#,NetsType.C_alex_S_vgg]
+
 
     # parameters for fedAvg
     num_cluster_list_fedAVG = [1,"Optimal"] # dont touch
