@@ -453,6 +453,7 @@ def run_PseudoLabelsNoServerModel():
                     with open(pickle_file_path, "wb") as file:
                         pickle.dump(data_to_pickle, file)
 def run_exp_by_algo():
+    print(algorithm_selection.name)
     if algorithm_selection == AlgorithmSelected.PseudoLabelsClusters  or algorithm_selection == AlgorithmSelected.PseudoLabelsClusters_with_division:
         run_PseudoLabelsClusters()
     if algorithm_selection == AlgorithmSelected.PseudoLabelsNoServerModel:
