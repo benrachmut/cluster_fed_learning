@@ -42,7 +42,7 @@ if __name__ == '__main__':
     merged_dict = merged_dict["CIFAR100"][25][5][0.2]
     ans = {}
 
-    for dich in [0.5,1,5,10,100]:
+    for dich in [100]:
         ans[dich] = {}
         merged_dict_dich = merged_dict[dich]
         for algo in merged_dict_dich.keys():

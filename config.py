@@ -124,7 +124,7 @@ class ExperimentConfig:
     def __init__(self):
         self.which_net_arch = None
         self.seed_num = 1
-        self.iterations = 10
+        self.iterations = 20
 
         # CIFAR10/CIFAR 100
         self.data_set_selected = None # selected in main
@@ -157,9 +157,9 @@ class ExperimentConfig:
 
 
         #epochs
-        self.epochs_num_train_server = 10
-        self.epochs_num_input_fine_tune_clients = 10
-        self.epochs_num_train_client = 10
+        self.epochs_num_train_server = 5
+        self.epochs_num_input_fine_tune_clients = 5
+        self.epochs_num_train_client = 5
         self.epochs_num_input_fine_tune_clients_no_fl = self.epochs_num_input_fine_tune_clients*self.iterations
         self.epochs_num_input_fine_tune_centralized_server = self.epochs_num_input_fine_tune_clients*self.iterations
         self.alpha_dich = 100
@@ -168,7 +168,7 @@ class ExperimentConfig:
 
         # general vars
         self.local_batch = 64
-        self.batch_size = 128
+        self.batch_size = 32
         self.percent_train_data_use = 1
         self.percent_test_relative_to_train = 1
         self.num_rounds_multi_head = 1
@@ -184,7 +184,7 @@ class ExperimentConfig:
         self.percent_train_data_use = 1
         self.percent_test_relative_to_train = 1
 
-        self.epsilon = None
+        self.cluster_addition = None
 
 
     def update_num_classes(self,data_set):

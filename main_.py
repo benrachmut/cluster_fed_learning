@@ -238,8 +238,8 @@ def run_PseudoLabelsClusters():
                                             clients_ids=clients_ids, clients_test_data_dict=clients_test_by_id_dict)
 
                             if experiment_config.cluster_technique == ClusterTechnique.greedy_elimination_cross_entropy or experiment_config.cluster_technique == ClusterTechnique.greedy_elimination_L2:
-                                for epsilon in epsilons:
-                                    experiment_config.epsilon = epsilon
+                                for epsilon in cluster_additions:
+                                    experiment_config.cluster_addition = epsilon
 
                                     iterate_fl_clusters(clients,server,net_type,net_cluster_technique,server_input_tech,cluster_technique,server_feedback_technique,
                         num_cluster,epsilon)
@@ -322,8 +322,8 @@ def run_Centralized():
 def run_pFedCK():
     for net_type in nets_types_list_PseudoLabelsClusters:
         experiment_config.update_net_type(net_type)
-        if net_type == NetsType.C_alex_S_vgg:
-            experiment_config.batch_size = 128
+        #if net_type == NetsType.C_alex_S_vgg:
+        #    experiment_config.batch_size = 128
         data_to_pickle[data_set.name][num_clients][num_opt_clusters][server_split_ratio][
             alpha_dicht][algorithm_selection.name][net_type.name] = {}
 
@@ -388,12 +388,12 @@ def run_pFedCK():
                                                                           clients_test_data_dict=clients_test_by_id_dict)
 
                             if experiment_config.cluster_technique == ClusterTechnique.greedy_elimination_cross_entropy or experiment_config.cluster_technique == ClusterTechnique.greedy_elimination_L2:
-                                for epsilon in epsilons:
-                                    experiment_config.epsilon = epsilon
+                                for cluster_addition in cluster_additions:
+                                    experiment_config.cluster_addition = cluster_addition
 
                                     iterate_fl_clusters(clients, server, net_type, net_cluster_technique,
                                                         server_input_tech, cluster_technique, server_feedback_technique,
-                                                        num_cluster, epsilon)
+                                                        num_cluster, cluster_addition)
                             else:
                                 iterate_fl_clusters(clients, server, net_type, net_cluster_technique, server_input_tech,
                                                     cluster_technique, server_feedback_technique,
@@ -433,13 +433,13 @@ if __name__ == '__main__':
     data_sets_list = [DataSet.CIFAR100]
     num_clients_list = [25]#[25]
     num_opt_clusters_list =[5] #[5]
-    mix_percentage = 0.2
+    mix_percentage = 0.1
     server_split_ratio_list = [0.2]
-    alpha_dichts = [1,10,100]
-    epsilons = [0.75]  # 0.96,0.5,0.75,1,1.25,1.5,1.75,2]
-    print("epsilons:", epsilons)
+    alpha_dichts = [100,1,10,0.1]
+    cluster_additions = [0]  # 0.96,0.5,0.75,1,1.25,1.5,1.75,2]
+    print("epsilons:", cluster_additions)
     print(("alpha_dichts", alpha_dichts))
-    algorithm_selection_list = [AlgorithmSelected.PseudoLabelsClusters]#[ AlgorithmSelected.PseudoLabelsClusters,AlgorithmSelected.PseudoLabelsNoServerModel,AlgorithmSelected.FedAvg,AlgorithmSelected.Centralized,AlgorithmSelected.NoFederatedLearning]
+    algorithm_selection_list = [AlgorithmSelected.PseudoLabelsNoServerModel]#[ AlgorithmSelected.PseudoLabelsClusters,AlgorithmSelected.PseudoLabelsNoServerModel,AlgorithmSelected.FedAvg,AlgorithmSelected.Centralized,AlgorithmSelected.NoFederatedLearning]
 
     # centralized
     nets_types_Centralized_list = [NetsType.S_vgg]
@@ -456,7 +456,7 @@ if __name__ == '__main__':
     server_input_tech_list = [ServerInputTech.max]
     cluster_technique_list = [ClusterTechnique.greedy_elimination_L2]#[ClusterTechnique.greedy_elimination_cross_entropy]#[ClusterTechnique.manual_single_iter,ClusterTechnique.manual,ClusterTechnique.kmeans]
     server_feedback_technique_list = [ServerFeedbackTechnique.similar_to_cluster]#[ServerFeedbackTechnique.similar_to_cluster,ServerFeedbackTechnique.similar_to_client]
-    num_cluster_list = ["Optimal",1]
+    num_cluster_list = [1]#[1,"Optimal"]
 
     # parameters for fedAvg
     num_cluster_list_fedAVG = [1,"Optimal"] # dont touch

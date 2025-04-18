@@ -2,6 +2,7 @@ import copy
 
 import torchvision
 from sympy.abc import epsilon
+from sympy.physics.units import amount
 from torch.utils.data import DataLoader, Dataset
 from config import *
 import torch.nn.functional as F
@@ -1648,7 +1649,7 @@ class Server(LearningEntity):
     def greedy_elimination(self):
         distance_dict = self.get_distance_dict()
         distance_per_client = self.get_distance_per_client(distance_dict)
-        epsilon_ = self.calc_epsilon()
+        epsilon_ = self.calc_epsilon(distance_per_client)
         clusters_client_id_dict = self.greedy_elimination_t0(epsilon_,distance_per_client)
         experiment_config.num_clusters = len(clusters_client_id_dict)
         self.init_models_measures()
@@ -1689,21 +1690,30 @@ class Server(LearningEntity):
                 pseudo_labels_in_cluster[cluster_id].append(pl)
         return pseudo_labels_in_cluster
 
-    def calc_epsilon(self):
-        clusters_client_id_dict = experiment_config.known_clusters
-        pseudo_labels_in_cluster = self.get_pseudo_label_in_cluster(clusters_client_id_dict)
+    def calc_epsilon(self,distance_per_client):
+        epsilon_ = 0.1
+        while True:
+            amount_clusters = len(self.greedy_elimination_t0(epsilon_,copy.deepcopy(distance_per_client)))
+            if amount_clusters+experiment_config.cluster_addition<=experiment_config.number_of_optimal_clusters:
+                break
+            else:
+                epsilon_ = epsilon_+0.1
+        return epsilon_
 
-        center_of_cluster = {}
-        for cluster_id,list_of_pseudo_labels in pseudo_labels_in_cluster.items():
-            center_of_cluster[cluster_id] = torch.stack(list_of_pseudo_labels).mean(dim=0)
+        #clusters_client_id_dict = experiment_config.known_clusters
+        #pseudo_labels_in_cluster = self.get_pseudo_label_in_cluster(clusters_client_id_dict)
 
-        if experiment_config.cluster_technique == ClusterTechnique.greedy_elimination_cross_entropy:
-            distance_dict = self.compute_distances(center_of_cluster,Server.calc_cross_entropy_given_pl)
-        else:
-            distance_dict = self.compute_distances(center_of_cluster, Server.calc_L2_given_pls)
+        #center_of_cluster = {}
+        #for cluster_id,list_of_pseudo_labels in pseudo_labels_in_cluster.items():
+        #    center_of_cluster[cluster_id] = torch.stack(list_of_pseudo_labels).mean(dim=0)
 
-        min_distance = min(distance_dict.values())
-        return min_distance*experiment_config.epsilon#(4.2/5)
+        #if experiment_config.cluster_technique == ClusterTechnique.greedy_elimination_cross_entropy:
+        #    distance_dict = self.compute_distances(center_of_cluster,Server.calc_cross_entropy_given_pl)
+        #else:
+        #    distance_dict = self.compute_distances(center_of_cluster, Server.calc_L2_given_pls)
+
+        #min_distance = min(distance_dict.values())
+        #return min_distance*experiment_config.epsilon#(4.2/5)
 
 
 
