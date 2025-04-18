@@ -17,7 +17,7 @@ def analize_PseudoLabelsClusters():
         for epsilon in dict_.keys():
             algo_name = algo_name + "ε_"+str(epsilon)
             rd=dict_[epsilon]
-            ans[algo_name] = get_avg_of_entity(rd.server_accuracy_per_client_1_max)
+            ans[algo_name] = get_avg_of_entity(rd.client_accuracy_per_client_1)#get_avg_of_entity(rd.server_accuracy_per_client_1_max)
     return ans
 
 
