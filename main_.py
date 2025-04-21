@@ -204,54 +204,39 @@ def run_PseudoLabelsClusters():
 
                         #if algorithm_selection == AlgorithmSelected.PseudoLabelsNoServerModel:
                         #    num_cluster_list = [1,"Optimal"]
+                        experiment_config.num_clusters = -1
 
-                        for num_cluster in num_cluster_list:
-                            if experiment_config.cluster_technique == ClusterTechnique.greedy_elimination_cross_entropy or experiment_config.cluster_technique == ClusterTechnique.greedy_elimination_L2:
-                                experiment_config.num_clusters = -1
-                            else:
-                                experiment_config.num_clusters = num_cluster
+                        if algorithm_selection == AlgorithmSelected.PseudoLabelsClusters:
+                            clients, clients_ids, clients_test_by_id_dict = create_clients(clients_train_data_dict,
+                                                                                           server_train_data,
+                                                                                           clients_test_data_dict,
+                                                                                           server_test_data)
+                            server = Server(id_="server", global_data=server_train_data, test_data=server_test_data,
+                                        clients_ids=clients_ids, clients_test_data_dict=clients_test_by_id_dict)
+                            for epsilon in cluster_additions:
+                                experiment_config.cluster_addition = epsilon
 
-
-
-                            if experiment_config.algorithm_selection == AlgorithmSelected.PseudoLabelsClusters_with_division:
-                                server_train_data_ = fix_global_data(server_train_data)
-                                clients, clients_ids, clients_test_by_id_dict = create_clients(clients_train_data_dict,
-                                                                                               server_train_data_,
-                                                                                               clients_test_data_dict,
-                                                                                               server_test_data)
-
-                                server = Server_PseudoLabelsClusters_with_division(id_="server", global_data=server_train_data_, test_data=server_test_data,
-                                                clients_ids=clients_ids, clients_test_data_dict=clients_test_by_id_dict)
-
-                            if algorithm_selection == AlgorithmSelected.PseudoLabelsClusters:
-                                clients, clients_ids, clients_test_by_id_dict = create_clients(clients_train_data_dict,
-                                                                                               server_train_data,
-                                                                                               clients_test_data_dict,
-                                                                                               server_test_data)
-                                server = Server(id_="server", global_data=server_train_data, test_data=server_test_data,
-                                            clients_ids=clients_ids, clients_test_data_dict=clients_test_by_id_dict)
-
-                            if algorithm_selection == AlgorithmSelected.PseudoLabelsNoServerModel:
-                                clients, clients_ids, clients_test_by_id_dict = create_clients(clients_train_data_dict,
-                                                                                               server_train_data,
-                                                                                               clients_test_data_dict,
-                                                                                               server_test_data)
-                                server = Server_PseudoLabelsNoServerModel(id_="server", global_data=server_train_data, test_data=server_test_data,
-                                            clients_ids=clients_ids, clients_test_data_dict=clients_test_by_id_dict)
-
-                            if experiment_config.cluster_technique == ClusterTechnique.greedy_elimination_cross_entropy or experiment_config.cluster_technique == ClusterTechnique.greedy_elimination_L2:
-                                for epsilon in cluster_additions:
-                                    experiment_config.cluster_addition = epsilon
-
-                                    iterate_fl_clusters(clients,server,net_type,net_cluster_technique,server_input_tech,cluster_technique,server_feedback_technique,
-                        num_cluster,epsilon)
-                            else:
                                 iterate_fl_clusters(clients, server, net_type, net_cluster_technique, server_input_tech,
                                                     cluster_technique, server_feedback_technique,
-                                                    num_cluster)
+                                                    -1, epsilon)
 
-                            if experiment_config.cluster_technique == ClusterTechnique.greedy_elimination_cross_entropy or   experiment_config.cluster_technique == ClusterTechnique.greedy_elimination_L2:
-                                break
+                        if algorithm_selection == AlgorithmSelected.PseudoLabelsNoServerModel:
+                            clients, clients_ids, clients_test_by_id_dict = create_clients(clients_train_data_dict,
+                                                                                           server_train_data,
+                                                                                           clients_test_data_dict,
+                                                                                           server_test_data)
+                            server = Server_PseudoLabelsNoServerModel(id_="server", global_data=server_train_data, test_data=server_test_data,
+                                        clients_ids=clients_ids, clients_test_data_dict=clients_test_by_id_dict)
+
+                        #if experiment_config.cluster_technique == ClusterTechnique.greedy_elimination_cross_entropy or experiment_config.cluster_technique == ClusterTechnique.greedy_elimination_L2:
+
+                        #else:
+                            #iterate_fl_clusters(clients, server, net_type, net_cluster_technique, server_input_tech,
+                             #                   cluster_technique, server_feedback_technique,
+                             #                   num_cluster)
+
+                        #if experiment_config.cluster_technique == ClusterTechnique.greedy_elimination_cross_entropy or   experiment_config.cluster_technique == ClusterTechnique.greedy_elimination_L2:
+                            #break
 
 def run_NoFederatedLearning():
 
@@ -439,7 +424,7 @@ if __name__ == '__main__':
     mix_percentage = 0.1
     server_split_ratio_list = [0.2]
     alpha_dichts = [100,10,1]
-    cluster_additions = [-4,-2,-3,-1,1,2,3,4]  # 0.96,0.5,0.75,1,1.25,1.5,1.75,2]
+    cluster_additions = [-2,-3,-1,1,2,3,4]  # 0.96,0.5,0.75,1,1.25,1.5,1.75,2]
     print("epsilons:", cluster_additions)
     print(("alpha_dichts", alpha_dichts))
     algorithm_selection_list = [AlgorithmSelected.PseudoLabelsClusters]#[ AlgorithmSelected.PseudoLabelsClusters,AlgorithmSelected.PseudoLabelsNoServerModel,AlgorithmSelected.FedAvg,AlgorithmSelected.Centralized,AlgorithmSelected.NoFederatedLearning]
