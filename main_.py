@@ -424,7 +424,7 @@ if __name__ == '__main__':
     mix_percentage = 0.1
     server_split_ratio_list = [0.2]
     alpha_dichts = [100,10,1]
-    cluster_additions = [-2,-3,-1,1,2,3,4]  # 0.96,0.5,0.75,1,1.25,1.5,1.75,2]
+    cluster_additions = [-2]#,-3,-1,1,2,3,4]  # 0.96,0.5,0.75,1,1.25,1.5,1.75,2]
     print("epsilons:", cluster_additions)
     print(("alpha_dichts", alpha_dichts))
     algorithm_selection_list = [AlgorithmSelected.PseudoLabelsClusters]#[ AlgorithmSelected.PseudoLabelsClusters,AlgorithmSelected.PseudoLabelsNoServerModel,AlgorithmSelected.FedAvg,AlgorithmSelected.Centralized,AlgorithmSelected.NoFederatedLearning]
