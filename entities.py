@@ -1519,6 +1519,11 @@ class Server(LearningEntity):
         if experiment_config.num_clusters == "Optimal":
             clusters_client_id_dict = experiment_config.known_clusters
             flag = True
+        if experiment_config.num_clusters == 1:
+            clusters_client_id_dict={0:self.clients_ids}
+            #clusters_client_id_dict = experiment_config.known_clusters
+            flag = True
+
 
         if (experiment_config.cluster_technique == ClusterTechnique.greedy_elimination_cross_entropy or experiment_config.cluster_technique == ClusterTechnique.greedy_elimination_L2) and not flag:
             if t == 0:
