@@ -49,6 +49,83 @@ def merge_dicts(dict_list):
                 combined[key] = value  # Add new key-value pair
     return combined
 
+axes_titles_font = 14
+axes_number_font = 14
+legend_font_size = 8
+tick_font_size = 10
+linewidth = 3
+
+
+def create_CPL_graph(data, x_label, y_label, folder_to_save, figure_name):
+    # Define the font sizes and line width
+    linewidth = 2
+    line_styles = {
+        "Clients": "dotted",
+        "Server": "solid"
+    }
+    colors = {
+        "VGG": "tab:blue",
+        "AlexNet": "tab:red"
+    }
+
+    # Create main figure without a legend
+    fig, ax = plt.subplots(figsize=(4, 3))
+
+    # Store legend elements
+    lines = []
+    labels = []
+
+    for comm_type, models in data.items():  # client/server
+        for model_name, xy_values in models.items():  # VGG/AlexNet
+            x_values = list(xy_values.keys())
+            y_values = list(xy_values.values())
+            line, = ax.plot(
+                x_values,
+                y_values,
+                marker='o',
+                linewidth=linewidth,
+                linestyle=line_styles.get(comm_type, "solid"),
+                color=colors.get(model_name, "black"),
+                markersize=3  # ← Set your desired marker size here
+
+            )
+            lines.append(line)
+            labels.append(f"{comm_type}-{model_name}")
+
+    # Set the labels with the specified font size
+    ax.set_xlabel(x_label, fontsize=axes_titles_font)
+    ax.set_ylabel(y_label, fontsize=axes_titles_font)
+
+    # Set tick font size
+    ax.tick_params(axis='both', labelsize=tick_font_size)
+    ax.set_ylim([12, 38])
+
+    # Save the main figure (without legend)
+    fig.savefig(f"{folder_to_save}/{figure_name}.pdf", format="pdf", bbox_inches='tight')
+    #fig.savefig(f"{folder_to_save}/{figure_name}.jpeg", format="jpeg", bbox_inches='tight')
+
+    plt.close(fig)
+
+    # Create standalone legend figure with a horizontal layout
+    legend_fig, legend_ax = plt.subplots(figsize=(len(lines) * 1.5, 0.6))  # Adjust width dynamically
+    legend_ax.axis("off")  # Hide axes
+
+    # Create the legend
+    legend = legend_ax.legend(
+        lines,
+        labels,
+        fontsize=legend_font_size,
+        loc="center",
+        ncol=len(lines),
+        frameon=False,
+        handlelength=2.5,  # space between marker and label
+        columnspacing=1.0  # tighter spacing between columns
+    )
+# Save with minimal padding
+    #legend_fig.savefig(f"{folder_to_save}/{figure_name}_legend.jpeg", format="jpeg", bbox_inches='tight', pad_inches=0.05)
+    legend_fig.savefig(f"{folder_to_save}/{figure_name}_legend.pdf", format="pdf", bbox_inches='tight', pad_inches=0.05)
+
+
 
 def get_avg_of_entity(data_):
     lst_per_iter = {}

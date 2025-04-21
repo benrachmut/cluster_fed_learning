@@ -168,7 +168,7 @@ class ExperimentConfig:
 
         # general vars
         self.local_batch = 64
-        self.batch_size = 128
+        self.batch_size = 32
         self.percent_train_data_use = 1
         self.percent_test_relative_to_train = 1
         self.num_rounds_multi_head = 1
@@ -236,7 +236,6 @@ class ExperimentConfig:
 
 
 experiment_config = ExperimentConfig()
-
 
 
 
