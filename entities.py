@@ -1,4 +1,5 @@
 import copy
+from collections import defaultdict
 
 import torchvision
 from sympy.abc import epsilon
@@ -8,6 +9,7 @@ from config import *
 import torch.nn.functional as F
 from itertools import combinations
 from sklearn.cluster import KMeans
+import torchvision.models as models
 
 from abc import ABC, abstractmethod
 
@@ -116,6 +118,49 @@ class VGGServer(nn.Module):
 
 
 
+class ResNetServer(nn.Module):
+    def __init__(self, num_classes, num_clusters=1):
+        super(ResNetServer, self).__init__()
+        self.num_clusters = num_clusters
+
+        # Load ResNet-50 without pretrained weights
+        resnet = models.resnet50(weights=None)
+
+        # Remove the final classification layer
+        self.backbone = nn.Sequential(*list(resnet.children())[:-1])  # Up to avgpool
+        self.flatten = nn.Flatten()
+
+        # ResNet50 last layer before classifier outputs 2048 features
+        self.base_fc = nn.Linear(2048, num_classes)
+
+        if num_clusters == 1:
+            self.head = nn.Linear(num_classes, num_classes)
+        else:
+            self.heads = nn.ModuleDict({
+                f"head_{i}": nn.Sequential(
+                    nn.Linear(num_classes, 512), nn.ReLU(),
+                    nn.Linear(512, 256), nn.ReLU(),
+                    nn.Linear(256, num_classes)
+                ) for i in range(num_clusters)
+            })
+
+    def forward(self, x, cluster_id=None):
+        # Resize input to match ResNet's expected input size
+        x = nn.functional.interpolate(x, size=(224, 224), mode='bilinear', align_corners=False)
+
+        # Feature extraction
+        x = self.backbone(x)
+        x = self.flatten(x)
+        x = self.base_fc(x)
+
+        if self.num_clusters == 1:
+            return self.head(x)
+
+        if cluster_id is not None:
+            return self.heads[f"head_{cluster_id}"](x)
+
+        return {f"head_{i}": head(x) for i, head in self.heads.items()}
+
 
 # Lightweight CNN (Teacher Model)
 class SmallCNN(nn.Module):
@@ -148,6 +193,7 @@ def get_client_model():
         return VGGServer(num_classes=experiment_config.num_classes).to(device)
 
 
+
 def get_server_model():
     if experiment_config.net_cluster_technique== NetClusterTechnique.multi_head:
         num_heads = experiment_config.num_clusters
@@ -161,7 +207,8 @@ def get_server_model():
     if experiment_config.server_net_type == NetType.VGG:
         return VGGServer(num_classes=experiment_config.num_classes,num_clusters=num_heads).to(device)
 
-
+    if experiment_config.server_net_type == NetType.ResNet:
+        return ResNetServer(num_classes=experiment_config.num_classes,num_clusters=num_heads).to(device)
 
 
 class LearningEntity(ABC):
@@ -411,25 +458,124 @@ class Client(LearningEntity):
         self.global_data =global_data
         self.server = None
         self.pseudo_label_L2 = {}
+        self.global_label_distribution = self.get_label_distribution()
 
+
+    def get_label_distribution(self):
+        label_counts = defaultdict(int)
+
+        for _, label in self.local_data:
+            label_counts[label.item() if hasattr(label, 'item') else int(label)] += 1
+
+        return dict(label_counts)
+
+    def train_with_consistency_and_weights(self, pseudo_label_received):
+        print(f"Mean pseudo-labels shape: {pseudo_label_received.shape}")
+        print(f"*** {self.__str__()} train ***")
+
+        server_loader = DataLoader(
+            self.global_data,
+            batch_size=experiment_config.batch_size,
+            shuffle=False,
+            num_workers=0,
+            drop_last=True
+        )
+
+        self.model.train()
+        lambda_consistency = 0.5  # Can tune this
+        criterion_consistency = nn.MSELoss()
+        optimizer = torch.optim.Adam(self.model.parameters(), lr=experiment_config.learning_rate_train_c)
+        pseudo_targets_all = pseudo_label_received.to(device)
+
+        # Simple perturbation function (add Gaussian noise)
+        def add_noise(inputs, std=0.05):
+            noise = torch.randn_like(inputs) * std
+            return torch.clamp(inputs + noise, 0., 1.)
+
+        for epoch in range(experiment_config.epochs_num_train_client):
+            self.epoch_count += 1
+            epoch_loss = 0
+
+            for batch_idx, (inputs, true_labels) in enumerate(server_loader):
+                inputs = inputs.to(device)
+                true_labels = true_labels.to(device)
+                optimizer.zero_grad()
+
+                outputs = self.model(inputs)
+                outputs_log_prob = F.log_softmax(outputs, dim=1)
+
+                start_idx = batch_idx * experiment_config.batch_size
+                end_idx = start_idx + inputs.size(0)
+                pseudo_targets = pseudo_targets_all[start_idx:end_idx].to(device)
+
+                if pseudo_targets.size(0) != inputs.size(0):
+                    print(f"Skipping batch {batch_idx}: Pseudo target size mismatch.")
+                    continue
+                if torch.isnan(pseudo_targets).any() or torch.isinf(pseudo_targets).any():
+                    print(f"NaN/Inf in pseudo targets at batch {batch_idx}")
+                    continue
+
+                pseudo_targets = F.softmax(pseudo_targets, dim=1)
+
+                # Compute weights based on global label distribution
+                weights = torch.tensor(
+                    [self.get_global_label_distribution(label.item()) / len(self.global_data) for label in true_labels],
+                    dtype=torch.float32, device=device
+                ).unsqueeze(1)  # (batch_size, 1)
+
+                # KL divergence per sample
+                loss_kl_per_sample = F.kl_div(outputs_log_prob, pseudo_targets, reduction='none').sum(dim=1)
+                loss_kl = (loss_kl_per_sample * weights.squeeze()).mean()
+
+                # Input consistency regularization
+                inputs_aug = add_noise(inputs)
+                with torch.no_grad():
+                    outputs_aug = self.model(inputs_aug)
+                    probs = F.softmax(outputs, dim=1)
+                    probs_aug = F.softmax(outputs_aug, dim=1)
+
+                loss_consistency = criterion_consistency(probs, probs_aug)
+
+                # Total loss
+                loss = loss_kl + lambda_consistency * loss_consistency
+
+                if torch.isnan(loss) or torch.isinf(loss):
+                    print(f"NaN/Inf loss at batch {batch_idx}: {loss}")
+                    continue
+
+                loss.backward()
+                torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
+                optimizer.step()
+                epoch_loss += loss.item()
+
+            avg_loss = epoch_loss / len(server_loader)
+            print(f"Epoch [{epoch + 1}/{experiment_config.epochs_num_train_client}], Loss: {avg_loss:.4f}")
+
+        return avg_loss
 
     def iteration_context(self, t):
         self.current_iteration = t
 
         for _ in range(10000):
             if t>0:
-                train_loss = self.train(self.pseudo_label_received)
+                if experiment_config.input_consistency == InputConsistency.withInputConsistency:
+                    if experiment_config.weights_for_ps:
+                        train_loss = self.train_with_consistency_and_weights(self.pseudo_label_received)
+                    else:
+                        train_loss = self.train_with_consistency(self.pseudo_label_received)
+                else:
+                    if experiment_config.weights_for_ps:
+                        train_loss = self.train_with_weights(self.pseudo_label_received)
+
+                    else:
+                        train_loss = self.train(self.pseudo_label_received)
+
             train_loss = self.fine_tune()
+
             self.pseudo_label_to_send = self.evaluate()
             what_to_send = self.pseudo_label_to_send
             self.size_sent[t] = (what_to_send.numel() * what_to_send.element_size()) / (1024 * 1024)
             self.pseudo_label_L2[t] = self.get_pseudo_label_L2(what_to_send)
-
-
-
-
-
-
             acc = self.evaluate_accuracy(self.local_test_set)
 
             acc_test = self.evaluate_accuracy(self.test_global_data)
@@ -512,6 +658,153 @@ class Client(LearningEntity):
             print(f"Epoch [{epoch + 1}/{experiment_config.epochs_num_train_client}], Loss: {avg_loss:.4f}")
 
         self.weights = self.model.state_dict()
+        return avg_loss
+
+    def train_with_consistency(self, mean_pseudo_labels):
+        print(f"Mean pseudo-labels shape: {mean_pseudo_labels.shape}")
+        print(f"*** {self.__str__()} train ***")
+
+        server_loader = DataLoader(self.global_data, batch_size=experiment_config.batch_size, shuffle=False,
+                                   num_workers=0, drop_last=True)
+        self.model.train()
+
+        criterion_kl = nn.KLDivLoss(reduction='batchmean')
+        lambda_consistency = 0.5  # You can tune this
+        criterion_consistency = nn.MSELoss()
+
+        optimizer = torch.optim.Adam(self.model.parameters(), lr=experiment_config.learning_rate_train_c)
+        pseudo_targets_all = mean_pseudo_labels.to(device)
+
+        # Simple perturbation function (add Gaussian noise)
+        def add_noise(inputs, std=0.05):
+            noise = torch.randn_like(inputs) * std
+            return torch.clamp(inputs + noise, 0., 1.)
+
+        for epoch in range(experiment_config.epochs_num_train_client):
+            self.epoch_count += 1
+            epoch_loss = 0
+
+            for batch_idx, (inputs, _) in enumerate(server_loader):
+                inputs = inputs.to(device)
+                optimizer.zero_grad()
+
+                outputs = self.model(inputs)
+                outputs_log_prob = F.log_softmax(outputs, dim=1)
+
+                # Index pseudo targets
+                start_idx = batch_idx * experiment_config.batch_size
+                end_idx = start_idx + inputs.size(0)
+                pseudo_targets = pseudo_targets_all[start_idx:end_idx].to(device)
+
+                if pseudo_targets.size(0) != inputs.size(0):
+                    print(f"Skipping batch {batch_idx}: Pseudo target size mismatch.")
+                    continue
+                if torch.isnan(pseudo_targets).any() or torch.isinf(pseudo_targets).any():
+                    print(f"NaN/Inf in pseudo targets at batch {batch_idx}")
+                    continue
+
+                pseudo_targets = F.softmax(pseudo_targets, dim=1)
+                loss_kl = criterion_kl(outputs_log_prob, pseudo_targets)
+
+                # Input consistency regularization
+                inputs_aug = add_noise(inputs)
+                with torch.no_grad():
+                    outputs_aug = self.model(inputs_aug)
+                    probs = F.softmax(outputs, dim=1)
+                    probs_aug = F.softmax(outputs_aug, dim=1)
+                loss_consistency = criterion_consistency(probs, probs_aug)
+
+                # Total loss
+                loss = loss_kl + lambda_consistency * loss_consistency
+
+                if torch.isnan(loss) or torch.isinf(loss):
+                    print(f"NaN/Inf loss at batch {batch_idx}: {loss}")
+                    continue
+
+                loss.backward()
+                torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
+                optimizer.step()
+                epoch_loss += loss.item()
+
+            avg_loss = epoch_loss / len(server_loader)
+            print(f"Epoch [{epoch + 1}/{experiment_config.epochs_num_train_client}], Loss: {avg_loss:.4f}")
+
+        return avg_loss
+
+    def get_global_label_distribution(self, k ):
+        return self.global_label_distribution.get(k, 0)
+
+    def train_with_weights(self, mean_pseudo_labels):
+        print(f"Mean pseudo-labels shape: {mean_pseudo_labels.shape}")
+        print(f"*** {self.__str__()} train ***")
+
+        server_loader = DataLoader(
+            self.global_data,
+            batch_size=experiment_config.batch_size,
+            shuffle=False,
+            num_workers=0,
+            drop_last=True
+        )
+
+        self.model.train()
+        optimizer = torch.optim.Adam(self.model.parameters(), lr=experiment_config.learning_rate_train_c)
+        pseudo_targets_all = mean_pseudo_labels.to(device)
+
+
+
+        for epoch in range(experiment_config.epochs_num_train_client):
+            self.epoch_count += 1
+            epoch_loss = 0
+
+            for batch_idx, (inputs, true_labels) in enumerate(server_loader):
+                inputs = inputs.to(device)
+                true_labels = true_labels.to(device)
+                optimizer.zero_grad()
+
+                outputs = self.model(inputs)
+                outputs_prob = F.log_softmax(outputs, dim=1)
+
+                start_idx = batch_idx * experiment_config.batch_size
+                end_idx = start_idx + inputs.size(0)
+                pseudo_targets = pseudo_targets_all[start_idx:end_idx].to(device)
+
+                if pseudo_targets.size(0) != inputs.size(0):
+                    print(
+                        f"Skipping batch {batch_idx}: Expected pseudo target size {inputs.size(0)}, got {pseudo_targets.size(0)}")
+                    continue
+
+                if torch.isnan(pseudo_targets).any() or torch.isinf(pseudo_targets).any():
+                    print(f"NaN or Inf found in pseudo targets at batch {batch_idx}: {pseudo_targets}")
+                    continue
+
+                pseudo_targets = F.softmax(pseudo_targets, dim=1)
+
+                # Get weights based on true labels
+                weights = torch.tensor(
+                    [    self.get_global_label_distribution(label.item()) /len(self.global_data) for label in true_labels],
+                    dtype=torch.float32, device=device
+                ).unsqueeze(1)  # (batch_size, 1)
+
+                # KL divergence per sample
+                loss_per_sample = F.kl_div(outputs_prob, pseudo_targets, reduction='none').sum(dim=1)
+                weighted_loss = (loss_per_sample * weights.squeeze()).mean()
+                loss = weighted_loss
+
+                #print("Type of loss:", type(loss))
+                #print("Loss value:", loss)
+
+                if torch.isnan(loss) or torch.isinf(loss):
+                    print(f"NaN or Inf loss encountered at batch {batch_idx}: {loss}")
+                    continue
+
+                loss.backward()
+                torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
+                optimizer.step()
+                epoch_loss += loss.item()
+
+            avg_loss = epoch_loss / len(server_loader)
+            print(f"Epoch [{epoch + 1}/{experiment_config.epochs_num_train_client}], Loss: {avg_loss:.4f}")
+
         return avg_loss
 
     def train(self,mean_pseudo_labels):
@@ -635,49 +928,141 @@ class Client(LearningEntity):
 
         return  result_to_print
 
+    def fine_tune_with_consistency(self):
+        print("*** " + self.__str__() + " fine-tune ***")
 
+        fine_tune_loader = DataLoader(self.local_data, batch_size=experiment_config.batch_size, shuffle=True)
+        self.model.train()
+
+        criterion_ce = nn.CrossEntropyLoss()
+        criterion_consistency = nn.MSELoss()
+        lambda_consistency = 0.5  # You can tune this value
+
+        optimizer = torch.optim.Adam(self.model.parameters(), lr=experiment_config.learning_rate_fine_tune_c)
+
+        def add_noise(inputs, std=0.05):
+            noise = torch.randn_like(inputs) * std
+            return torch.clamp(inputs + noise, 0., 1.)
+
+        epochs = experiment_config.epochs_num_input_fine_tune_clients
+        for epoch in range(epochs):
+            self.epoch_count += 1
+            epoch_loss = 0
+
+            for inputs, targets in fine_tune_loader:
+                inputs, targets = inputs.to(device), targets.to(device)
+                optimizer.zero_grad()
+
+                outputs = self.model(inputs)
+                loss_ce = criterion_ce(outputs, targets)
+
+                # Input consistency regularization
+                inputs_aug = add_noise(inputs)
+                with torch.no_grad():
+                    outputs_aug = self.model(inputs_aug)
+                    probs = F.softmax(outputs, dim=1)
+                    probs_aug = F.softmax(outputs_aug, dim=1)
+
+                loss_consistency = criterion_consistency(probs, probs_aug)
+
+                # Total loss
+                loss = loss_ce + lambda_consistency * loss_consistency
+
+                loss.backward()
+                optimizer.step()
+                epoch_loss += loss.item()
+
+            result_to_print = epoch_loss / len(fine_tune_loader)
+            print(f"Epoch [{epoch + 1}/{epochs}], Loss: {result_to_print:.4f}")
+
+        return result_to_print
 
 
 class Client_pFedCK(Client):
-    def __init__(self, client_id, dataloader, num_classes=10):
-        self.id = client_id
-        self.dataloader = dataloader
-        self.personal_model = AlexNet(num_classes)
-        self.interaction_model = SmallCNN(num_classes)
-        self.device = 'cuda' if torch.cuda.is_available() else 'cpu'
-        self.personal_model.to(self.device)
-        self.interaction_model.to(self.device)
+    def __init__(self, id_, client_data, global_data, global_test_data, local_test_data):
+        super().__init__(id_, client_data, global_data, global_test_data, local_test_data)
+        self.personalized_model = AlexNet(num_classes=experiment_config.num_classes).to(device)
+        self.interactive_model = AlexNet(num_classes=experiment_config.num_classes).to(device)
+        self.initial_state = None  # To store interactive model's state before training
 
-    def train_local(self, criterion_ce, criterion_kd, criterion_mse, epochs=1, alpha=1.0, beta=1.0):
-        optimizer = torch.optim.Adam(list(self.personal_model.parameters()) + list(self.interaction_model.parameters()), lr=1e-3)
-        self.personal_model.train()
-        self.interaction_model.train()
-        for _ in range(epochs):
-            for x, y in self.dataloader:
-                x, y = x.to(self.device), y.to(self.device)
-                optimizer.zero_grad()
+    def set_models(self, personalized_state, interactive_state):
+        self.personalized_model.load_state_dict(personalized_state)
+        self.interactive_model.load_state_dict(interactive_state)
 
-                out_p, feat_p = self.personal_model(x)
-                out_i, feat_i = self.interaction_model(x)
 
-                loss_ce = criterion_ce(out_p, y)
-                loss_kd = criterion_kd(F.log_softmax(out_i, dim=1), F.softmax(out_p.detach(), dim=1))
-                loss_mse = criterion_mse(feat_i, feat_p.detach())
-                loss = loss_ce + alpha * loss_kd + beta * loss_mse
-                loss.backward()
-                optimizer.step()
 
-    def get_param_delta(self, initial_model):
-        delta = []
-        for p1, p2 in zip(self.interaction_model.parameters(), initial_model.parameters()):
-            delta.append((p1.data - p2.data).cpu().numpy().flatten())
-        return np.concatenate(delta)
 
-    def update_interaction_model(self, delta_avg, initial_model):
-        with torch.no_grad():
-            for param, base_param, delta in zip(self.interaction_model.parameters(), initial_model.parameters(), delta_avg):
-                param.data = base_param.data + torch.tensor(delta, device=self.device).view_as(param)
+    def train(self,t):
+        self.current_iteration = t
 
+        # Save initial interactive model state for variation calculation
+        self.initial_state = copy.deepcopy(self.interactive_model.state_dict())
+
+        self.personalized_model.train()
+        self.interactive_model.train()
+
+        optimizer_personalized = torch.optim.Adam(self.personalized_model.parameters(), lr=1e-4)
+        optimizer_interaction = torch.optim.Adam(self.interactive_model.parameters(), lr=1e-4)
+        criterion = nn.CrossEntropyLoss()
+        train_loader = DataLoader(
+            self.local_data,
+            batch_size=experiment_config.batch_size,
+            shuffle=False,
+            num_workers=0,
+            drop_last=True
+        )
+
+        print(f"\nClient {self.id_} begins training\n")
+
+        for epoch in range(5):  # or experiment_config.epochs_num_train_client
+            total_loss_personalized, total_loss_interactive = 0.0, 0.0
+            batch_count = 0
+
+            for x, y in train_loader:
+                x, y = x.to(device), y.to(device)
+                batch_count += 1
+
+                # Train personalized model
+                optimizer_personalized.zero_grad()
+                loss_personalized = criterion(self.personalized_model(x), y)
+                loss_personalized.backward()
+                optimizer_personalized.step()
+                total_loss_personalized += loss_personalized.item()
+
+                # Train interactive model
+                optimizer_interaction.zero_grad()
+                loss_interactive = criterion(self.interactive_model(x), y)
+                loss_interactive.backward()
+                optimizer_interaction.step()
+                total_loss_interactive += loss_interactive.item()
+
+                # Sync personalized model with updated interactive model
+                self.personalized_model.load_state_dict(self.interactive_model.state_dict())
+
+            print(f"Epoch {epoch+1}/5 | Personalized Loss: {total_loss_personalized/batch_count:.4f} "
+                  f"| Interactive Loss: {total_loss_interactive/batch_count:.4f}")
+
+        self.accuracy_per_client_1[t] = self.evaluate_accuracy(data_ = self.local_test_set,model=self.personalized_model, k=1)
+        print("accuracy_per_client_1",self.accuracy_per_client_1[t])
+        return self.calculate_param_variation()
+
+    def calculate_param_variation(self):
+        if self.initial_state is None:
+            raise ValueError("Initial state not set. Did you call train()?")
+
+        param_variations = {
+            key: self.interactive_model.state_dict()[key] - self.initial_state[key]
+            for key in self.initial_state
+        }
+        return param_variations
+
+    def update_interactive_model(self, avg_param_variations):
+        updated_state = self.interactive_model.state_dict()
+        for key, variation in avg_param_variations.items():
+            if key in updated_state:
+                updated_state[key] += variation
+        self.interactive_model.load_state_dict(updated_state)
+        print(f"Client {self.id_}: Updated interactive model with average parameter variations.")
 
 class Client_FedAvg(Client):
     def __init__(self, id_, client_data, global_data, global_test_data, local_test_data):
@@ -689,12 +1074,20 @@ class Client_FedAvg(Client):
 
         self.current_iteration = t
         flag = False
-        for _ in range(10000):
+        for _ in range(1000):
+            if t == 0:
+                #self.model.apply(self.initialize_weights)
+                #self.model.apply(self.initialize_weights)
+                self.model.apply(self.initialize_weights)
+
             if t > 0:
                 if flag:
                     self.model.apply(self.initialize_weights)
                 else:
+                    self.model.apply(self.initialize_weights)
+
                     self.model.load_state_dict(self.weights_received)
+
             self.weights_to_send  = self.fine_tune()
 
             total_size = 0
@@ -1054,7 +1447,13 @@ class Server(LearningEntity):
         for cluster_id, mean_pseudo_label_for_cluster in mean_pseudo_labels_per_cluster.items():
             selected_model = self.multi_model_dict[cluster_id]
             for _ in range(5):
-                self.train(mean_pseudo_label_for_cluster, 0,selected_model)
+
+                if experiment_config.input_consistency == InputConsistency.withInputConsistency:
+                    self.train_with_consistency(mean_pseudo_label_for_cluster, 0,selected_model)
+                else:
+                    self.train(mean_pseudo_label_for_cluster, 0,selected_model)
+
+
                 if self.evaluate_accuracy(self.test_global_data, model=selected_model, k=1,
                                                 cluster_id=0) == experiment_config.num_classes:
                     selected_model.apply(self.initialize_weights)
@@ -1189,8 +1588,81 @@ class Server(LearningEntity):
         self.evaluate_results(t)
         self.reset_clients_received_pl()
 
+    def train_with_consistency(self, mean_pseudo_labels, cluster_num="0", selected_model=None):
+        print(f"Mean pseudo-labels shape: {mean_pseudo_labels.shape}")  # Should be (num_data_points, num_classes)
+        print(f"*** {self.__str__()} train *** Cluster: {cluster_num} ***")
 
+        server_loader = DataLoader(self.global_data, batch_size=experiment_config.batch_size, shuffle=False,
+                                   num_workers=0, drop_last=True)
 
+        if selected_model is None:
+            selected_model_train = self.model
+        else:
+            selected_model_train = selected_model
+
+        selected_model_train.train()
+        criterion_kl = nn.KLDivLoss(reduction='batchmean')
+        criterion_consistency = nn.MSELoss()
+        lambda_consistency = 0.5  # You can tune this hyperparameter
+
+        optimizer = torch.optim.Adam(selected_model_train.parameters(), lr=experiment_config.learning_rate_train_s)
+        pseudo_targets_all = mean_pseudo_labels.to(device)
+
+        def add_noise(inputs, std=0.05):
+            noise = torch.randn_like(inputs) * std
+            return torch.clamp(inputs + noise, 0., 1.)
+
+        for epoch in range(experiment_config.epochs_num_train_server):
+            self.epoch_count += 1
+            epoch_loss = 0
+
+            for batch_idx, (inputs, _) in enumerate(server_loader):
+                inputs = inputs.to(device)
+                optimizer.zero_grad()
+
+                # Original model output
+                outputs = selected_model_train(inputs, cluster_id=cluster_num)
+                outputs_prob = F.log_softmax(outputs, dim=1)
+
+                # Slice pseudo-targets
+                start_idx = batch_idx * experiment_config.batch_size
+                end_idx = start_idx + inputs.size(0)
+                pseudo_targets = pseudo_targets_all[start_idx:end_idx].to(device)
+
+                if pseudo_targets.size(0) != inputs.size(0):
+                    print(
+                        f"Skipping batch {batch_idx}: Expected pseudo target size {inputs.size(0)}, got {pseudo_targets.size(0)}")
+                    continue
+
+                pseudo_targets = F.softmax(pseudo_targets, dim=1)
+
+                loss_kl = criterion_kl(outputs_prob, pseudo_targets)
+
+                # Input consistency regularization
+                inputs_aug = add_noise(inputs)
+                with torch.no_grad():
+                    outputs_aug = selected_model_train(inputs_aug, cluster_id=cluster_num)
+                    probs = F.softmax(outputs, dim=1)
+                    probs_aug = F.softmax(outputs_aug, dim=1)
+
+                loss_consistency = criterion_consistency(probs, probs_aug)
+
+                # Combine losses
+                loss = loss_kl + lambda_consistency * loss_consistency
+
+                if torch.isnan(loss) or torch.isinf(loss):
+                    print(f"NaN or Inf loss encountered at batch {batch_idx}: {loss}")
+                    continue
+
+                loss.backward()
+                torch.nn.utils.clip_grad_norm_(selected_model_train.parameters(), max_norm=1.0)
+                optimizer.step()
+                epoch_loss += loss.item()
+
+            avg_loss = epoch_loss / len(server_loader)
+            print(f"Epoch [{epoch + 1}/{experiment_config.epochs_num_train_server}], Loss: {avg_loss:.4f}")
+
+        return avg_loss
     def train(self, mean_pseudo_labels,  cluster_num="0",selected_model=None):
 
         print(f"Mean pseudo-labels shape: {mean_pseudo_labels.shape}")  # Should be (num_data_points, num_classes)
@@ -1452,9 +1924,6 @@ class Server(LearningEntity):
                 ans[counter].append(other_)
             counter = counter + 1
         return ans
-
-
-
 
     def get_clusters_centers_dict(self):
         L2_of_all_clients = self.get_distance_dict()
@@ -1774,12 +2243,52 @@ class Server(LearningEntity):
 
 
 
+class Server_pFedCK(Server):
+    def __init__(self, id_, global_data, test_data, clients_ids, clients_test_data_dict, clients):
+        super().__init__(id_, global_data, test_data, clients_ids, clients_test_data_dict)
+        self.clients = clients  # List of Client_pFedCK instances
 
+    def calculate_cosine_similarity(self, delta_w1, delta_w2):
+        """Flatten and compute cosine similarity."""
+        flat1 = torch.cat([v.flatten() for v in delta_w1.values()]).cpu().numpy()
+        flat2 = torch.cat([v.flatten() for v in delta_w2.values()]).cpu().numpy()
+        dot_product = np.dot(flat1, flat2)
+        norm1, norm2 = np.linalg.norm(flat1), np.linalg.norm(flat2)
+        return dot_product / (norm1 * norm2 + 1e-8)
 
+    def cluster_clients(self, delta_ws, num_clusters=5):
+        n = len(delta_ws)
+        similarities = np.zeros((n, n))
 
+        for i in range(n):
+            for j in range(i + 1, n):
+                sim = self.calculate_cosine_similarity(delta_ws[i], delta_ws[j])
+                similarities[i, j] = similarities[j, i] = sim
 
+        kmeans = KMeans(n_clusters=num_clusters)
+        kmeans.fit(similarities)
+        return kmeans.labels_
 
+    def average_parameter_variations(self, delta_ws, cluster_labels):
+        cluster_avg = {}
+        for cluster_id in np.unique(cluster_labels):
+            indices = np.where(cluster_labels == cluster_id)[0]
+            avg_variation = copy.deepcopy(delta_ws[indices[0]])
+            for key in avg_variation:
+                avg_variation[key] = sum(delta_ws[i][key] for i in indices) / len(indices)
+            cluster_avg[cluster_id] = avg_variation
+        return cluster_avg
 
+    def send_avg_delta_to_clients(self, cluster_avg, cluster_labels):
+        for idx, client in enumerate(self.clients):
+            cluster_id = cluster_labels[idx]
+            avg_delta_w = cluster_avg[cluster_id]
+            client.update_interactive_model(avg_delta_w)
+
+    def cluster_and_aggregate(self, delta_ws):
+        cluster_labels = self.cluster_clients(delta_ws, num_clusters=5)
+        cluster_avg = self.average_parameter_variations(delta_ws, cluster_labels)
+        self.send_avg_delta_to_clients(cluster_avg, cluster_labels)
 
 
 class Server_PseudoLabelsClusters_with_division(Server):

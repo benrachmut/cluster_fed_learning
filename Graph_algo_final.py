@@ -3,10 +3,10 @@ from main_ import *
 from Graph_global import *
 from config import AlgorithmSelected
 
-def analize_PseudoLabelsClusters(dich):
+def analize_PseudoLabelsClusters(algo):
     ans = {}
     for net_type in merged_dict_dich_algo.keys():
-        algo_name = "CPL-Fed,"
+        algo_name = algo_names[algo]+","
         if net_type == NetsType.C_alex_S_vgg.name:
             dict_ = merged_dict_dich_algo[NetsType.C_alex_S_vgg.name]
             algo_name = algo_name+ "VGG,"
@@ -26,24 +26,62 @@ def analize_PseudoLabelsClusters(dich):
     return ans
 
 
-def analize_PseudoLabelsNoServerModel(dich):
+def analize_PseudoLabelsNoServerModel(algo):
     ans = {}
-    algo_name = "FedMd,"
+    algo_name = algo_names[algo]
     dict_ = merged_dict_dich_algo["C_alex"]["no_model"]["mean"]["kmeans"]["similar_to_client"]
     for cluster in dict_.keys():
-        algo_name = algo_name + cluster_names[cluster]
-        rd = dict_[cluster]
-        ans[algo_name] = get_avg_of_entity(rd.client_accuracy_per_client_1)
-        algo_name = "FedMd,"
+        if cluster == 1:
+            algo_name = algo_name #+ cluster_names[cluster]
+            rd = dict_[cluster]
+            ans[algo_name] = get_avg_of_entity(rd.client_accuracy_per_client_1)
 
     return ans
 
-def get_data_per_algo(algo,dich):
+def analize_NoFederatedLearning(algo):
+    ans = {}
+    algo_name = algo_names[algo]
+
+    rd = merged_dict_dich_algo["C_alex_S_alex"]
+    fixed_dict = {}
+    data_to_fix = rd.client_accuracy_per_client_1
+    for client_id, dict_x_y in data_to_fix.items():
+        dict_x_y_fixed = {}
+        for x,y in dict_x_y.items():
+            dict_x_y_fixed[x/5-1]=y
+        fixed_dict[client_id]=dict_x_y_fixed
+    ans[algo_name] = get_avg_of_entity(fixed_dict)
+    return ans
+
+def analize_FedAvg(algo):
+    ans = {}
+    algo_name = algo_names[algo]
+
+    rd = merged_dict_dich_algo["C_alex_S_alex"]["multi_model"]["max"]["kmeans"]["similar_to_cluster"][1]
+    ans[algo_name] = get_avg_of_entity(rd.client_accuracy_per_client_1)
+    return ans
+
+def analize_pFedCK(algo):
+    ans = {}
+    algo_name = algo_names[algo]
+
+    rd = merged_dict_dich_algo["C_alex_S_vgg"]
+    ans[algo_name] = get_avg_of_entity(rd.client_accuracy_per_client_1)
+    return ans
+
+
+def get_data_per_algo(algo):
 
     if algo == AlgorithmSelected.PseudoLabelsClusters.name:
-        return analize_PseudoLabelsClusters(dich)
+        return analize_PseudoLabelsClusters(algo)
     if algo == AlgorithmSelected.PseudoLabelsNoServerModel.name:
-        return  analize_PseudoLabelsNoServerModel(dich)
+        return  analize_PseudoLabelsNoServerModel(algo)
+    if algo == AlgorithmSelected.NoFederatedLearning.name:
+        return analize_NoFederatedLearning(algo)
+    if algo == AlgorithmSelected.FedAvg.name:
+        return analize_FedAvg(algo)
+    if algo == AlgorithmSelected.pFedCK.name:
+        return analize_pFedCK(algo)
 
 if __name__ == '__main__':
     cluster_names = {"Optimal":"CBG",1:"No Clusters"} #Cluster By Group
@@ -54,6 +92,7 @@ if __name__ == '__main__':
         AlgorithmSelected.NoFederatedLearning.name:"No FL",
         AlgorithmSelected.Centralized.name:"Centralized",
                 AlgorithmSelected.FedAvg.name:"FedAvg",
+                AlgorithmSelected.pFedCK.name:"pFedCK"
                 }
 
 
@@ -69,7 +108,7 @@ if __name__ == '__main__':
         for algo in merged_dict_dich.keys():
 
             merged_dict_dich_algo = merged_dict_dich[algo]
-            feedback = get_data_per_algo(algo,dich)#get_data_per_algo(algo,dich)
+            feedback = get_data_per_algo(algo)#get_data_per_algo(algo,dich)
 
 
             data_for_graph[dich].update(feedback)
@@ -77,6 +116,18 @@ if __name__ == '__main__':
                 #data_for_graph[dich]["Clients"]=feedback["Clients"]
     print()
 
+    colors = {"CPL-Fed,VGG,Server":"blue",
+              "CPL-Fed,AlexNet,Server":"red",
+              "FedMd":"Green",
+              "No FL":"Gray",
+            "FedAvg":"brown",
+              "pFedCK":"purple"}
+
+
+
     for dich in [100]:
-        create_CPL_graph(data_for_graph[dich], "Iteration", "Accuracy (%)", "figures","Iterations_CPL_"+str(dich))
+        t = {}
+        for k in colors.keys():
+            t[k] = data_for_graph[dich][k]
+        create_algo_graph(t, "Iteration", "Accuracy (%)", "figures","Algo_Comp"+str(dich),colors)
 

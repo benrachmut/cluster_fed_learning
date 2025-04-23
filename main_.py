@@ -44,7 +44,7 @@ class RecordData:
                 if experiment_config.algorithm_selection == AlgorithmSelected.PseudoLabelsClusters:
                     self.clients_pseudo_label[id_] = client.pseudo_label_L2
 
-            if experiment_config.algorithm_selection == AlgorithmSelected.PseudoLabelsClusters or experiment_config.algorithm_selection == AlgorithmSelected.FedAvg:
+            if experiment_config.algorithm_selection == AlgorithmSelected.PseudoLabelsClusters or experiment_config.algorithm_selection == AlgorithmSelected.FedAvg or experiment_config.algorithm_selection== AlgorithmSelected.pFedCK :
                 for client in clients:
                     id_ = client.id_
                     self.size_of_client_message[id_] = client.size_sent
@@ -112,9 +112,10 @@ def run_FedAvg():
                                     for c in clients: c.weights_received = server.weights_to_send[c.id_]
                                     rd = RecordData(clients, server)
 
-                                    data_to_pickle[data_set.name][num_clients][num_opt_clusters][
-                                        server_split_ratio][algorithm_selection.name][net_type.name][ net_cluster_technique.name][
-                                        server_input_tech.name][cluster_technique.name][server_feedback_technique.name][
+                                    data_to_pickle[data_set.name][num_clients][num_opt_clusters][server_split_ratio][
+                            alpha_dicht][
+                            algorithm_selection.name][net_type.name][net_cluster_technique.name][
+                            server_input_tech.name][cluster_technique.name][server_feedback_technique.name][
                                         num_cluster]  = rd
                                     pik_name = data_set.name+"_"+str(num_clients)+"_"+str(num_opt_clusters)+"_"+str(int(10*(server_split_ratio)))+"_"+algorithm_selection.name+"_"+net_type.name+"_"+net_cluster_technique.name+"_"+cluster_technique.name+"_"+str(num_cluster)+"_"+ str(experiment_config.alpha_dich)
 
@@ -126,7 +127,7 @@ def run_FedAvg():
 
 
 def iterate_fl_clusters(clients,server,net_type,net_cluster_technique,server_input_tech,cluster_technique,server_feedback_technique,
-                        num_cluster,epsilon =None):
+                        num_cluster,weights_for_ps=None,input_consistency=None,epsilon =None):
     for t in range(experiment_config.iterations):
         print("----------------------------iter number:" + str(t))
         for c in clients: c.iterate(t)
@@ -148,13 +149,17 @@ def iterate_fl_clusters(clients,server,net_type,net_cluster_technique,server_inp
                 server_split_ratio))) + "_" + algorithm_selection.name + "_" + net_type.name + "_" + net_cluster_technique.name + "_" + cluster_technique.name + "_" + str(
                 num_cluster) + "_" + str(experiment_config.alpha_dich)
         else:
-            data_to_pickle[data_set.name][num_clients][num_opt_clusters][server_split_ratio][alpha_dicht][
-                algorithm_selection.name][net_type.name][net_cluster_technique.name][
-                server_input_tech.name][cluster_technique.name][server_feedback_technique.name][epsilon] = rd
+            data_to_pickle[data_set.name][num_clients][num_opt_clusters][server_split_ratio][
+                alpha_dicht][algorithm_selection.name][net_type.name][
+                net_cluster_technique.name][
+                server_input_tech.name][cluster_technique.name][server_feedback_technique.name][
+                weights_for_ps.name][input_consistency.name][epsilon] = rd
+
+
             pik_name = data_set.name + "_" + str(num_clients) + "_" + str(
                 num_opt_clusters) + "_" + str(int(10 * (
                 server_split_ratio))) + "_" + algorithm_selection.name + "_" + net_type.name + "_" + net_cluster_technique.name + "_" + cluster_technique.name + "_" + str(
-                num_cluster) +"_"+ str(experiment_config.alpha_dich)+"_"+ str(epsilon)
+                num_cluster) +"_"+ str(experiment_config.alpha_dich)+"_"+ str(epsilon)+"_"+input_consistency.name+"_"+input_consistency.name
 
 
         pickle_file_path = pik_name + ".pkl"
@@ -202,39 +207,34 @@ def run_PseudoLabelsClusters():
 
                         experiment_config.num_clusters = -1
 
-                        if algorithm_selection == AlgorithmSelected.PseudoLabelsClusters:
-                            clients, clients_ids, clients_test_by_id_dict = create_clients(clients_train_data_dict,
-                                                                                           server_train_data,
-                                                                                           clients_test_data_dict,
-                                                                                           server_test_data)
-                            server = Server(id_="server", global_data=server_train_data, test_data=server_test_data,
-                                        clients_ids=clients_ids, clients_test_data_dict=clients_test_by_id_dict)
-                            for epsilon in cluster_additions:
-                                experiment_config.cluster_addition = epsilon
+                        clients, clients_ids, clients_test_by_id_dict = create_clients(clients_train_data_dict,
+                                                                                       server_train_data,
+                                                                                       clients_test_data_dict,
+                                                                                       server_test_data)
+                        server = Server(id_="server", global_data=server_train_data, test_data=server_test_data,
+                                    clients_ids=clients_ids, clients_test_data_dict=clients_test_by_id_dict)
+                        for epsilon in cluster_additions:
+                            experiment_config.cluster_addition = epsilon
 
-                                iterate_fl_clusters(clients, server, net_type, net_cluster_technique, server_input_tech,
-                                                    cluster_technique, server_feedback_technique,
-                                                    -1, epsilon)
 
-                        if algorithm_selection == AlgorithmSelected.PseudoLabelsNoServerModel:
-                            clients, clients_ids, clients_test_by_id_dict = create_clients(clients_train_data_dict,
-                                                                                           server_train_data,
-                                                                                           clients_test_data_dict,
-                                                                                           server_test_data)
-                            server = Server_PseudoLabelsNoServerModel(id_="server", global_data=server_train_data,
-                                                                      test_data=server_test_data,
-                                                                      clients_ids=clients_ids,
-                                                                      clients_test_data_dict=clients_test_by_id_dict)
 
-                        #if experiment_config.cluster_technique == ClusterTechnique.greedy_elimination_cross_entropy or experiment_config.cluster_technique == ClusterTechnique.greedy_elimination_L2:
+                            for weights_for_ps in weights_for_ps_list:
+                                experiment_config.weights_for_ps = weights_for_ps
+                                data_to_pickle[data_set.name][num_clients][num_opt_clusters][server_split_ratio][
+                                    alpha_dicht][algorithm_selection.name][net_type.name][net_cluster_technique.name][
+                                    server_input_tech.name][cluster_technique.name][server_feedback_technique.name][weights_for_ps.name] = {}
+                                for input_consistency in input_consistency_list:
+                                    experiment_config.input_consistency = input_consistency
+                                    data_to_pickle[data_set.name][num_clients][num_opt_clusters][server_split_ratio][
+                                        alpha_dicht][algorithm_selection.name][net_type.name][
+                                        net_cluster_technique.name][
+                                        server_input_tech.name][cluster_technique.name][server_feedback_technique.name][
+                                        weights_for_ps.name][input_consistency.name] = {}
+                                    iterate_fl_clusters(clients, server, net_type, net_cluster_technique, server_input_tech,
+                                                        cluster_technique, server_feedback_technique,
+                                                        -1, weights_for_ps,input_consistency,epsilon)
 
-                        #else:
-                            #iterate_fl_clusters(clients, server, net_type, net_cluster_technique, server_input_tech,
-                             #                   cluster_technique, server_feedback_technique,
-                             #                   num_cluster)
 
-                        #if experiment_config.cluster_technique == ClusterTechnique.greedy_elimination_cross_entropy or   experiment_config.cluster_technique == ClusterTechnique.greedy_elimination_L2:
-                            #break
 
 def run_NoFederatedLearning():
 
@@ -251,8 +251,8 @@ def run_NoFederatedLearning():
             c.fine_tune()
         rd = RecordData(clients)
 
-        data_to_pickle[data_set.name][num_clients][num_opt_clusters][
-            server_split_ratio][algorithm_selection.name][net_type.name] = rd
+        data_to_pickle[data_set.name][num_clients][num_opt_clusters][server_split_ratio][alpha_dicht][
+            algorithm_selection.name][net_type.name] = rd
         pik_name = data_set.name + "_" + str(num_clients) + "_" + str(num_opt_clusters) + "_" + str(int(10 * (
             server_split_ratio))) + "_" + algorithm_selection.name + "_" + net_type.name+"_"+ str(experiment_config.alpha_dich)
 
@@ -307,85 +307,52 @@ def run_Centralized():
 def run_pFedCK():
     for net_type in nets_types_list_PseudoLabelsClusters:
         experiment_config.update_net_type(net_type)
-        #if net_type == NetsType.C_alex_S_vgg:
-        #    experiment_config.batch_size = 128
+
         data_to_pickle[data_set.name][num_clients][num_opt_clusters][server_split_ratio][
             alpha_dicht][algorithm_selection.name][net_type.name] = {}
 
-        for net_cluster_technique in net_cluster_technique_list:
-            experiment_config.net_cluster_technique = net_cluster_technique
-            data_to_pickle[data_set.name][num_clients][num_opt_clusters][server_split_ratio][
-                alpha_dicht][
-                algorithm_selection.name][net_type.name][net_cluster_technique.name] = {}
 
-            for server_input_tech in server_input_tech_list:
-                experiment_config.server_input_tech = server_input_tech
-                data_to_pickle[data_set.name][num_clients][num_opt_clusters][server_split_ratio][alpha_dicht][
-                    algorithm_selection.name][net_type.name][net_cluster_technique.name][server_input_tech.name] = {}
+        clients, clients_ids, clients_test_by_id_dict = create_clients(clients_train_data_dict,
+                                                                       server_train_data,
+                                                                       clients_test_data_dict,
+                                                                       server_test_data)
+        server = Server_pFedCK(id_="server", global_data=server_train_data, test_data=server_test_data,
+                        clients_ids=clients_ids, clients_test_data_dict=clients_test_by_id_dict,clients = clients)
 
-                for cluster_technique in cluster_technique_list:
-                    experiment_config.cluster_technique = cluster_technique
-                    data_to_pickle[data_set.name][num_clients][num_opt_clusters][server_split_ratio][alpha_dicht][
-                        algorithm_selection.name][net_type.name][net_cluster_technique.name][
-                        server_input_tech.name][cluster_technique.name] = {}
+        for t in range(experiment_config.iterations):
+            print("----------------------------iter number:" + str(t))
 
-                    for server_feedback_technique in server_feedback_technique_list:
-                        experiment_config.server_feedback_technique = server_feedback_technique
-                        data_to_pickle[data_set.name][num_clients][num_opt_clusters][server_split_ratio][alpha_dicht][
-                            algorithm_selection.name][net_type.name][net_cluster_technique.name][
-                            server_input_tech.name][cluster_technique.name][server_feedback_technique.name] = {}
+            delta_ws = []
 
-                        for num_cluster in num_cluster_list:
-                            if experiment_config.cluster_technique == ClusterTechnique.greedy_elimination_cross_entropy:
-                                experiment_config.num_clusters = -1
-                            else:
-                                experiment_config.num_clusters = num_cluster
+            for client in clients:
+                delta_w = client.train(t)  # Handles both models and returns delta_w
+                total_size = 0
+                for param in delta_w.values():
+                    total_size += param.numel() * param.element_size()
+                client.size_sent[t] = total_size / (1024 * 1024)
 
-                            if experiment_config.algorithm_selection == AlgorithmSelected.PseudoLabelsClusters_with_division:
-                                server_train_data_ = fix_global_data(server_train_data)
-                                clients, clients_ids, clients_test_by_id_dict = create_clients(clients_train_data_dict,
-                                                                                               server_train_data_,
-                                                                                               clients_test_data_dict,
-                                                                                               server_test_data)
 
-                                server = Server_PseudoLabelsClusters_with_division(id_="server",
-                                                                                   global_data=server_train_data_,
-                                                                                   test_data=server_test_data,
-                                                                                   clients_ids=clients_ids,
-                                                                                   clients_test_data_dict=clients_test_by_id_dict)
 
-                            if algorithm_selection == AlgorithmSelected.PseudoLabelsClusters:
-                                clients, clients_ids, clients_test_by_id_dict = create_clients(clients_train_data_dict,
-                                                                                               server_train_data,
-                                                                                               clients_test_data_dict,
-                                                                                               server_test_data)
-                                server = Server(id_="server", global_data=server_train_data, test_data=server_test_data,
-                                                clients_ids=clients_ids, clients_test_data_dict=clients_test_by_id_dict)
+                delta_ws.append(delta_w)
 
-                            if algorithm_selection == AlgorithmSelected.PseudoLabelsNoServerModel:
-                                clients, clients_ids, clients_test_by_id_dict = create_clients(clients_train_data_dict,
-                                                                                               server_train_data,
-                                                                                               clients_test_data_dict,
-                                                                                               server_test_data)
-                                server = Server_PseudoLabelsNoServerModel(id_="server", global_data=server_train_data,
-                                                                          test_data=server_test_data,
-                                                                          clients_ids=clients_ids,
-                                                                          clients_test_data_dict=clients_test_by_id_dict)
+            # Step 2–3: Server clusters and aggregates
+            server.cluster_and_aggregate(delta_ws)
 
-                            if experiment_config.cluster_technique == ClusterTechnique.greedy_elimination_cross_entropy or experiment_config.cluster_technique == ClusterTechnique.greedy_elimination_L2:
-                                for cluster_addition in cluster_additions:
-                                    experiment_config.cluster_addition = cluster_addition
 
-                                    iterate_fl_clusters(clients, server, net_type, net_cluster_technique,
-                                                        server_input_tech, cluster_technique, server_feedback_technique,
-                                                        num_cluster, cluster_addition)
-                            else:
-                                iterate_fl_clusters(clients, server, net_type, net_cluster_technique, server_input_tech,
-                                                    cluster_technique, server_feedback_technique,
-                                                    num_cluster)
 
-                            if experiment_config.cluster_technique == ClusterTechnique.greedy_elimination_cross_entropy or experiment_config.cluster_technique == ClusterTechnique.greedy_elimination_L2:
-                                break
+            rd = RecordData(clients, server)
+
+            data_to_pickle[data_set.name][num_clients][num_opt_clusters][server_split_ratio][alpha_dicht][
+                    algorithm_selection.name][net_type.name] = rd
+            pik_name = data_set.name + "_" + str(num_clients) + "_" + str(
+                    num_opt_clusters) + "_" + str(int(10 * (
+                    server_split_ratio))) + "_" + algorithm_selection.name + "_" + net_type.name+"_"+str(alpha_dicht)
+
+
+            pickle_file_path = pik_name + ".pkl"
+
+            with open(pickle_file_path, "wb") as file:
+                pickle.dump(data_to_pickle, file)
 
 
 def run_PseudoLabelsNoServerModel():
@@ -418,7 +385,7 @@ def run_PseudoLabelsNoServerModel():
                             algorithm_selection.name][net_type.name][net_cluster_technique.name][
                             server_input_tech.name][cluster_technique.name][server_feedback_technique.name] = {}
 
-                        for num_clusters in [1,"Optimal"]:
+                        for num_clusters in [1]:
                             experiment_config.num_clusters = num_clusters
 
 
@@ -437,12 +404,14 @@ def run_PseudoLabelsNoServerModel():
                                                num_clusters)
 
 def run_exp_by_algo():
-    if algorithm_selection == AlgorithmSelected.PseudoLabelsClusters :
+    experiment_config.weights_for_ps = WeightForPS.withoutWeights
+    experiment_config.input_consistency = InputConsistency.withoutInputConsistency
 
-        run_PseudoLabelsClusters()
+    if algorithm_selection == AlgorithmSelected.PseudoLabelsClusters :
+        run_PseudoLabelsClusters() # Done
 
     if algorithm_selection == AlgorithmSelected.PseudoLabelsNoServerModel:
-        run_PseudoLabelsNoServerModel()
+        run_PseudoLabelsNoServerModel()  # Running
 
     if algorithm_selection == AlgorithmSelected.NoFederatedLearning:
         run_NoFederatedLearning()
@@ -453,8 +422,8 @@ def run_exp_by_algo():
     if algorithm_selection == AlgorithmSelected.FedAvg:
         run_FedAvg()
 
-    #if algorithm_selection == AlgorithmSelected.pFedCK:
-        #run_pFedCK()
+    if algorithm_selection == AlgorithmSelected.pFedCK:
+        run_pFedCK()
 
 
 
@@ -468,36 +437,40 @@ if __name__ == '__main__':
     num_opt_clusters_list =[5] #[5]
     mix_percentage = 0.1
     server_split_ratio_list = [0.2]
-    alpha_dichts = [100]#,10,1]
-    cluster_additions = [-3]#,-3,-1,1,2,3,4]  # 0.96,0.5,0.75,1,1.25,1.5,1.75,2]
+    alpha_dichts = [100,]#,10,1]
+    cluster_additions = [0]#,-3,-1,1,2,3,4]  # 0.96,0.5,0.75,1,1.25,1.5,1.75,2]
     print("epsilons:", cluster_additions)
     print(("alpha_dichts", alpha_dichts))
-    algorithm_selection_list = [AlgorithmSelected.FedAvg]
+    algorithm_selection_list = [AlgorithmSelected.PseudoLabelsClusters]#,AlgorithmSelected.FedAvg,AlgorithmSelected.PseudoLabelsNoServerModel]
     #[ AlgorithmSelected.PseudoLabelsClusters,
     # AlgorithmSelected.PseudoLabelsNoServerModel,
     # AlgorithmSelected.FedAvg,AlgorithmSelected.Centralized,
     # AlgorithmSelected.NoFederatedLearning,
-    # AlgorithmSelected.FedAvg]
+    # AlgorithmSelected.FedAvg
+    # AlgorithmSelected.pFedCK]
 
+
+    # parameters for PseudoLabelsClusters
+    nets_types_list_PseudoLabelsClusters  = [NetsType.C_alex_S_ResNet]#,NetsType.C_alex_S_vgg]#,NetsType.C_alex_S_vgg]
+    net_cluster_technique_list = [NetClusterTechnique.multi_model]#,NetClusterTechnique.multi_head]
+    server_input_tech_list = [ServerInputTech.max]
+    cluster_technique_list = [ClusterTechnique.greedy_elimination_L2]#[ClusterTechnique.greedy_elimination_cross_entropy]#[ClusterTechnique.manual_single_iter,ClusterTechnique.manual,ClusterTechnique.kmeans]
+    server_feedback_technique_list = [ServerFeedbackTechnique.similar_to_cluster]#[ServerFeedbackTechnique.similar_to_cluster,ServerFeedbackTechnique.similar_to_client]
+    num_cluster_list = [1]#[1,"Optimal"]
+    weights_for_ps_list = [WeightForPS.withWeights,WeightForPS.withoutWeights ]
+    input_consistency_list = [InputConsistency.withInputConsistency,InputConsistency.withoutInputConsistency]
     # centralized
     nets_types_Centralized_list = [NetsType.S_vgg]
-    num_cluster_Centralized_list = ["Optimal",1]
+    num_cluster_Centralized_list = [1]
     net_cluster_technique_Centralized_list = [NetClusterTechnique.multi_model]#,NetClusterTechnique.multi_head]
 
     #NoFederatedLearning
     nets_types_list_NoFederatedLearning  = [NetsType.C_alex_S_alex]#,NetsType.C_alex_S_vgg]#,NetsType.C_alex_S_vgg]
 
 
-    # parameters for PseudoLabelsClusters
-    nets_types_list_PseudoLabelsClusters  = [NetsType.C_alex_S_vgg]#,NetsType.C_alex_S_vgg]#,NetsType.C_alex_S_vgg]
-    net_cluster_technique_list = [NetClusterTechnique.multi_model]#,NetClusterTechnique.multi_head]
-    server_input_tech_list = [ServerInputTech.max]
-    cluster_technique_list = [ClusterTechnique.greedy_elimination_L2]#[ClusterTechnique.greedy_elimination_cross_entropy]#[ClusterTechnique.manual_single_iter,ClusterTechnique.manual,ClusterTechnique.kmeans]
-    server_feedback_technique_list = [ServerFeedbackTechnique.similar_to_cluster]#[ServerFeedbackTechnique.similar_to_cluster,ServerFeedbackTechnique.similar_to_client]
-    num_cluster_list = [1]#[1,"Optimal"]
 
     # parameters for fedAvg
-    num_cluster_list_fedAVG = [1,"Optimal"] # dont touch
+    num_cluster_list_fedAVG = [1]
     nets_types_list_fedAVG  = [NetsType.C_alex_S_alex] # dont touch
     cluster_technique_list_fedAVG = [ClusterTechnique.kmeans] # we need this because of logic in num_cluster_list_fedAVG
 

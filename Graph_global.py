@@ -56,6 +56,97 @@ tick_font_size = 10
 linewidth = 3
 
 
+def create_algo_cluster(data, x_label, y_label, folder_to_save, figure_name):
+    linewidth = 2
+    markersize = 5
+
+    # Create the main figure
+    fig, ax = plt.subplots(figsize=(4, 3))
+
+    x_values = list(data.keys())
+    y_values = list(data.values())
+
+    ax.plot(
+        x_values,
+        y_values,
+        marker='o',
+        linewidth=linewidth,
+        linestyle='solid',
+        markersize=markersize
+    )
+
+    # Set axis labels
+    ax.set_xlabel(x_label, fontsize=axes_titles_font)
+    ax.set_ylabel(y_label, fontsize=axes_titles_font)
+
+    # Tick font size
+    ax.tick_params(axis='both', labelsize=tick_font_size)
+
+    # Optional: Set fixed y-limits
+    ax.set_ylim([12, 38])
+
+    # Save the figure
+    fig.savefig(f"{folder_to_save}/{figure_name}.pdf", format="pdf", bbox_inches='tight')
+    plt.close(fig)
+
+def create_algo_graph(data, x_label, y_label, folder_to_save, figure_name,colors):
+    linewidth = 2
+    markersize = 3
+
+    # Create main figure
+    fig, ax = plt.subplots(figsize=(4, 3))
+
+    lines = []
+    labels = []
+
+    for algorithm_name, xy_values in data.items():
+        x_values = list(xy_values.keys())
+        y_values = list(xy_values.values())
+        line, = ax.plot(
+            x_values,
+            y_values,
+            marker='o',
+            linewidth=linewidth,
+            color=colors.get(algorithm_name, "black"),
+            linestyle='solid',
+            markersize=markersize
+        )
+        lines.append(line)
+        labels.append(algorithm_name)
+
+    # Set axis labels
+    ax.set_xlabel(x_label, fontsize=axes_titles_font)
+    ax.set_ylabel(y_label, fontsize=axes_titles_font)
+
+    # Tick font size
+    ax.tick_params(axis='both', labelsize=tick_font_size)
+
+    # Optional: Set fixed y-limits
+    ax.set_ylim([12, 38])
+
+    # Save the main figure without legend
+    plt.show()
+
+    fig.savefig(f"{folder_to_save}/{figure_name}.pdf", format="pdf", bbox_inches='tight')
+    plt.close(fig)
+
+    # Create a separate legend-only figure
+    legend_fig, legend_ax = plt.subplots(figsize=(len(lines) * 1.5, 0.6))
+    legend_ax.axis("off")
+
+    legend = legend_ax.legend(
+        lines,
+        labels,
+        fontsize=legend_font_size,
+        loc="center",
+        ncol=len(lines),
+        frameon=False,
+        handlelength=2.5,
+        columnspacing=1.0
+    )
+    # Show the figure before saving
+    legend_fig.savefig(f"{folder_to_save}/{figure_name}_legend.pdf", format="pdf", bbox_inches='tight', pad_inches=0.05)
+
 def create_CPL_graph(data, x_label, y_label, folder_to_save, figure_name):
     # Define the font sizes and line width
     linewidth = 2

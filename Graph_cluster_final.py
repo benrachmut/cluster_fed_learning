@@ -3,13 +3,16 @@ from Graph_global import *
 from config import AlgorithmSelected
 
 def analize_PseudoLabelsClusters(dict_):
-    ans = {}
-
+    #ans = {"Clients":{},"Server":{}}
+    ans ={}
     for dist_from_opt_clusters in dict_.keys():
         #algo_name = algo_name + ",Clusters:"+str(5+epsilon)
         rd=dict_[dist_from_opt_clusters]
         temp_ = get_avg_of_entity(rd.server_accuracy_per_client_1_max)
-        ans[5+dist_from_opt_clusters] = max(temp_.values())
+        ans [5+dist_from_opt_clusters] = max(temp_.values())
+        #ans["Server"][5+dist_from_opt_clusters] = max(temp_.values())
+        #temp_ = get_avg_of_entity(rd.client_accuracy_per_client_1)
+        #ans["Clients"][5+dist_from_opt_clusters] = max(temp_.values())
 
 
 
@@ -41,10 +44,11 @@ if __name__ == '__main__':
             if algo == AlgorithmSelected.PseudoLabelsClusters.name:
                 merged_dict_dich_algo = merged_dict_dich[algo][NetsType.C_alex_S_vgg.name]["multi_model"]["max"][ClusterTechnique.greedy_elimination_L2.name]["similar_to_cluster"]
                 feedback = analize_PseudoLabelsClusters(merged_dict_dich_algo)#get_data_per_algo(algo,dich)
-                data_for_graph[dich]["Server"]=feedback["Server"]
-                data_for_graph[dich]["Clients"]=feedback["Clients"]
+                data_for_graph[dich].update(feedback)
+        print()
 
+    for dich in [100]:
+        data_for_graph[dich] = dict(sorted(data_for_graph[dich].items()))
 
-    for dich in [100,50,10,5,1]:
-        create_CPL_graph(data_for_graph[dich], "Iteration", "Accuracy (%)", "figures","Iterations_CPL_"+str(dich))
+        create_algo_cluster(data_for_graph[dich], "Clusters", "Max Accuracy (%)", "figures","Cluster_CPL_"+str(dich))
 

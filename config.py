@@ -1,6 +1,5 @@
 from enum import Enum
 from random import random
-from xml.dom import NoDataAllowedErr
 
 import torch
 from matplotlib import pyplot as plt
@@ -74,6 +73,7 @@ class ServerInputTech(Enum):
 class NetType(Enum):
     ALEXNET = "AlexNet"
     VGG = "VGG"
+    ResNet = "ResNet"
 
 class DataSet(Enum):
     CIFAR100 = "CIFAR100"
@@ -87,6 +87,7 @@ class DataType(Enum):
 class NetsType(Enum):
     C_alex_S_vgg = 1
     C_alex_S_alex = 2
+    C_alex_S_ResNet = 6
     C_alex = 3
     S_alex = 4
     S_vgg = 5
@@ -109,6 +110,14 @@ class NetClusterTechnique(Enum):
     multi_head = 1
     multi_model = 2
     no_model=3
+
+class WeightForPS (Enum):
+    withWeights = 1
+    withoutWeights = 2
+
+class InputConsistency(Enum):
+    withInputConsistency = 1
+    withoutInputConsistency = 2
 class AlgorithmSelected(Enum):
     PseudoLabelsClusters = 1
     PseudoLabelsNoServerModel = 2
@@ -116,12 +125,16 @@ class AlgorithmSelected(Enum):
     PseudoLabelsClusters_with_division = 4
     Centralized = 5
     FedAvg = 6
+    pFedCK = 7
 class DataDistTypes(Enum):
     NaiveNonIID = 1
     Dirichlet1 = 2
 
 class ExperimentConfig:
     def __init__(self):
+        self.weights_for_ps = None
+        self.input_consistency = None
+
         self.which_net_arch = None
         self.seed_num = 1
         self.iterations = 20
@@ -217,6 +230,12 @@ class ExperimentConfig:
         if net_type == NetsType.C_alex_S_vgg or net_type == NetsType.S_vgg:
             self.client_net_type = NetType.ALEXNET
             self.server_net_type = NetType.VGG
+            self.learning_rate_train_c = 0.0001
+            self.learning_rate_fine_tune_c = 0.001
+            self.learning_rate_train_s = 0.0001
+        if net_type == NetsType.C_alex_S_ResNet:
+            self.client_net_type = NetType.ALEXNET
+            self.server_net_type = NetType.ResNet
             self.learning_rate_train_c = 0.0001
             self.learning_rate_fine_tune_c = 0.001
             self.learning_rate_train_s = 0.0001
