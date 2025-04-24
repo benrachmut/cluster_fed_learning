@@ -30,17 +30,30 @@ class RecordData:
             if server is not None:
                 self.server_accuracy_per_client_1 = server.accuracy_per_client_1
                 self.server_accuracy_per_client_1_max = server.accuracy_per_client_1_max
+                self.server_accuracy_per_client_10_max =server.accuracy_per_client_10_max
+                self.server_accuracy_per_client_100_max =server.accuracy_per_client_100_max
+                self.server_accuracy_per_client_5_max =server.accuracy_per_client_5_max
+
                 if experiment_config.algorithm_selection == AlgorithmSelected.PseudoLabelsClusters:
                     self.server_pseudo_label_after_net = server.pseudo_label_after_net_L2
                     self.server_pseudo_label_before_net = server.pseudo_label_before_net_L2
 
         self.client_accuracy_per_client_1 = {}
+        self.client_accuracy_per_client_10 = {}
+        self.client_accuracy_per_client_100 = {}
+        self.client_accuracy_per_client_5 = {}
+
         self.clients_pseudo_label={}
+
 
         if clients is not None:
             for client in clients:
                 id_ = client.id_
                 self.client_accuracy_per_client_1[id_]=client.accuracy_per_client_1
+                self.client_accuracy_per_client_10[id_]=client.accuracy_per_client_10
+                self.client_accuracy_per_client_100[id_]=client.accuracy_per_client_100
+                self.client_accuracy_per_client_5[id_]=client.accuracy_per_client_5
+
                 if experiment_config.algorithm_selection == AlgorithmSelected.PseudoLabelsClusters:
                     self.clients_pseudo_label[id_] = client.pseudo_label_L2
 
@@ -159,7 +172,7 @@ def iterate_fl_clusters(clients,server,net_type,net_cluster_technique,server_inp
             pik_name = data_set.name + "_" + str(num_clients) + "_" + str(
                 num_opt_clusters) + "_" + str(int(10 * (
                 server_split_ratio))) + "_" + algorithm_selection.name + "_" + net_type.name + "_" + net_cluster_technique.name + "_" + cluster_technique.name + "_" + str(
-                num_cluster) +"_"+ str(experiment_config.alpha_dich)+"_"+ str(epsilon)+"_"+input_consistency.name+"_"+input_consistency.name
+                num_cluster) +"_"+ str(experiment_config.alpha_dich)+"_"+ str(epsilon)+"_"+input_consistency.name+"_"+weights_for_ps.name
 
 
         pickle_file_path = pik_name + ".pkl"
@@ -437,7 +450,7 @@ if __name__ == '__main__':
     num_opt_clusters_list =[5] #[5]
     mix_percentage = 0.1
     server_split_ratio_list = [0.2]
-    alpha_dichts = [100,]#,10,1]
+    alpha_dichts = [100]#,10,1]
     cluster_additions = [0]#,-3,-1,1,2,3,4]  # 0.96,0.5,0.75,1,1.25,1.5,1.75,2]
     print("epsilons:", cluster_additions)
     print(("alpha_dichts", alpha_dichts))
@@ -451,7 +464,7 @@ if __name__ == '__main__':
 
 
     # parameters for PseudoLabelsClusters
-    nets_types_list_PseudoLabelsClusters  = [NetsType.C_alex_S_ResNet]#,NetsType.C_alex_S_vgg]#,NetsType.C_alex_S_vgg]
+    nets_types_list_PseudoLabelsClusters  = [NetsType.C_alex_S_alex ,NetsType.C_alex_S_vgg]#,NetsType.C_alex_S_vgg]#,NetsType.C_alex_S_vgg]
     net_cluster_technique_list = [NetClusterTechnique.multi_model]#,NetClusterTechnique.multi_head]
     server_input_tech_list = [ServerInputTech.max]
     cluster_technique_list = [ClusterTechnique.greedy_elimination_L2]#[ClusterTechnique.greedy_elimination_cross_entropy]#[ClusterTechnique.manual_single_iter,ClusterTechnique.manual,ClusterTechnique.kmeans]

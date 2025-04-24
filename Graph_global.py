@@ -122,7 +122,7 @@ def create_algo_graph(data, x_label, y_label, folder_to_save, figure_name,colors
     ax.tick_params(axis='both', labelsize=tick_font_size)
 
     # Optional: Set fixed y-limits
-    ax.set_ylim([12, 38])
+    ax.set_ylim([0, 38])
 
     # Save the main figure without legend
     plt.show()

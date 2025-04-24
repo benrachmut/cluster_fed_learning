@@ -238,7 +238,7 @@ class ExperimentConfig:
             self.server_net_type = NetType.ResNet
             self.learning_rate_train_c = 0.0001
             self.learning_rate_fine_tune_c = 0.001
-            self.learning_rate_train_s = 0.0001
+            self.learning_rate_train_s = 0.00001
 
 
 

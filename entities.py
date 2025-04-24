@@ -124,7 +124,7 @@ class ResNetServer(nn.Module):
         self.num_clusters = num_clusters
 
         # Load ResNet-50 without pretrained weights
-        resnet = models.resnet50(weights=None)
+        resnet = models.resnet152(weights=None)
 
         # Remove the final classification layer
         self.backbone = nn.Sequential(*list(resnet.children())[:-1])  # Up to avgpool
@@ -224,6 +224,9 @@ class LearningEntity(ABC):
         self.model=None
         #self.weights = None
         self.accuracy_per_client_1 = {}
+        self.accuracy_per_client_10= {}
+        self.accuracy_per_client_100= {}
+        self.accuracy_per_client_5= {}
         self.size_sent = {}
         #self.accuracy_per_client_5 = {}
 
@@ -358,49 +361,70 @@ class LearningEntity(ABC):
         return average_max_accuracy
 
 
+    #def evaluate_accuracy(self, data_, model=None, k=1, cluster_id=None):
+    #    if model is None:
+    #        model = self.model
+    #    model.eval()  # Set the model to evaluation mode
+    #    correct = 0  # To count the correct predictions
+    #    total = 0  # To count the total predictions
+
+    #    test_loader = DataLoader(data_, batch_size=experiment_config.batch_size, shuffle=False)
+
+    #    with torch.no_grad():  # No need to track gradients during evaluation
+     #       for inputs, targets in test_loader:
+     #           inputs, targets = inputs.to(device), targets.to(device)
+
+                # Forward pass through the specific cluster head
+     #           outputs = model(inputs, cluster_id=cluster_id)
+
+                # Get the top-1 predictions directly
+    #            top_1_preds = outputs.argmax(dim=1)
+
+                # Update the total number of predictions and correct predictions
+     #           total += targets.size(0)
+     #           correct += (top_1_preds == targets).sum().item()
+
+     #   accuracy = 100 * correct / total if total > 0 else 0.0
+     #   print(f"Accuracy for cluster {cluster_id if cluster_id is not None else 'default'}: {accuracy:.2f}%")
+     #   return accuracy
     def evaluate_accuracy(self, data_, model=None, k=1, cluster_id=None):
         if model is None:
             model = self.model
 
         """
-        Evaluate the accuracy of the model on the given dataset, supporting multi-head models.
+        Evaluate the top-k accuracy of the model on the given dataset.
 
         Args:
             data_ (torch.utils.data.Dataset): The dataset to evaluate.
             model (torch.nn.Module): The model to evaluate.
-            k (int): Top-k accuracy. Defaults to 1.
-            cluster_id (int or None): The cluster ID for the multi-head model. If None, 
-                                      the method will work as a single-head model or raise an error
-                                      if multiple heads exist without specifying `cluster_id`.
+            k (int): Top-k accuracy.
+            cluster_id (int or None): Used if model has multiple heads.
 
         Returns:
-            float: The accuracy of the model on the given dataset.
+            float: Top-k accuracy (%) on the dataset.
         """
-        model.eval()  # Set the model to evaluation mode
-        correct = 0  # To count the correct predictions
-        total = 0  # To count the total predictions
+        model.eval()
+        correct = 0
+        total = 0
 
         test_loader = DataLoader(data_, batch_size=experiment_config.batch_size, shuffle=False)
 
-        with torch.no_grad():  # No need to track gradients during evaluation
+        with torch.no_grad():
             for inputs, targets in test_loader:
                 inputs, targets = inputs.to(device), targets.to(device)
 
-                # Forward pass through the specific cluster head
                 outputs = model(inputs, cluster_id=cluster_id)
 
-                # Get the top-1 predictions directly
-                top_1_preds = outputs.argmax(dim=1)
+                # Top-k predictions (returns both values and indices)
+                _, topk_preds = outputs.topk(k, dim=1)
 
-                # Update the total number of predictions and correct predictions
+                # Check if the correct label is in the top-k predictions
+                correct += (topk_preds == targets.unsqueeze(1)).any(dim=1).sum().item()
                 total += targets.size(0)
-                correct += (top_1_preds == targets).sum().item()
 
-        # Calculate accuracy as a percentage
         accuracy = 100 * correct / total if total > 0 else 0.0
-        print(f"Accuracy for cluster {cluster_id if cluster_id is not None else 'default'}: {accuracy:.2f}%")
+        print(f"Top-{k} Accuracy for cluster {cluster_id if cluster_id is not None else 'default'}: {accuracy:.2f}%")
         return accuracy
-
     def evaluate_test_loss(self, cluster_id=None, model=None):
         """
         Evaluate the model on the test set and return the loss for a specific cluster head.
@@ -482,7 +506,7 @@ class Client(LearningEntity):
         )
 
         self.model.train()
-        lambda_consistency = 0.5  # Can tune this
+        lambda_consistency = 0.2  # Can tune this
         criterion_consistency = nn.MSELoss()
         optimizer = torch.optim.Adam(self.model.parameters(), lr=experiment_config.learning_rate_train_c)
         pseudo_targets_all = pseudo_label_received.to(device)
@@ -592,7 +616,10 @@ class Client(LearningEntity):
 
 
         self.accuracy_per_client_1[t] = self.evaluate_accuracy(self.local_test_set, k=1)
+        self.accuracy_per_client_10[t] = self.evaluate_accuracy(self.local_test_set, k=10)
+        self.accuracy_per_client_100[t] = self.evaluate_accuracy(self.local_test_set, k=100)
 
+        self.accuracy_per_client_5[t] = self.evaluate_accuracy(self.local_test_set, k=5)
 
     def train__(self, mean_pseudo_labels, data_):
 
@@ -669,7 +696,7 @@ class Client(LearningEntity):
         self.model.train()
 
         criterion_kl = nn.KLDivLoss(reduction='batchmean')
-        lambda_consistency = 0.5  # You can tune this
+        lambda_consistency = 0.2 # You can tune this
         criterion_consistency = nn.MSELoss()
 
         optimizer = torch.optim.Adam(self.model.parameters(), lr=experiment_config.learning_rate_train_c)
@@ -936,7 +963,7 @@ class Client(LearningEntity):
 
         criterion_ce = nn.CrossEntropyLoss()
         criterion_consistency = nn.MSELoss()
-        lambda_consistency = 0.5  # You can tune this value
+        lambda_consistency = 0.2  # You can tune this value
 
         optimizer = torch.optim.Adam(self.model.parameters(), lr=experiment_config.learning_rate_fine_tune_c)
 
@@ -1352,10 +1379,16 @@ class Server(LearningEntity):
 
 
         self.accuracy_per_client_1_max = {}
+        self.accuracy_per_client_10_max= {}
+        self.accuracy_per_client_100_max= {}
+        self.accuracy_per_client_5_max= {}
 
         for client_id in self.clients_ids:
             self.accuracy_per_client_1[client_id] = {}
             self.accuracy_per_client_1_max[client_id] = {}
+            self.accuracy_per_client_5_max[client_id] = {}
+            self.accuracy_per_client_10_max[client_id] = {}
+            self.accuracy_per_client_100_max[client_id] = {}
 
         if num_clusters>0:
             for cluster_id in  range(num_clusters):
@@ -1528,12 +1561,23 @@ class Server(LearningEntity):
              #                                                                 model=selected_model, k=5,
              #                                                                 cluster_id=cluster_id_for_client)
             l1 = []
-
+            l2 = []
+            l3 = []
+            l4 = []
 
 
             for cluster_id in range(num_clusters):
                 if experiment_config.net_cluster_technique == NetClusterTechnique.multi_model:
                     l1.append(self.evaluate_accuracy(self.clients_test_data_dict[client_id], model=self.multi_model_dict[cluster_id], k=1,
+                                                     cluster_id=0))
+                    l2.append(self.evaluate_accuracy(self.clients_test_data_dict[client_id],
+                                                     model=self.multi_model_dict[cluster_id], k=10,
+                                                     cluster_id=0))
+                    l3.append(self.evaluate_accuracy(self.clients_test_data_dict[client_id],
+                                                     model=self.multi_model_dict[cluster_id], k=100,
+                                                     cluster_id=0))
+                    l4.append(self.evaluate_accuracy(self.clients_test_data_dict[client_id],
+                                                     model=self.multi_model_dict[cluster_id], k=5,
                                                      cluster_id=0))
 
                 else:
@@ -1543,6 +1587,10 @@ class Server(LearningEntity):
             print("client_id",client_id,"accuracy_per_client_1_max",max(l1))
 
             self.accuracy_per_client_1_max[client_id][t] = max(l1)
+            self.accuracy_per_client_10_max[client_id][t] = max(l2)
+            self.accuracy_per_client_100_max[client_id][t] = max(l3)
+
+            self.accuracy_per_client_5_max[client_id][t] = max(l4)
 
     def iteration_context(self,t):
         self.current_iteration = t
@@ -1603,7 +1651,7 @@ class Server(LearningEntity):
         selected_model_train.train()
         criterion_kl = nn.KLDivLoss(reduction='batchmean')
         criterion_consistency = nn.MSELoss()
-        lambda_consistency = 0.5  # You can tune this hyperparameter
+        lambda_consistency = 0.2  # You can tune this hyperparameter
 
         optimizer = torch.optim.Adam(selected_model_train.parameters(), lr=experiment_config.learning_rate_train_s)
         pseudo_targets_all = mean_pseudo_labels.to(device)
