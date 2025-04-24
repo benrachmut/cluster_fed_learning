@@ -78,6 +78,7 @@ class NetType(Enum):
 class DataSet(Enum):
     CIFAR100 = "CIFAR100"
     CIFAR10 = "CIFAR10"
+    TinyImageNet = "TinyImageNet"
 
 
 class DataType(Enum):
@@ -176,7 +177,7 @@ class ExperimentConfig:
         self.epochs_num_input_fine_tune_clients_no_fl = self.epochs_num_input_fine_tune_clients*self.iterations
         self.epochs_num_input_fine_tune_centralized_server = self.epochs_num_input_fine_tune_clients*self.iterations
         self.alpha_dich = 100
-
+        self.lambda_consistency = 1
 
 
         # general vars
@@ -206,6 +207,9 @@ class ExperimentConfig:
             self.num_classes = 100
         if data_set == DataSet.CIFAR10:
             self.num_classes = 10
+        if data_set == DataSet.TinyImageNet:
+            self.num_classes = 200
+
 
     def to_dict(self):
         """Returns a dictionary of attribute names and their values."""

@@ -1,10 +1,15 @@
 import copy
+import os
+import shutil
+import zipfile
+from urllib.request import urlretrieve
 
 import pandas as pd
 from scipy.stats import ansari
 from sympy.core.random import shuffle
 from sympy.physics.units import percent
 from torch.utils.data import TensorDataset, random_split, Subset, Dataset
+from torchvision.datasets import ImageFolder
 from torchvision.transforms import transforms
 
 from entities import *
@@ -456,6 +461,7 @@ def get_server_data(server_data_dict):
     rnd.seed(42)
     rnd.shuffle(server_data)
     return transform_to_TensorDataset(server_data)
+
 def split_clients_server_data_Non_IID(data_by_classification_dict, selected_classes):
     server_data_dict = {}
     classes_data_dict = {}
@@ -522,9 +528,49 @@ def get_clients_mix_data(clients_data_dict):
         ans[group_num] = transform_to_TensorDataset(images)
     return ans
 
+def download_and_extract_tiny_imagenet(data_dir='./data'):
+    url = 'http://cs231n.stanford.edu/tiny-imagenet-200.zip'
+    zip_path = os.path.join(data_dir, 'tiny-imagenet-200.zip')
+    extract_path = os.path.join(data_dir, 'tiny-imagenet-200')
+
+    if os.path.exists(extract_path):
+        print('Tiny ImageNet already downloaded and extracted.')
+        return
+
+    os.makedirs(data_dir, exist_ok=True)
+    print('Downloading Tiny ImageNet...')
+    urlretrieve(url, zip_path)
+
+    print('Extracting...')
+    with zipfile.ZipFile(zip_path, 'r') as zip_ref:
+        zip_ref.extractall(data_dir)
+
+    print('Download and extraction complete.')
+
+    # Optional: Clean up zip file to save space
+    os.remove(zip_path)
 
 
+def reorganize_tiny_imagenet_val(val_dir, root_dir):
+    val_images_dir = os.path.join(root_dir, 'tiny-imagenet-200', 'val', 'images')
+    val_annotations_file = os.path.join(root_dir, 'tiny-imagenet-200', 'val', 'val_annotations.txt')
+    target_base = os.path.join(root_dir, 'tiny-imagenet-200', 'val')
 
+    if not os.path.exists(val_annotations_file):
+        return  # Nothing to reorganize
+
+    with open(val_annotations_file, 'r') as f:
+        lines = f.readlines()
+        for line in lines:
+            parts = line.strip().split('\t')
+            img_name = parts[0]
+            label = parts[1]
+            label_dir = os.path.join(target_base, label, 'images')
+            os.makedirs(label_dir, exist_ok=True)
+            shutil.move(os.path.join(val_images_dir, img_name), os.path.join(label_dir, img_name))
+
+    shutil.rmtree(val_images_dir)
+    os.remove(val_annotations_file)
 def get_data_set(is_train ):
     transform = transforms.Compose([
         transforms.RandomHorizontalFlip(),  # Data augmentation
@@ -539,6 +585,20 @@ def get_data_set(is_train ):
     if experiment_config.data_set_selected == DataSet.CIFAR10:
         train_set = torchvision.datasets.CIFAR10(root='./data', train=is_train, download=True, transform=transform)
 
+    if experiment_config.data_set_selected == DataSet.TinyImageNet:
+        download_and_extract_tiny_imagenet('./data')
+        data_root = './data/tiny-imagenet-200'
+        subfolder = 'train' if is_train else 'val'
+        dataset_path = os.path.join(data_root, subfolder)
+
+        # Reorganize val/ folder if needed
+        if subfolder == 'val':
+            reorganize_tiny_imagenet_val(dataset_path, './data')
+
+        train_set = ImageFolder(
+            root=dataset_path,
+            transform=transform
+        )
 
     data_by_classification_dict = get_data_by_classification(train_set)
     selected_classes_list = sorted(data_by_classification_dict.keys())[:experiment_config.num_classes]

@@ -361,32 +361,32 @@ class LearningEntity(ABC):
         return average_max_accuracy
 
 
-    #def evaluate_accuracy(self, data_, model=None, k=1, cluster_id=None):
-    #    if model is None:
-    #        model = self.model
-    #    model.eval()  # Set the model to evaluation mode
-    #    correct = 0  # To count the correct predictions
-    #    total = 0  # To count the total predictions
+    def evaluate_accuracy_single(self, data_, model=None, k=1, cluster_id=None):
+        if model is None:
+            model = self.model
+        model.eval()  # Set the model to evaluation mode
+        correct = 0  # To count the correct predictions
+        total = 0  # To count the total predictions
 
-    #    test_loader = DataLoader(data_, batch_size=experiment_config.batch_size, shuffle=False)
+        test_loader = DataLoader(data_, batch_size=experiment_config.batch_size, shuffle=False)
 
-    #    with torch.no_grad():  # No need to track gradients during evaluation
-     #       for inputs, targets in test_loader:
-     #           inputs, targets = inputs.to(device), targets.to(device)
+        with torch.no_grad():  # No need to track gradients during evaluation
+            for inputs, targets in test_loader:
+                inputs, targets = inputs.to(device), targets.to(device)
 
                 # Forward pass through the specific cluster head
-     #           outputs = model(inputs, cluster_id=cluster_id)
+                outputs = model(inputs, cluster_id=cluster_id)
 
                 # Get the top-1 predictions directly
-    #            top_1_preds = outputs.argmax(dim=1)
+                top_1_preds = outputs.argmax(dim=1)
 
                 # Update the total number of predictions and correct predictions
-     #           total += targets.size(0)
-     #           correct += (top_1_preds == targets).sum().item()
+                total += targets.size(0)
+                correct += (top_1_preds == targets).sum().item()
 
-     #   accuracy = 100 * correct / total if total > 0 else 0.0
-     #   print(f"Accuracy for cluster {cluster_id if cluster_id is not None else 'default'}: {accuracy:.2f}%")
-     #   return accuracy
+        accuracy = 100 * correct / total if total > 0 else 0.0
+        print(f"Accuracy for cluster {cluster_id if cluster_id is not None else 'default'}: {accuracy:.2f}%")
+        return accuracy
     def evaluate_accuracy(self, data_, model=None, k=1, cluster_id=None):
         if model is None:
             model = self.model
@@ -506,7 +506,7 @@ class Client(LearningEntity):
         )
 
         self.model.train()
-        lambda_consistency = 0.2  # Can tune this
+        lambda_consistency = experiment_config.lambda_consistency  # Can tune this
         criterion_consistency = nn.MSELoss()
         optimizer = torch.optim.Adam(self.model.parameters(), lr=experiment_config.learning_rate_train_c)
         pseudo_targets_all = pseudo_label_received.to(device)
@@ -600,9 +600,9 @@ class Client(LearningEntity):
             what_to_send = self.pseudo_label_to_send
             self.size_sent[t] = (what_to_send.numel() * what_to_send.element_size()) / (1024 * 1024)
             self.pseudo_label_L2[t] = self.get_pseudo_label_L2(what_to_send)
-            acc = self.evaluate_accuracy(self.local_test_set)
+            acc = self.evaluate_accuracy_single(self.local_test_set)
 
-            acc_test = self.evaluate_accuracy(self.test_global_data)
+            acc_test = self.evaluate_accuracy_single(self.test_global_data)
             if experiment_config.data_set_selected == DataSet.CIFAR100:
                 if acc_test != 1:
                     break
@@ -615,7 +615,7 @@ class Client(LearningEntity):
                     self.model.apply(self.initialize_weights)
 
 
-        self.accuracy_per_client_1[t] = self.evaluate_accuracy(self.local_test_set, k=1)
+        self.accuracy_per_client_1[t] = self.evaluate_accuracy_single(self.local_test_set, k=1)
         self.accuracy_per_client_10[t] = self.evaluate_accuracy(self.local_test_set, k=10)
         self.accuracy_per_client_100[t] = self.evaluate_accuracy(self.local_test_set, k=100)
 
@@ -696,7 +696,7 @@ class Client(LearningEntity):
         self.model.train()
 
         criterion_kl = nn.KLDivLoss(reduction='batchmean')
-        lambda_consistency = 0.2 # You can tune this
+        lambda_consistency = experiment_config.lambda_consistency # You can tune this
         criterion_consistency = nn.MSELoss()
 
         optimizer = torch.optim.Adam(self.model.parameters(), lr=experiment_config.learning_rate_train_c)
@@ -963,7 +963,7 @@ class Client(LearningEntity):
 
         criterion_ce = nn.CrossEntropyLoss()
         criterion_consistency = nn.MSELoss()
-        lambda_consistency = 0.2  # You can tune this value
+        lambda_consistency = experiment_config.lambda_consistency  # You can tune this value
 
         optimizer = torch.optim.Adam(self.model.parameters(), lr=experiment_config.learning_rate_fine_tune_c)
 
@@ -1069,7 +1069,7 @@ class Client_pFedCK(Client):
             print(f"Epoch {epoch+1}/5 | Personalized Loss: {total_loss_personalized/batch_count:.4f} "
                   f"| Interactive Loss: {total_loss_interactive/batch_count:.4f}")
 
-        self.accuracy_per_client_1[t] = self.evaluate_accuracy(data_ = self.local_test_set,model=self.personalized_model, k=1)
+        self.accuracy_per_client_1[t] = self.evaluate_accuracy_single(data_ = self.local_test_set,model=self.personalized_model, k=1)
         print("accuracy_per_client_1",self.accuracy_per_client_1[t])
         return self.calculate_param_variation()
 
@@ -1121,9 +1121,9 @@ class Client_FedAvg(Client):
             for param in self.weights_to_send.values():
                 total_size += param.numel() * param.element_size()
             self.size_sent[t] =total_size / (1024 * 1024)
-            acc = self.evaluate_accuracy(self.local_test_set)
+            acc = self.evaluate_accuracy_single(self.local_test_set)
 
-            acc_test = self.evaluate_accuracy(self.test_global_data)
+            acc_test = self.evaluate_accuracy_single(self.test_global_data)
             if experiment_config.data_set_selected == DataSet.CIFAR100:
                 if acc_test != 1:
                     break
@@ -1136,7 +1136,7 @@ class Client_FedAvg(Client):
                     flag = True
                     #self.model.apply(self.initialize_weights)
 
-        self.accuracy_per_client_1[t] = self.evaluate_accuracy(self.local_test_set, k=1)
+        self.accuracy_per_client_1[t] = self.evaluate_accuracy_single(self.local_test_set, k=1)
 
 
 
@@ -1215,7 +1215,7 @@ class Client_NoFederatedLearning(Client):
                 optimizer.step()
                 epoch_loss += loss.item()
             if   epoch % self.evaluate_every == 0 and epoch!=0:
-                self.accuracy_per_client_1[epoch] = self.evaluate_accuracy(self.local_test_set, k=1)
+                self.accuracy_per_client_1[epoch] = self.evaluate_accuracy_single(self.local_test_set, k=1)
 
             result_to_print = epoch_loss / len(fine_tune_loader)
             print(f"Epoch [{epoch + 1}/{epochs}], Loss: {result_to_print:.4f}")
@@ -1487,7 +1487,7 @@ class Server(LearningEntity):
                     self.train(mean_pseudo_label_for_cluster, 0,selected_model)
 
 
-                if self.evaluate_accuracy(self.test_global_data, model=selected_model, k=1,
+                if self.evaluate_accuracy_single(self.test_global_data, model=selected_model, k=1,
                                                 cluster_id=0) == experiment_config.num_classes:
                     selected_model.apply(self.initialize_weights)
 
@@ -1531,7 +1531,7 @@ class Server(LearningEntity):
             if experiment_config.net_cluster_technique == NetClusterTechnique.multi_model:
                 cluster_id_to_examine = 0
             else: cluster_id_to_examine = cluster_id
-            self.accuracy_server_test_1[cluster_id][t] = self.evaluate_accuracy(self.test_global_data,
+            self.accuracy_server_test_1[cluster_id][t] = self.evaluate_accuracy_single(self.test_global_data,
                                                                                 model=selected_model, k=1,
                                                                                 cluster_id=cluster_id_to_examine)
 
@@ -1553,7 +1553,7 @@ class Server(LearningEntity):
             if experiment_config.net_cluster_technique == NetClusterTechnique.multi_head:
                 selected_model = None
             print("client_id",client_id,"accuracy_per_client_1")
-            self.accuracy_per_client_1[client_id][t] = self.evaluate_accuracy(test_data_per_clients,
+            self.accuracy_per_client_1[client_id][t] = self.evaluate_accuracy_single(test_data_per_clients,
                                                                               model=selected_model, k=1,
                                                                               cluster_id=cluster_id_for_client)
             #print("client_id",client_id,"accuracy_per_client_5")
@@ -1568,7 +1568,7 @@ class Server(LearningEntity):
 
             for cluster_id in range(num_clusters):
                 if experiment_config.net_cluster_technique == NetClusterTechnique.multi_model:
-                    l1.append(self.evaluate_accuracy(self.clients_test_data_dict[client_id], model=self.multi_model_dict[cluster_id], k=1,
+                    l1.append(self.evaluate_accuracy_single(self.clients_test_data_dict[client_id], model=self.multi_model_dict[cluster_id], k=1,
                                                      cluster_id=0))
                     l2.append(self.evaluate_accuracy(self.clients_test_data_dict[client_id],
                                                      model=self.multi_model_dict[cluster_id], k=10,
@@ -1651,7 +1651,7 @@ class Server(LearningEntity):
         selected_model_train.train()
         criterion_kl = nn.KLDivLoss(reduction='batchmean')
         criterion_consistency = nn.MSELoss()
-        lambda_consistency = 0.2  # You can tune this hyperparameter
+        lambda_consistency = experiment_config.lambda_consistency  # You can tune this hyperparameter
 
         optimizer = torch.optim.Adam(selected_model_train.parameters(), lr=experiment_config.learning_rate_train_s)
         pseudo_targets_all = mean_pseudo_labels.to(device)

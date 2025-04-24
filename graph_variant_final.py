@@ -69,6 +69,6 @@ if __name__ == '__main__':
                 data_for_graph[dich]["Clients"]=feedback["Clients"]
 
 
-    for dich in [100,50,10,5,1]:
+    for dich in [100]:
         create_CPL_graph(data_for_graph[dich], "Iteration", "Accuracy (%)", "figures","Iterations_CPL_"+str(dich))
 
