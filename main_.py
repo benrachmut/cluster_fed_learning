@@ -220,12 +220,7 @@ def run_PseudoLabelsClusters():
 
                         experiment_config.num_clusters = -1
 
-                        clients, clients_ids, clients_test_by_id_dict = create_clients(clients_train_data_dict,
-                                                                                       server_train_data,
-                                                                                       clients_test_data_dict,
-                                                                                       server_test_data)
-                        server = Server(id_="server", global_data=server_train_data, test_data=server_test_data,
-                                    clients_ids=clients_ids, clients_test_data_dict=clients_test_by_id_dict)
+
                         for epsilon in cluster_additions:
                             experiment_config.cluster_addition = epsilon
 
@@ -243,6 +238,18 @@ def run_PseudoLabelsClusters():
                                         net_cluster_technique.name][
                                         server_input_tech.name][cluster_technique.name][server_feedback_technique.name][
                                         weights_for_ps.name][input_consistency.name] = {}
+
+                                    clients, clients_ids, clients_test_by_id_dict = create_clients(
+                                        clients_train_data_dict,
+                                        server_train_data,
+                                        clients_test_data_dict,
+                                        server_test_data)
+                                    server = Server(id_="server", global_data=server_train_data,
+                                                    test_data=server_test_data,
+                                                    clients_ids=clients_ids,
+                                                    clients_test_data_dict=clients_test_by_id_dict)
+
+
                                     iterate_fl_clusters(clients, server, net_type, net_cluster_technique, server_input_tech,
                                                         cluster_technique, server_feedback_technique,
                                                         -1, weights_for_ps,input_consistency,epsilon)
