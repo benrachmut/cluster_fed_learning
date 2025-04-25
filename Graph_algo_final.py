@@ -13,18 +13,26 @@ def analize_PseudoLabelsClusters(algo):
         if net_type == NetsType.C_alex_S_alex.name:
             dict_ = merged_dict_dich_algo[NetsType.C_alex_S_alex.name]
             algo_name =  algo_name+"AlexNet,"
-        dict_ = dict_["multi_model"]["max"][ClusterTechnique.greedy_elimination_L2.name]["similar_to_cluster"]
-        for epsilon in dict_.keys():
-            #algo_name = algo_name + ",Clusters:"+str(5+epsilon)
-            rd=dict_[epsilon]
+        dict1 = dict_["multi_model"]["max"][ClusterTechnique.greedy_elimination_L2.name]["similar_to_cluster"]
 
-            if top_what == 1:
-                ans[algo_name+ "Server" ] = get_avg_of_entity(rd.server_accuracy_per_client_1_max)
-            if top_what == 5:
-                ans[algo_name+ "Server" ] = get_avg_of_entity(rd.server_accuracy_per_client_5_max)
-            if top_what == 10:
-                ans[algo_name+ "Server" ] = get_avg_of_entity(rd.server_accuracy_per_client_10_max)
-            #ans[algo_name+ "Clients"] = get_avg_of_entity(rd.client_accuracy_per_client_1)
+        for weights_ in dict1.keys():
+            dict2 =dict1[weights_]
+            for const in dict2.keys():
+                dict3=dict2[const]
+                for epsilon in dict3.keys():
+                    rd = dict3[epsilon]
+
+
+
+
+
+                    if top_what == 1:
+                        ans[algo_name+ "Server" ] = get_avg_of_entity(rd.server_accuracy_per_client_1_max)
+                    if top_what == 5:
+                        ans[algo_name+ "Server" ] = get_avg_of_entity(rd.server_accuracy_per_client_5_max)
+                    if top_what == 10:
+                        ans[algo_name+ "Server" ] = get_avg_of_entity(rd.server_accuracy_per_client_10_max)
+                    #ans[algo_name+ "Clients"] = get_avg_of_entity(rd.client_accuracy_per_client_1)
 
 
 
@@ -144,7 +152,7 @@ if __name__ == '__main__':
     merged_dict1 = merge_dicts(all_data)
     top_what_list = [1,5,10]
     for top_what in top_what_list:
-        for data_type in [DataSet.CIF.name]:
+        for data_type in [DataSet.CIFAR100.name]:
             merged_dict = merged_dict1[data_type][25][5][0.2][100]
             data_for_graph = {}
             merged_dict_dich = copy.deepcopy(merged_dict)
