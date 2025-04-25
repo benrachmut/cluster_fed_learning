@@ -416,7 +416,10 @@ class LearningEntity(ABC):
                 outputs = model(inputs, cluster_id=cluster_id)
 
                 # Top-k predictions (returns both values and indices)
-                _, topk_preds = outputs.topk(k, dim=1)
+                if experiment_config.num_classes<k:
+                    return 0
+                else:
+                    _, topk_preds = outputs.topk(k, dim=1)
 
                 # Check if the correct label is in the top-k predictions
                 correct += (topk_preds == targets.unsqueeze(1)).any(dim=1).sum().item()
@@ -580,7 +583,7 @@ class Client(LearningEntity):
     def iteration_context(self, t):
         self.current_iteration = t
 
-        for _ in range(10000):
+        for _ in range(10):
             if t>0:
                 if experiment_config.input_consistency == InputConsistency.withInputConsistency:
                     if experiment_config.weights_for_ps:
@@ -613,7 +616,11 @@ class Client(LearningEntity):
                     break
                 else:
                     self.model.apply(self.initialize_weights)
-
+            if experiment_config.data_set_selected == DataSet.TinyImageNet:
+                if acc_test != 0.5:
+                    break
+                else:
+                    self.model.apply(self.initialize_weights)
 
         self.accuracy_per_client_1[t] = self.evaluate_accuracy_single(self.local_test_set, k=1)
         self.accuracy_per_client_10[t] = self.evaluate_accuracy(self.local_test_set, k=10)
@@ -1070,6 +1077,10 @@ class Client_pFedCK(Client):
                   f"| Interactive Loss: {total_loss_interactive/batch_count:.4f}")
 
         self.accuracy_per_client_1[t] = self.evaluate_accuracy_single(data_ = self.local_test_set,model=self.personalized_model, k=1)
+        self.accuracy_per_client_5[t] = self.evaluate_accuracy(data_ = self.local_test_set,model=self.personalized_model, k=5)
+        self.accuracy_per_client_10[t] = self.evaluate_accuracy(data_ = self.local_test_set,model=self.personalized_model, k=10)
+        self.accuracy_per_client_100[t] = self.evaluate_accuracy(data_ = self.local_test_set,model=self.personalized_model, k=100)
+
         print("accuracy_per_client_1",self.accuracy_per_client_1[t])
         return self.calculate_param_variation()
 
@@ -1129,14 +1140,22 @@ class Client_FedAvg(Client):
                     break
                 else:
                     flag = True
+
             if experiment_config.data_set_selected == DataSet.CIFAR10:
                 if acc_test != 10:
                     break
                 else:
                     flag = True
                     #self.model.apply(self.initialize_weights)
-
+            if experiment_config.data_set_selected == DataSet.TinyImageNet:
+                if acc_test != 0.5:
+                    break
+                else:
+                    flag = True
         self.accuracy_per_client_1[t] = self.evaluate_accuracy_single(self.local_test_set, k=1)
+        self.accuracy_per_client_5[t] = self.evaluate_accuracy(self.local_test_set, k=5)
+        self.accuracy_per_client_10[t] = self.evaluate_accuracy(self.local_test_set, k=10)
+        self.accuracy_per_client_100[t] = self.evaluate_accuracy(self.local_test_set, k=100)
 
 
 

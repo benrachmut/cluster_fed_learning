@@ -461,7 +461,9 @@ if __name__ == '__main__':
     cluster_additions = [0]#,-3,-1,1,2,3,4]  # 0.96,0.5,0.75,1,1.25,1.5,1.75,2]
     print("epsilons:", cluster_additions)
     print(("alpha_dichts", alpha_dichts))
-    algorithm_selection_list = [AlgorithmSelected.PseudoLabelsClusters]#,AlgorithmSelected.FedAvg,AlgorithmSelected.PseudoLabelsNoServerModel]
+    algorithm_selection_list = [AlgorithmSelected.PseudoLabelsNoServerModel,AlgorithmSelected.NoFederatedLearning,AlgorithmSelected.pFedCK,AlgorithmSelected.FedAvg]#[AlgorithmSelected.PseudoLabelsClusters]
+
+    #,AlgorithmSelected.FedAvg,AlgorithmSelected.PseudoLabelsNoServerModel]
     #[ AlgorithmSelected.PseudoLabelsClusters,
     # AlgorithmSelected.PseudoLabelsNoServerModel,
     # AlgorithmSelected.FedAvg,AlgorithmSelected.Centralized,
@@ -471,14 +473,14 @@ if __name__ == '__main__':
 
 
     # parameters for PseudoLabelsClusters
-    nets_types_list_PseudoLabelsClusters  = [NetsType.C_alex_S_alex]# ,NetsType.C_alex_S_vgg]#,NetsType.C_alex_S_vgg]#,NetsType.C_alex_S_vgg]
+    nets_types_list_PseudoLabelsClusters  = [NetsType.C_alex_S_alex]#,NetsType.C_alex_S_vgg]# ,NetsType.C_alex_S_vgg]#,NetsType.C_alex_S_vgg]#,NetsType.C_alex_S_vgg]
     net_cluster_technique_list = [NetClusterTechnique.multi_model]#,NetClusterTechnique.multi_head]
     server_input_tech_list = [ServerInputTech.max]
     cluster_technique_list = [ClusterTechnique.greedy_elimination_L2]#[ClusterTechnique.greedy_elimination_cross_entropy]#[ClusterTechnique.manual_single_iter,ClusterTechnique.manual,ClusterTechnique.kmeans]
     server_feedback_technique_list = [ServerFeedbackTechnique.similar_to_cluster]#[ServerFeedbackTechnique.similar_to_cluster,ServerFeedbackTechnique.similar_to_client]
     num_cluster_list = [1]#[1,"Optimal"]
-    weights_for_ps_list = [WeightForPS.withWeights]#,WeightForPS.withoutWeights ]
-    input_consistency_list = [InputConsistency.withInputConsistency]#,InputConsistency.withoutInputConsistency]
+    weights_for_ps_list = [WeightForPS.withWeights,WeightForPS.withoutWeights]#,WeightForPS.withoutWeights ]
+    input_consistency_list = [InputConsistency.withInputConsistency,InputConsistency.withoutInputConsistency]#,InputConsistency.withoutInputConsistency]
     # centralized
     nets_types_Centralized_list = [NetsType.S_vgg]
     num_cluster_Centralized_list = [1]

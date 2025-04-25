@@ -182,7 +182,7 @@ class ExperimentConfig:
 
         # general vars
         self.local_batch = 64
-        self.batch_size = 32
+        self.batch_size = 32#32
         self.percent_train_data_use = 1
         self.percent_test_relative_to_train = 1
         self.num_rounds_multi_head = 1
@@ -209,7 +209,7 @@ class ExperimentConfig:
             self.num_classes = 10
         if data_set == DataSet.TinyImageNet:
             self.num_classes = 200
-
+            self.batch_size = 64  # 32
 
     def to_dict(self):
         """Returns a dictionary of attribute names and their values."""
