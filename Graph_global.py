@@ -56,7 +56,7 @@ tick_font_size = 10
 linewidth = 3
 
 
-def create_algo_cluster(data, x_label, y_label, folder_to_save, figure_name):
+def create_algo_cluster(data, x_label, y_label, folder_to_save, figure_name,y_lim = None):
     linewidth = 2
     markersize = 5
 
@@ -89,7 +89,7 @@ def create_algo_cluster(data, x_label, y_label, folder_to_save, figure_name):
     fig.savefig(f"{folder_to_save}/{figure_name}.pdf", format="pdf", bbox_inches='tight')
     plt.close(fig)
 
-def create_algo_graph(data, x_label, y_label, folder_to_save, figure_name,colors):
+def create_algo_graph(data, x_label, y_label, folder_to_save, figure_name,colors,y_lim):
     linewidth = 2
     markersize = 3
 
@@ -122,7 +122,8 @@ def create_algo_graph(data, x_label, y_label, folder_to_save, figure_name,colors
     ax.tick_params(axis='both', labelsize=tick_font_size)
 
     # Optional: Set fixed y-limits
-    #ax.set_ylim([0, 38])
+    if y_lim is not None:
+        ax.set_ylim(y_lim)
 
     # Save the main figure without legend
     plt.show()
