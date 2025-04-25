@@ -144,7 +144,7 @@ if __name__ == '__main__':
     merged_dict1 = merge_dicts(all_data)
     top_what_list = [1,5,10]
     for top_what in top_what_list:
-        for data_type in [DataSet.CIFAR10.name]:
+        for data_type in [DataSet.CIF.name]:
             merged_dict = merged_dict1[data_type][25][5][0.2][100]
             data_for_graph = {}
             merged_dict_dich = copy.deepcopy(merged_dict)
@@ -169,5 +169,5 @@ if __name__ == '__main__':
             if top_what == 10:
                 y_label = "Top-10 Accuracy (%)"
 
-            create_algo_graph(data_for_graph, "Iteration", "Accuracy (%)", "figures","Algo_Comp"+data_type+str(top_what),colors)
+            create_algo_graph(data_for_graph, "Iteration", "Accuracy (%)", "figures","Algo_Comp"+data_type+"_top="+str(top_what),colors)
 
