@@ -1235,6 +1235,9 @@ class Client_NoFederatedLearning(Client):
                 epoch_loss += loss.item()
             if   epoch % self.evaluate_every == 0 and epoch!=0:
                 self.accuracy_per_client_1[epoch] = self.evaluate_accuracy_single(self.local_test_set, k=1)
+                self.accuracy_per_client_5[epoch] = self.evaluate_accuracy(self.local_test_set, k=5)
+                self.accuracy_per_client_10[epoch] = self.evaluate_accuracy(self.local_test_set, k=10)
+                self.accuracy_per_client_100[epoch] = self.evaluate_accuracy(self.local_test_set, k=100)
 
             result_to_print = epoch_loss / len(fine_tune_loader)
             print(f"Epoch [{epoch + 1}/{epochs}], Loss: {result_to_print:.4f}")

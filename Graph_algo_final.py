@@ -18,8 +18,13 @@ def analize_PseudoLabelsClusters(algo):
             #algo_name = algo_name + ",Clusters:"+str(5+epsilon)
             rd=dict_[epsilon]
 
-            ans[algo_name+ "Server" ] = get_avg_of_entity(rd.server_accuracy_per_client_1_max)
-            ans[algo_name+ "Clients"] = get_avg_of_entity(rd.client_accuracy_per_client_1)
+            if top_what == 1:
+                ans[algo_name+ "Server" ] = get_avg_of_entity(rd.server_accuracy_per_client_1_max)
+            if top_what == 5:
+                ans[algo_name+ "Server" ] = get_avg_of_entity(rd.server_accuracy_per_client_5_max)
+            if top_what == 10:
+                ans[algo_name+ "Server" ] = get_avg_of_entity(rd.server_accuracy_per_client_10_max)
+            #ans[algo_name+ "Clients"] = get_avg_of_entity(rd.client_accuracy_per_client_1)
 
 
 
@@ -34,7 +39,14 @@ def analize_PseudoLabelsNoServerModel(algo):
         if cluster == 1:
             algo_name = algo_name #+ cluster_names[cluster]
             rd = dict_[cluster]
-            ans[algo_name] = get_avg_of_entity(rd.client_accuracy_per_client_1)
+
+            if top_what == 1:
+                ans[algo_name] = get_avg_of_entity(rd.client_accuracy_per_client_1)
+            if top_what == 5:
+                ans[algo_name] = get_avg_of_entity(rd.client_accuracy_per_client_5)
+            if top_what == 10:
+                ans[algo_name] = get_avg_of_entity(rd.client_accuracy_per_client_10)
+
 
     return ans
 
@@ -44,7 +56,14 @@ def analize_NoFederatedLearning(algo):
 
     rd = merged_dict_dich_algo["C_alex_S_alex"]
     fixed_dict = {}
-    data_to_fix = rd.client_accuracy_per_client_1
+
+    if top_what == 1:
+        data_to_fix = rd.client_accuracy_per_client_1
+    if top_what == 5:
+        data_to_fix = rd.client_accuracy_per_client_5
+    if top_what == 10:
+        data_to_fix = rd.client_accuracy_per_client_10
+
     for client_id, dict_x_y in data_to_fix.items():
         dict_x_y_fixed = {}
         for x,y in dict_x_y.items():
@@ -57,17 +76,31 @@ def analize_FedAvg(algo):
     ans = {}
     algo_name = algo_names[algo]
 
-    rd = merged_dict_dich_algo["C_alex_S_alex"]["multi_model"]["max"]["kmeans"]["similar_to_cluster"][1]
-    ans[algo_name] = get_avg_of_entity(rd.client_accuracy_per_client_1)
+    try:
+        rd = merged_dict_dich_algo["C_alex_S_alex"]["multi_model"]["max"]["kmeans"]["similar_to_cluster"][1]
+    except:
+        rd = merged_dict_dich_algo["C_alex_S_alex"]["no_model"]["mean"]["kmeans"]["similar_to_cluster"][1]
+
+    if top_what == 1:
+        ans[algo_name] = get_avg_of_entity(rd.client_accuracy_per_client_1)
+    if top_what == 5:
+        ans[algo_name] = get_avg_of_entity(rd.client_accuracy_per_client_5)
+    if top_what == 10:
+        ans[algo_name] = get_avg_of_entity(rd.client_accuracy_per_client_10)
     return ans
 
 def analize_pFedCK(algo):
     ans = {}
     algo_name = algo_names[algo]
-
-    rd = merged_dict_dich_algo["C_alex_S_vgg"]
-    ans[algo_name] = get_avg_of_entity(rd.client_accuracy_per_client_1)
-    return ans
+    for net_type in merged_dict_dich_algo.keys():
+        rd = merged_dict_dich_algo[net_type]
+        if top_what == 1:
+            ans[algo_name] = get_avg_of_entity(rd.client_accuracy_per_client_1)
+        if top_what == 5:
+            ans[algo_name] = get_avg_of_entity(rd.client_accuracy_per_client_5)
+        if top_what == 10:
+            ans[algo_name] = get_avg_of_entity(rd.client_accuracy_per_client_10)
+        return ans
 
 
 def get_data_per_algo(algo):
@@ -83,10 +116,15 @@ def get_data_per_algo(algo):
     if algo == AlgorithmSelected.pFedCK.name:
         return analize_pFedCK(algo)
 
+
+def update_data(data, data_type):
+    for algo, xy_dict in data.items():
+        new_xy = {x + 1: y for x, y in xy_dict.items()}  # shift x keys by +1
+        new_xy[0.0] = start_point[data_type]             # add new point at x = 0
+        data[algo] = dict(sorted(new_xy.items()))        # optional: sort by x if desired
+
 if __name__ == '__main__':
     cluster_names = {"Optimal":"CBG",1:"No Clusters"} #Cluster By Group
-
-
     algo_names={AlgorithmSelected.PseudoLabelsClusters.name:"CPL-Fed"
         ,AlgorithmSelected.PseudoLabelsNoServerModel.name:"FedMd",
         AlgorithmSelected.NoFederatedLearning.name:"No FL",
@@ -94,40 +132,42 @@ if __name__ == '__main__':
                 AlgorithmSelected.FedAvg.name:"FedAvg",
                 AlgorithmSelected.pFedCK.name:"pFedCK"
                 }
+    colors = {"CPL-Fed,VGG,Server": "blue",
+              "CPL-Fed,AlexNet,Server": "red",
+              "FedMd": "Green",
+              "No FL": "Gray",
+              "FedAvg": "brown",
+              "pFedCK": "purple"}
 
 
     all_data = read_all_pkls("graph_algo_final")
-    merged_dict = merge_dicts(all_data)
-
-    merged_dict = merged_dict["CIFAR100"][25][5][0.2]
-    #ans = {}
-    data_for_graph = {}#{"Server":[],"Clients":[]}
-    for dich in [100]:
-        data_for_graph[dich] = {}
-        merged_dict_dich = merged_dict[dich]
-        for algo in merged_dict_dich.keys():
-
-            merged_dict_dich_algo = merged_dict_dich[algo]
-            feedback = get_data_per_algo(algo)#get_data_per_algo(algo,dich)
-
-
-            data_for_graph[dich].update(feedback)
-                #data_for_graph[dich]["Server"]=feedback["Server"]
-                #data_for_graph[dich]["Clients"]=feedback["Clients"]
-    print()
-
-    colors = {"CPL-Fed,VGG,Server":"blue",
-              "CPL-Fed,AlexNet,Server":"red",
-              "FedMd":"Green",
-              "No FL":"Gray",
-            "FedAvg":"brown",
-              "pFedCK":"purple"}
+    merged_dict1 = merge_dicts(all_data)
+    top_what_list = [1,5,10]
+    for top_what in top_what_list:
+        for data_type in [DataSet.CIFAR10.name]:
+            merged_dict = merged_dict1[data_type][25][5][0.2][100]
+            data_for_graph = {}
+            merged_dict_dich = copy.deepcopy(merged_dict)
+            for algo in merged_dict_dich.keys():
+                merged_dict_dich_algo = merged_dict_dich[algo]
+                feedback = get_data_per_algo(algo)
+                data_for_graph.update(feedback)
 
 
 
-    for dich in [100]:
-        t = {}
-        for k in colors.keys():
-            t[k] = data_for_graph[dich][k]
-        create_algo_graph(t, "Iteration", "Accuracy (%)", "figures","Algo_Comp"+str(dich),colors)
+            start_point = {DataSet.CIFAR100.name:1,DataSet.CIFAR10.name:10,DataSet.TinyImageNet.name:0.5}
+            update_data(data_for_graph,data_type)
+
+            #for dich in [100]:
+            #    t = {}
+            #    for k in colors.keys():
+            #        t[k] = data_for_graph[dich][k]
+            if top_what == 1:
+                y_label = "Top-1 Accuracy (%)"
+            if top_what == 5:
+                y_label = "Top-5 Accuracy (%)"
+            if top_what == 10:
+                y_label = "Top-10 Accuracy (%)"
+
+            create_algo_graph(data_for_graph, "Iteration", "Accuracy (%)", "figures","Algo_Comp"+data_type+str(top_what),colors)
 

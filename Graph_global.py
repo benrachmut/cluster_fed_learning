@@ -122,7 +122,7 @@ def create_algo_graph(data, x_label, y_label, folder_to_save, figure_name,colors
     ax.tick_params(axis='both', labelsize=tick_font_size)
 
     # Optional: Set fixed y-limits
-    ax.set_ylim([0, 38])
+    #ax.set_ylim([0, 38])
 
     # Save the main figure without legend
     plt.show()
@@ -146,6 +146,66 @@ def create_algo_graph(data, x_label, y_label, folder_to_save, figure_name,colors
     )
     # Show the figure before saving
     legend_fig.savefig(f"{folder_to_save}/{figure_name}_legend.pdf", format="pdf", bbox_inches='tight', pad_inches=0.05)
+
+
+def create_variant_graph(data, x_label, y_label, folder_to_save, figure_name):
+    # Define the font sizes and line width
+    linewidth = 2
+    line_styles = {
+        "Clients": "dotted",
+        "Server": "solid"
+    }
+    colors = {
+        "w_i,w-IC": "tab:blue",
+        "w_i,w/o-IC": "tab:red",
+        "w_i=1,w/o-IC": "tab:green",
+        "w_i=1,w-IC": "tab:brown",
+    }
+
+    # Create main figure
+    fig, ax = plt.subplots(figsize=(4, 3))
+
+    lines = []
+    labels = []
+
+    for comm_type, models in data.items():  # Server and Clients
+        for model_name, xy_values in models.items():
+            x_values = list(xy_values.keys())
+            y_values = list(xy_values.values())
+            line, = ax.plot(
+                x_values,
+                y_values,
+                marker='o',
+                linewidth=linewidth,
+                linestyle=line_styles.get(comm_type, "solid"),
+                color=colors.get(model_name, "black"),
+                markersize=3
+            )
+            lines.append(line)
+            labels.append(f"{comm_type}-{model_name}")
+
+    # Set labels and ticks
+    ax.set_xlabel(x_label, fontsize=axes_titles_font)
+    ax.set_ylabel(y_label, fontsize=axes_titles_font)
+    ax.tick_params(axis='both', labelsize=tick_font_size)
+    ax.set_ylim([12, 38])
+
+    # Legend above with 2 rows
+    ax.legend(
+        lines,
+        labels,
+        fontsize=legend_font_size,
+        loc='upper center',
+        bbox_to_anchor=(0.5, 1.25),
+        ncol=int(len(lines) / 2),
+        frameon=False,
+        handlelength=2.5,
+        columnspacing=1.0
+    )
+
+    # Save the figure
+    fig.savefig(f"{folder_to_save}/{figure_name}.pdf", format="pdf", bbox_inches='tight')
+    plt.close(fig)
 
 def create_CPL_graph(data, x_label, y_label, folder_to_save, figure_name):
     # Define the font sizes and line width

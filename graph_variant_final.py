@@ -1,4 +1,5 @@
 from sympy.abc import epsilon
+from sympy.printing.numpy import const
 from torch.ao.quantization.backend_config.native import weight_only_quint8_dtype_config
 
 from main_ import *
@@ -11,17 +12,29 @@ def analize_PseudoLabelsClusters(dich):
         algo_name = ""#"α:"+str(dich)#algo_names[AlgorithmSelected.PseudoLabelsClusters.name]
         if net_type == NetsType.C_alex_S_vgg.name:
             dict_ = merged_dict_dich_algo[NetsType.C_alex_S_vgg.name]
-            algo_name =  "VGG"
+
         if net_type == NetsType.C_alex_S_alex.name:
             dict_ = merged_dict_dich_algo[NetsType.C_alex_S_alex.name]
-            algo_name =  "AlexNet"
+
         dict_ = dict_["multi_model"]["max"][ClusterTechnique.greedy_elimination_L2.name]["similar_to_cluster"]
         for weights_ in list(WeightForPS):
+            weights_name =""
+            if weights_ ==WeightForPS.withWeights:
+                weights_name = "w_i"
+            else:
+                weights_name = "w_i=1"
 
             dict_1 = dict_[weights_.name]
             for consistency in list(InputConsistency):
+                const_name = ""
+
+                if consistency==InputConsistency.withInputConsistency:
+                    const_name = "w-IC"
+                else:
+                    const_name = "w/o-IC"
+
                 rd = dict_1[consistency.name][0]
-                algo_name_a = algo_name+"_"+weights_.name+"_"+consistency.name
+                algo_name_a =weights_name+","+const_name
                     #algo_name = algo_name + ",Clusters:"+str(5+epsilon)
 
                 if "Server"  not in ans:
@@ -70,5 +83,5 @@ if __name__ == '__main__':
 
 
     for dich in [100]:
-        create_CPL_graph(data_for_graph[dich], "Iteration", "Accuracy (%)", "figures","Iterations_CPL_"+str(dich))
+        create_variant_graph(data_for_graph[dich], "Iteration", "Accuracy (%)", "figures","vars_CPL_"+str(dich))
 
