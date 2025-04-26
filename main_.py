@@ -166,8 +166,8 @@ def iterate_fl_clusters(clients,server,net_type,net_cluster_technique,server_inp
             data_to_pickle[data_set.name][num_clients][num_opt_clusters][server_split_ratio][
                 alpha_dicht][algorithm_selection.name][net_type.name][
                 net_cluster_technique.name][
-                server_input_tech.name][cluster_technique.name][server_feedback_technique.name][
-                weights_for_ps.name][input_consistency.name][epsilon] = rd
+                server_input_tech.name][cluster_technique.name][server_feedback_technique.name][epsilon][
+                weights_for_ps.name][input_consistency.name] = rd
 
 
             pik_name = data_set.name + "_" + str(num_clients) + "_" + str(
@@ -463,8 +463,8 @@ if __name__ == '__main__':
     num_opt_clusters_list =[5] #[5]
     mix_percentage = 0.1
     server_split_ratio_list = [0.2]
-    alpha_dichts = [100,10,5,3,2,1] #[3,2,1,]
-    cluster_additions = [0]#[0]#[-4,-2,0,2,4]#  # 0.96,0.5,0.75,1,1.25,1.5,1.75,2]
+    alpha_dichts = [0] #[3,2,1,]
+    cluster_additions = [-4,-2,0,2,4]#[0]#[-4,-2,0,2,4]#  # 0.96,0.5,0.75,1,1.25,1.5,1.75,2]
     print("epsilons:", cluster_additions)
     print(("alpha_dichts", alpha_dichts))
     algorithm_selection_list = [AlgorithmSelected.PseudoLabelsClusters]#[AlgorithmSelected.PseudoLabelsNoServerModel,AlgorithmSelected.NoFederatedLearning,AlgorithmSelected.pFedCK,AlgorithmSelected.FedAvg]#[AlgorithmSelected.PseudoLabelsClusters]
