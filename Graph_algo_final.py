@@ -152,7 +152,7 @@ if __name__ == '__main__':
     merged_dict1 = merge_dicts(all_data)
     top_what_list = [1,5,10]
     for top_what in top_what_list:
-        for data_type in [DataSet.CIFAR100.name,DataSet.TinyImageNet.name]:
+        for data_type in [DataSet.CIFAR100.name,DataSet.CIFAR10.name]:
             merged_dict = merged_dict1[data_type][25][5][0.2][100]
             data_for_graph = {}
             merged_dict_dich = copy.deepcopy(merged_dict)
