@@ -79,6 +79,8 @@ class DataSet(Enum):
     CIFAR100 = "CIFAR100"
     CIFAR10 = "CIFAR10"
     TinyImageNet = "TinyImageNet"
+    EMNIST_balanced = "EMNIST_balanced"
+    Caltech256 = "Caltech256"
 
 
 class DataType(Enum):
@@ -210,6 +212,8 @@ class ExperimentConfig:
         if data_set == DataSet.TinyImageNet:
             self.num_classes = 200
             self.batch_size = 64  # 32
+        if data_set == DataSet.EMNIST_balanced:
+            self.num_classes = 47
 
     def to_dict(self):
         """Returns a dictionary of attribute names and their values."""

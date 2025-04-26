@@ -1,6 +1,8 @@
 import copy
 import os
 import shutil
+import tarfile
+import urllib
 import zipfile
 from urllib.request import urlretrieve
 
@@ -9,7 +11,7 @@ from scipy.stats import ansari
 from sympy.core.random import shuffle
 from sympy.physics.units import percent
 from torch.utils.data import TensorDataset, random_split, Subset, Dataset
-from torchvision.datasets import ImageFolder
+from torchvision.datasets import ImageFolder, EMNIST
 from torchvision.transforms import transforms
 
 from entities import *
@@ -571,19 +573,60 @@ def reorganize_tiny_imagenet_val(val_dir, root_dir):
 
     shutil.rmtree(val_images_dir)
     os.remove(val_annotations_file)
+
+
+def download_and_extract_caltech256(destination_path='./data'):
+    dataset_url = 'http://www.vision.caltech.edu/Image_Datasets/Caltech256/256_ObjectCategories.tar'
+    tar_path = os.path.join(destination_path, '256_ObjectCategories.tar')
+    extract_path = os.path.join(destination_path, '256_ObjectCategories')
+
+    os.makedirs(destination_path, exist_ok=True)
+
+    # Download the dataset
+    print(f'Downloading Caltech-256 dataset from {dataset_url}...')
+    urllib.request.urlretrieve(dataset_url, tar_path)
+    print('Download complete.')
+
+    # Extract the dataset
+    print('Extracting the dataset...')
+    with tarfile.open(tar_path, 'r') as tar:
+        tar.extractall(path=destination_path)
+    print('Extraction complete.')
+
+    # Optionally, remove the tar file to save space
+    os.remove(tar_path)
+    print('Cleanup complete.')
+
+    return extract_path
+
 def get_data_set(is_train ):
-    transform = transforms.Compose([
-        transforms.RandomHorizontalFlip(),  # Data augmentation
-        transforms.RandomCrop(32, padding=4),  # Data augmentation
-        transforms.ToTensor(),
-        transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5)),  # Normalize
-    ])
+    dataset = experiment_config.data_set_selected
+    print(f"Loading dataset: {dataset}")
+
+    if dataset == DataSet.EMNIST_balanced:
+        print("Using grayscale transform for EMNIST")
+        transform = transforms.Compose([
+            transforms.Resize((32, 32)),
+            transforms.Lambda(lambda img: img.convert("RGB")),  # Convert grayscale to RGB
+            transforms.ToTensor(),
+            transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))  # Use RGB normalization
+        ])
+    else:
+        print("Using RGB transform for dataset")
+        transform = transforms.Compose([
+            transforms.RandomHorizontalFlip(),
+            transforms.RandomCrop(32, padding=4),
+            transforms.ToTensor(),
+            transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
+        ])
 
     if experiment_config.data_set_selected == DataSet.CIFAR100:
         train_set = torchvision.datasets.CIFAR100(root='./data', train=is_train, download=True, transform=transform)
 
     if experiment_config.data_set_selected == DataSet.CIFAR10:
         train_set = torchvision.datasets.CIFAR10(root='./data', train=is_train, download=True, transform=transform)
+
+
 
     if experiment_config.data_set_selected == DataSet.TinyImageNet:
         download_and_extract_tiny_imagenet('./data')
@@ -599,6 +642,11 @@ def get_data_set(is_train ):
             root=dataset_path,
             transform=transform
         )
+
+
+
+    if experiment_config.data_set_selected == DataSet.EMNIST_balanced:
+        train_set = EMNIST(root='./data', split='balanced', train=is_train, download=True, transform=transform)
 
     data_by_classification_dict = get_data_by_classification(train_set)
     selected_classes_list = sorted(data_by_classification_dict.keys())[:experiment_config.num_classes]

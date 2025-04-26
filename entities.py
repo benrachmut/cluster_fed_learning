@@ -622,6 +622,12 @@ class Client(LearningEntity):
                 else:
                     self.model.apply(self.initialize_weights)
 
+            if experiment_config.data_set_selected == DataSet.EMNIST_balanced:
+                if acc_test != 0.47:
+                    break
+                else:
+                    self.model.apply(self.initialize_weights)
+
         self.accuracy_per_client_1[t] = self.evaluate_accuracy_single(self.local_test_set, k=1)
         self.accuracy_per_client_10[t] = self.evaluate_accuracy(self.local_test_set, k=10)
         self.accuracy_per_client_100[t] = self.evaluate_accuracy(self.local_test_set, k=100)
@@ -1152,6 +1158,12 @@ class Client_FedAvg(Client):
                     break
                 else:
                     flag = True
+            if experiment_config.data_set_selected == DataSet.EMNIST_balanced:
+                if acc_test != 0.26:
+                    break
+                else:
+                    flag = True
+
         self.accuracy_per_client_1[t] = self.evaluate_accuracy_single(self.local_test_set, k=1)
         self.accuracy_per_client_5[t] = self.evaluate_accuracy(self.local_test_set, k=5)
         self.accuracy_per_client_10[t] = self.evaluate_accuracy(self.local_test_set, k=10)
