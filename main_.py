@@ -225,19 +225,24 @@ def run_PseudoLabelsClusters():
                         for epsilon in cluster_additions:
                             experiment_config.cluster_addition = epsilon
 
-
+                            data_to_pickle[data_set.name][num_clients][num_opt_clusters][server_split_ratio][
+                                alpha_dicht][algorithm_selection.name][net_type.name][net_cluster_technique.name][
+                                server_input_tech.name][cluster_technique.name][server_feedback_technique.name][
+                                epsilon] = {}
 
                             for weights_for_ps in weights_for_ps_list:
                                 experiment_config.weights_for_ps = weights_for_ps
                                 data_to_pickle[data_set.name][num_clients][num_opt_clusters][server_split_ratio][
                                     alpha_dicht][algorithm_selection.name][net_type.name][net_cluster_technique.name][
-                                    server_input_tech.name][cluster_technique.name][server_feedback_technique.name][weights_for_ps.name] = {}
+                                    server_input_tech.name][cluster_technique.name][server_feedback_technique.name][
+                                epsilon][weights_for_ps.name] = {}
                                 for input_consistency in input_consistency_list:
                                     experiment_config.input_consistency = input_consistency
                                     data_to_pickle[data_set.name][num_clients][num_opt_clusters][server_split_ratio][
                                         alpha_dicht][algorithm_selection.name][net_type.name][
                                         net_cluster_technique.name][
                                         server_input_tech.name][cluster_technique.name][server_feedback_technique.name][
+                                epsilon][
                                         weights_for_ps.name][input_consistency.name] = {}
 
                                     clients, clients_ids, clients_test_by_id_dict = create_clients(
