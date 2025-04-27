@@ -15,26 +15,33 @@ def analize_PseudoLabelsClusters(algo):
             algo_name =  algo_name+"AlexNet,"
         dict1 = dict_["multi_model"]["max"][ClusterTechnique.greedy_elimination_L2.name]["similar_to_cluster"]
 
-        for weights_ in dict1.keys():
-            dict2 =dict1[weights_]
-            for const in dict2.keys():
-                dict3=dict2[const]
-                for epsilon in dict3.keys():
-                    rd = dict3[epsilon]
+        try:
+            for weights_ in [WeightForPS.withWeights.name]:
+                dict2 =dict1[weights_]
+                for const in [InputConsistency.withInputConsistency.name]:
+                    dict3=dict2[const]
+                    for epsilon in dict3.keys():
+                        rd = dict3[epsilon]
+                        if top_what == 1:
+                            ans[algo_name+ "Server" ] = get_avg_of_entity(rd.server_accuracy_per_client_1_max)
+                        if top_what == 5:
+                            ans[algo_name+ "Server" ] = get_avg_of_entity(rd.server_accuracy_per_client_5_max)
+                        if top_what == 10:
+                            ans[algo_name+ "Server" ] = get_avg_of_entity(rd.server_accuracy_per_client_10_max)
+                        #ans[algo_name+ "Clients"] = get_avg_of_entity(rd.client_accuracy_per_client_1)
+
+        except:
 
 
 
-
-
-                    if top_what == 1:
-                        ans[algo_name+ "Server" ] = get_avg_of_entity(rd.server_accuracy_per_client_1_max)
-                    if top_what == 5:
-                        ans[algo_name+ "Server" ] = get_avg_of_entity(rd.server_accuracy_per_client_5_max)
-                    if top_what == 10:
-                        ans[algo_name+ "Server" ] = get_avg_of_entity(rd.server_accuracy_per_client_10_max)
-                    #ans[algo_name+ "Clients"] = get_avg_of_entity(rd.client_accuracy_per_client_1)
-
-
+                rd = dict1[0][WeightForPS.withWeights.name][InputConsistency.withInputConsistency.name]
+                if top_what == 1:
+                    ans[algo_name + "Server"] = get_avg_of_entity(rd.server_accuracy_per_client_1_max)
+                if top_what == 5:
+                    ans[algo_name + "Server"] = get_avg_of_entity(rd.server_accuracy_per_client_5_max)
+                if top_what == 10:
+                    ans[algo_name + "Server"] = get_avg_of_entity(rd.server_accuracy_per_client_10_max)
+                # ans[algo_name+ "Clients"] = get_avg_of_entity(rd.client_accuracy_per_client_1)
 
     return ans
 
