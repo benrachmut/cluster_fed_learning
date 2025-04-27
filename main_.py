@@ -485,8 +485,8 @@ if __name__ == '__main__':
     cluster_technique_list = [ClusterTechnique.greedy_elimination_L2]#[ClusterTechnique.greedy_elimination_cross_entropy]#[ClusterTechnique.manual_single_iter,ClusterTechnique.manual,ClusterTechnique.kmeans]
     server_feedback_technique_list = [ServerFeedbackTechnique.similar_to_cluster]#[ServerFeedbackTechnique.similar_to_cluster,ServerFeedbackTechnique.similar_to_client]
     num_cluster_list = [1]#[1,"Optimal"]
-    weights_for_ps_list = [WeightForPS.withWeights]#,WeightForPS.withoutWeights ]
-    input_consistency_list = [InputConsistency.withInputConsistency]#,InputConsistency.withoutInputConsistency]
+    weights_for_ps_list = [WeightForPS.withoutWeights]#,WeightForPS.withoutWeights ]
+    input_consistency_list = [InputConsistency.withoutInputConsistency]#,InputConsistency.withoutInputConsistency]
     # centralized
     nets_types_Centralized_list = [NetsType.S_vgg]
     num_cluster_Centralized_list = [1]
