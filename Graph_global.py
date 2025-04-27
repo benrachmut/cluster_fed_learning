@@ -149,6 +149,10 @@ def create_algo_graph(data, x_label, y_label, folder_to_save, figure_name,colors
     legend_fig.savefig(f"{folder_to_save}/{figure_name}_legend.pdf", format="pdf", bbox_inches='tight', pad_inches=0.05)
 
 
+import matplotlib.pyplot as plt
+
+import matplotlib.pyplot as plt
+
 def create_variant_graph(data, x_label, y_label, folder_to_save, figure_name):
     # Define the font sizes and line width
     linewidth = 2
@@ -163,13 +167,15 @@ def create_variant_graph(data, x_label, y_label, folder_to_save, figure_name):
         "w_i=1,w-IC": "tab:brown",
     }
 
-    # Create main figure
+    # Create main figure without legend
     fig, ax = plt.subplots(figsize=(4, 3))
 
-    lines = []
-    labels = []
+    solid_lines = []
+    solid_labels = []
+    dotted_lines = []
+    dotted_labels = []
 
-    for comm_type, models in data.items():  # Server and Clients
+    for comm_type, models in data.items():
         for model_name, xy_values in models.items():
             x_values = list(xy_values.keys())
             y_values = list(xy_values.values())
@@ -182,8 +188,12 @@ def create_variant_graph(data, x_label, y_label, folder_to_save, figure_name):
                 color=colors.get(model_name, "black"),
                 markersize=3
             )
-            lines.append(line)
-            labels.append(f"{comm_type}-{model_name}")
+            if comm_type == "Server":
+                solid_lines.append(line)
+                solid_labels.append(f"{comm_type}-{model_name}")
+            else:
+                dotted_lines.append(line)
+                dotted_labels.append(f"{comm_type}-{model_name}")
 
     # Set labels and ticks
     ax.set_xlabel(x_label, fontsize=axes_titles_font)
@@ -191,22 +201,38 @@ def create_variant_graph(data, x_label, y_label, folder_to_save, figure_name):
     ax.tick_params(axis='both', labelsize=tick_font_size)
     ax.set_ylim([12, 38])
 
-    # Legend above with 2 rows
-    ax.legend(
-        lines,
-        labels,
-        fontsize=legend_font_size,
-        loc='upper center',
-        bbox_to_anchor=(0.5, 1.25),
-        ncol=int(len(lines) / 2),
-        frameon=False,
-        handlelength=2.5,
-        columnspacing=1.0
-    )
-
-    # Save the figure
+    # Save main figure (no legend)
     fig.savefig(f"{folder_to_save}/{figure_name}.pdf", format="pdf", bbox_inches='tight')
     plt.close(fig)
+
+    # Create standalone legend figure
+    total_lines = solid_lines + dotted_lines
+    total_labels = solid_labels + dotted_labels
+
+    legend_fig, legend_ax = plt.subplots(figsize=(max(4, len(total_lines) * 1.5), 1.2))  # Adjust size
+    legend_ax.axis("off")
+
+    # Create legend in two rows: first row solid, second row dotted
+    legend = legend_ax.legend(
+        total_lines,
+        total_labels,
+        fontsize=legend_font_size,
+        loc="center",
+        ncol=max(len(solid_lines), len(dotted_lines)),
+        frameon=False,
+        handlelength=2.5,
+        columnspacing=1.0,
+        handletextpad=0.5
+    )
+
+    # Manually adjust spacing: first half solid, second half dotted
+    for idx, handle in enumerate(legend.legendHandles):
+        if idx >= len(solid_lines):
+            handle.set_linestyle('dotted')
+
+    # Save the legend figure
+    legend_fig.savefig(f"{folder_to_save}/{figure_name}_legend.pdf", format="pdf", bbox_inches='tight', pad_inches=0.05)
+    plt.close(legend_fig)
 
 def create_CPL_graph(data, x_label, y_label, folder_to_save, figure_name):
     # Define the font sizes and line width

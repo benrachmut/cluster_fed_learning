@@ -83,5 +83,5 @@ if __name__ == '__main__':
 
 
     for dich in [100]:
-        create_variant_graph(data_for_graph[dich], "Iteration", "Accuracy (%)", "figures","vars_CPL_"+str(dich))
+        create_variant_graph(data_for_graph[dich], "Iteration", "Top 1 Accuracy (%)", "figures","vars_CPL_"+str(dich))
 
