@@ -458,12 +458,12 @@ if __name__ == '__main__':
     print(device)
     torch.manual_seed(experiment_config.seed_num)
 
-    data_sets_list = [DataSet.CIFAR10]
+    data_sets_list = [DataSet.CIFAR100]
     num_clients_list = [25]#[25]
     num_opt_clusters_list =[5] #[5]
     mix_percentage = 0.1
     server_split_ratio_list = [0.2]
-    alpha_dichts = [0] #[3,2,1,]
+    alpha_dichts = [100] #[3,2,1,]
     cluster_additions = [0]#[0]#[-4,-2,0,2,4]#  # 0.96,0.5,0.75,1,1.25,1.5,1.75,2]
     print("epsilons:", cluster_additions)
     print(("alpha_dichts", alpha_dichts))
