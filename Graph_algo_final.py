@@ -178,7 +178,10 @@ if __name__ == '__main__':
                 y_label = "Top-10 Accuracy (%)"
 
             y_lim = None
-            if data_type == DataSet.CIFAR10.name:
+            if data_type == DataSet.CIFAR10.name and top_what == 1:
                 y_lim = [60,83]
+            if data_type == DataSet.CIFAR10.name and top_what == 5:
+                y_lim = [85,100]
+
             create_algo_graph(data_for_graph, "Iteration", y_label, "figures","Algo_Comp"+data_type+"_top="+str(top_what),colors,y_lim)
 
