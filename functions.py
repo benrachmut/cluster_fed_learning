@@ -626,7 +626,9 @@ def get_data_set(is_train ):
     if experiment_config.data_set_selected == DataSet.CIFAR10:
         train_set = torchvision.datasets.CIFAR10(root='./data', train=is_train, download=True, transform=transform)
 
-
+    if dataset == DataSet.SVHN:
+        split = 'train' if is_train else 'test'
+        train_set = torchvision.datasets.SVHN(root='./data', split=split, download=True, transform=transform)
 
     if experiment_config.data_set_selected == DataSet.TinyImageNet:
         download_and_extract_tiny_imagenet('./data')

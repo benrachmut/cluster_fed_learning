@@ -611,7 +611,7 @@ class Client(LearningEntity):
                     break
                 else:
                     self.model.apply(self.initialize_weights)
-            if experiment_config.data_set_selected == DataSet.CIFAR10:
+            if experiment_config.data_set_selected == DataSet.CIFAR10 or experiment_config.data_set_selected == DataSet.SVHN :
                 if acc_test != 10:
                     break
                 else:
@@ -1147,7 +1147,7 @@ class Client_FedAvg(Client):
                 else:
                     flag = True
 
-            if experiment_config.data_set_selected == DataSet.CIFAR10:
+            if experiment_config.data_set_selected == DataSet.CIFAR10 or experiment_config.data_set_selected == DataSet.SVHN:
                 if acc_test != 10:
                     break
                 else:
