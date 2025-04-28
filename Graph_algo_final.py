@@ -189,6 +189,8 @@ if __name__ == '__main__':
                 y_lim = [60,83]
             if data_type == DataSet.CIFAR10.name and top_what == 5:
                 y_lim = [85,100]
+            if data_type == DataSet.EMNIST_balanced.name and top_what == 1:
+                y_lim = [80,95]
 
             create_algo_graph(data_for_graph, "Iteration", y_label, "figures","Algo_Comp"+data_type+"_top="+str(top_what),colors,y_lim)
 
