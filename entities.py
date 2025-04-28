@@ -623,7 +623,7 @@ class Client(LearningEntity):
                     self.model.apply(self.initialize_weights)
 
             if experiment_config.data_set_selected == DataSet.EMNIST_balanced:
-                if acc_test != 0.47:
+                if acc_test > 2.14:
                     break
                 else:
                     self.model.apply(self.initialize_weights)
@@ -1159,7 +1159,7 @@ class Client_FedAvg(Client):
                 else:
                     flag = True
             if experiment_config.data_set_selected == DataSet.EMNIST_balanced:
-                if acc_test != 0.26:
+                if acc_test > 2.14:
                     break
                 else:
                     flag = True

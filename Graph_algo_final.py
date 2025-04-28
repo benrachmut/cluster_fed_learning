@@ -159,7 +159,7 @@ if __name__ == '__main__':
     merged_dict1 = merge_dicts(all_data)
     top_what_list = [1,5,10]
     for top_what in top_what_list:
-        for data_type in [DataSet.CIFAR100.name,DataSet.CIFAR10.name]:
+        for data_type in [DataSet.EMNIST_balanced.name]:
             merged_dict = merged_dict1[data_type][25][5][0.2][100]
             data_for_graph = {}
             merged_dict_dich = copy.deepcopy(merged_dict)
@@ -170,7 +170,7 @@ if __name__ == '__main__':
 
 
 
-            start_point = {DataSet.CIFAR100.name:1,DataSet.CIFAR10.name:10,DataSet.TinyImageNet.name:0.5}
+            start_point = {DataSet.CIFAR100.name:1,DataSet.CIFAR10.name:10,DataSet.TinyImageNet.name:0.5,DataSet.EMNIST_balanced.name:2.13}
             update_data(data_for_graph,data_type)
 
             #for dich in [100]:

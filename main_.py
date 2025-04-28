@@ -463,11 +463,11 @@ if __name__ == '__main__':
     num_opt_clusters_list =[5] #[5]
     mix_percentage = 0.1
     server_split_ratio_list = [0.2]
-    alpha_dichts = [100,10,5,3,2,1] #[3,2,1,]
-    cluster_additions = [0] #  # 0.96,0.5,0.75,1,1.25,1.5,1.75,2]
+    alpha_dichts = [100] #[3,2,1,]
+    cluster_additions = [-4,-3,-2,-1,0,1,2,3,4] #  # 0.96,0.5,0.75,1,1.25,1.5,1.75,2]
     print("epsilons:", cluster_additions)
     print(("alpha_dichts", alpha_dichts))
-    algorithm_selection_list = [AlgorithmSelected.PseudoLabelsClusters]#,AlgorithmSelected.PseudoLabelsNoServerModel,AlgorithmSelected.NoFederatedLearning,AlgorithmSelected.pFedCK,AlgorithmSelected.FedAvg]#[AlgorithmSelected.PseudoLabelsClusters]
+    algorithm_selection_list = [AlgorithmSelected.PseudoLabelsClusters]#[AlgorithmSelected.FedAvg,AlgorithmSelected.NoFederatedLearning,AlgorithmSelected.pFedCK,AlgorithmSelected.PseudoLabelsNoServerModel,AlgorithmSelected.PseudoLabelsClusters]#[AlgorithmSelected.PseudoLabelsClusters]
 
     #,AlgorithmSelected.FedAvg,AlgorithmSelected.PseudoLabelsNoServerModel]
     #[ AlgorithmSelected.PseudoLabelsClusters,
@@ -485,8 +485,8 @@ if __name__ == '__main__':
     cluster_technique_list = [ClusterTechnique.greedy_elimination_L2]#[ClusterTechnique.greedy_elimination_cross_entropy]#[ClusterTechnique.manual_single_iter,ClusterTechnique.manual,ClusterTechnique.kmeans]
     server_feedback_technique_list = [ServerFeedbackTechnique.similar_to_cluster]#[ServerFeedbackTechnique.similar_to_cluster,ServerFeedbackTechnique.similar_to_client]
     num_cluster_list = [1]#[1,"Optimal"]
-    weights_for_ps_list = [WeightForPS.withoutWeights]#,WeightForPS.withoutWeights ]
-    input_consistency_list = [InputConsistency.withoutInputConsistency]#,InputConsistency.withoutInputConsistency]
+    weights_for_ps_list = [WeightForPS.withWeights]#,WeightForPS.withoutWeights ]
+    input_consistency_list = [InputConsistency.withInputConsistency]#,InputConsistency.withoutInputConsistency]
     # centralized
     nets_types_Centralized_list = [NetsType.S_vgg]
     num_cluster_Centralized_list = [1]
