@@ -83,7 +83,7 @@ def create_algo_cluster(data, x_label, y_label, folder_to_save, figure_name,y_li
     ax.tick_params(axis='both', labelsize=tick_font_size)
 
     # Optional: Set fixed y-limits
-    ax.set_ylim([12, 38])
+    #ax.set_ylim([12, 38])
 
     # Save the figure
     fig.savefig(f"{folder_to_save}/{figure_name}.pdf", format="pdf", bbox_inches='tight')

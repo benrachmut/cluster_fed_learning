@@ -607,27 +607,27 @@ class Client(LearningEntity):
 
             acc_test = self.evaluate_accuracy_single(self.test_global_data)
             if experiment_config.data_set_selected == DataSet.CIFAR100:
-                if acc_test != 1:
+                if acc != 1 and acc_test!=1:
                     break
                 else:
                     self.model.apply(self.initialize_weights)
             if experiment_config.data_set_selected == DataSet.CIFAR10 or experiment_config.data_set_selected == DataSet.SVHN :
-                if acc_test != 10:
+                if acc != 10 and acc_test!=10:
                     break
                 else:
                     self.model.apply(self.initialize_weights)
             if experiment_config.data_set_selected == DataSet.TinyImageNet:
-                if acc_test != 0.5:
+                if acc != 0.5 and acc_test !=0.5:
                     break
                 else:
                     self.model.apply(self.initialize_weights)
 
             if experiment_config.data_set_selected == DataSet.EMNIST_balanced:
-                if acc_test > 2.14:
+                if acc > 2.14 and acc_test>2.14:
                     break
                 else:
                     self.model.apply(self.initialize_weights)
-
+        print("hi")
         self.accuracy_per_client_1[t] = self.evaluate_accuracy_single(self.local_test_set, k=1)
         self.accuracy_per_client_10[t] = self.evaluate_accuracy(self.local_test_set, k=10)
         self.accuracy_per_client_100[t] = self.evaluate_accuracy(self.local_test_set, k=100)
@@ -1148,18 +1148,18 @@ class Client_FedAvg(Client):
                     flag = True
 
             if experiment_config.data_set_selected == DataSet.CIFAR10 or experiment_config.data_set_selected == DataSet.SVHN:
-                if acc_test != 10:
+                if acc != 10:
                     break
                 else:
                     flag = True
                     #self.model.apply(self.initialize_weights)
             if experiment_config.data_set_selected == DataSet.TinyImageNet:
-                if acc_test != 0.5:
+                if acc != 0.5:
                     break
                 else:
                     flag = True
             if experiment_config.data_set_selected == DataSet.EMNIST_balanced:
-                if acc_test > 2.14:
+                if acc > 2.14:
                     break
                 else:
                     flag = True
@@ -1520,13 +1520,35 @@ class Server(LearningEntity):
                 else:
                     self.train(mean_pseudo_label_for_cluster, 0,selected_model)
 
+                acc_global = self.evaluate_accuracy_single(self.test_global_data, model=selected_model, k=1,
+                                              cluster_id=0)
 
-                if self.evaluate_accuracy_single(self.test_global_data, model=selected_model, k=1,
-                                                cluster_id=0) == experiment_config.num_classes:
-                    selected_model.apply(self.initialize_weights)
+                acc_local = self.evaluate_accuracy_single(self.global_data, model=selected_model, k=1,
+                                                           cluster_id=0)
 
-                else:
-                    break
+                if experiment_config.data_set_selected == DataSet.CIFAR100:
+                    if acc_global != 1 and acc_local != 1:
+                        break
+                    else:
+                        selected_model.apply(self.initialize_weights)
+                if experiment_config.data_set_selected == DataSet.CIFAR10 or experiment_config.data_set_selected == DataSet.SVHN:
+                    if acc_global != 10 and acc_local != 10:
+                        break
+                    else:
+                        selected_model.apply(self.initialize_weights)
+                if experiment_config.data_set_selected == DataSet.TinyImageNet:
+                    if acc_global != 0.5 and acc_local != 0.5:
+                        break
+                    else:
+                        selected_model.apply(self.initialize_weights)
+
+                if experiment_config.data_set_selected == DataSet.EMNIST_balanced:
+                    if acc_global > 2.14 and acc_local > 2.14:
+                        break
+                    else:
+                        selected_model.apply(self.initialize_weights)
+
+            print("hihi")
             if experiment_config.server_feedback_technique == ServerFeedbackTechnique.similar_to_cluster:
                 pseudo_labels_for_cluster = self.evaluate_for_cluster(0,selected_model)
                 pl_per_cluster[cluster_id] = pseudo_labels_for_cluster
