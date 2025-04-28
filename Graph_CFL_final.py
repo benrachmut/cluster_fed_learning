@@ -14,15 +14,20 @@ def analize_PseudoLabelsClusters(dich):
             dict_ = merged_dict_dich_algo[NetsType.C_alex_S_alex.name]
             algo_name =  "AlexNet"
         dict_ = dict_["multi_model"]["max"][ClusterTechnique.greedy_elimination_L2.name]["similar_to_cluster"]
-        for epsilon in dict_.keys():
-            #algo_name = algo_name + ",Clusters:"+str(5+epsilon)
-            rd=dict_[epsilon]
-            if "Server"  not in ans:
-                ans["Server"] = {}
-            if "Clients" not in ans:
-                ans["Clients"] = {}
-            ans["Server" ][algo_name] = get_avg_of_entity(rd.server_accuracy_per_client_1_max)
-            ans["Clients"] [algo_name] = get_avg_of_entity(rd.client_accuracy_per_client_1)
+        #for epsilon in dict_.keys():
+        #algo_name = algo_name + ",Clusters:"+str(5+epsilon)
+        try:
+            rd=dict_[WeightForPS.withWeights.name][InputConsistency.withInputConsistency.name][0]#[WeightForPS.withWeights.name][InputConsistency.withInputConsistency.name]
+
+        except:
+            rd=dict_[0][WeightForPS.withWeights.name][InputConsistency.withInputConsistency.name]#[WeightForPS.withWeights.name][InputConsistency.withInputConsistency.name]
+
+        if "Server" not in ans:
+            ans["Server"] = {}
+        if "Clients" not in ans:
+            ans["Clients"] = {}
+        ans["Server"][algo_name] = get_avg_of_entity(rd.server_accuracy_per_client_1_max)
+        ans["Clients"][algo_name] = get_avg_of_entity(rd.client_accuracy_per_client_1)
 
 
 
@@ -50,7 +55,7 @@ if __name__ == '__main__':
     merged_dict = merged_dict["CIFAR100"][25][5][0.2]
     #ans = {}
     data_for_graph = {}#{"Server":[],"Clients":[]}
-    for dich in [100,10,1]:
+    for dich in [100]:
         data_for_graph[dich] = {}
         merged_dict_dich = merged_dict[dich]
         for algo in merged_dict_dich.keys():
@@ -62,6 +67,6 @@ if __name__ == '__main__':
                 data_for_graph[dich]["Clients"]=feedback["Clients"]
 
 
-    for dich in [100,50,10,5,1]:
+    for dich in [100]:
         create_CPL_graph(data_for_graph[dich], "Iteration", "Accuracy (%)", "figures","Iterations_CPL_"+str(dich))
 

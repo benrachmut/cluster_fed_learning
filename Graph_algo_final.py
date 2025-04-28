@@ -170,7 +170,7 @@ if __name__ == '__main__':
 
 
 
-            start_point = {DataSet.CIFAR100.name:1,DataSet.CIFAR10.name:10,DataSet.TinyImageNet.name:0.5,DataSet.EMNIST_balanced.name:2.13}
+            start_point = {DataSet.CIFAR100.name:1,DataSet.CIFAR10.name:10,DataSet.TinyImageNet.name:0.5,DataSet.EMNIST_balanced.name:2.13,DataSet.SVHN.name:10}
             update_data(data_for_graph,data_type)
 
             #for dich in [100]:
