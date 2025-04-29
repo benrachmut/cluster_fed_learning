@@ -223,7 +223,11 @@ class LearningEntity(ABC):
 
     def initialize_weights(self, layer):
         """Initialize weights for the model layers."""
-        self.seed = experiment_config.seed_num*(self.seed+1)
+        # Ensure the seed is within the valid range for PyTorch
+        safe_seed = int(self.seed) % (2 ** 31)
+
+        # Update the seed with experiment_config.seed_num
+        self.seed = experiment_config.seed_num * (safe_seed + 1)
         torch.manual_seed(self.seed)  # For PyTorch
         torch.cuda.manual_seed(self.seed)  # For CUDA (if using GPU)
         torch.cuda.manual_seed_all(self.seed)  # For multi-GPU
