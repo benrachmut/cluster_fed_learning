@@ -283,7 +283,7 @@ def create_CPL_graph(data, x_label, y_label, folder_to_save, figure_name):
 
     # Set tick font size
     ax.tick_params(axis='both', labelsize=tick_font_size)
-    ax.set_ylim([12, 38])
+    ax.set_ylim([1, 38])
 
     # Save the main figure (without legend)
     fig.savefig(f"{folder_to_save}/{figure_name}.pdf", format="pdf", bbox_inches='tight')

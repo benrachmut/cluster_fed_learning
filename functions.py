@@ -49,7 +49,7 @@ def create_torch_mix_set(data_to_mix_list):
         all_samples.extend((idx, dataset[idx]) for idx in subset.indices)
 
     # Step 2: Shuffle the list of samples
-    generator = torch.Generator().manual_seed(42)
+    generator = torch.Generator().manual_seed(42*experiment_config.seed_num)
     shuffled_samples = torch.randperm(len(all_samples), generator=generator).tolist()
 
     # Step 3: Extract only the indices from the shuffled (index, sample) pairs
@@ -64,7 +64,7 @@ def create_torch_mix_set(data_to_mix_list):
 def split_list(data, num_splits, seed=None):
 
     if seed is not None:
-        rnd.seed(17)
+        rnd.seed(experiment_config.seed_num*(17))
 
     # Shuffle the data
     rnd.shuffle(data)
@@ -91,9 +91,9 @@ def get_mix_torch(data_to_mix_list):
     for l in data_to_mix_list:
         for image in l:
             all_mix_tuples.append(image)
-    rnd.seed(17)
+    rnd.seed(experiment_config.seed_num*(17))
     rnd.shuffle(all_mix_tuples)
-    return split_list(all_mix_tuples, experiment_config.num_clients, 1357)
+    return split_list(all_mix_tuples, experiment_config.num_clients, experiment_config.seed*(1357))
 
 
 
@@ -106,7 +106,7 @@ def get_data_to_mix_and_data_to_leave(classes_data_dict):
         size_to_mix = int(len(single_tensor_set) * experiment_config.mix_percentage)
         size_to_leave = int(len(single_tensor_set) * (1 - experiment_config.mix_percentage))
 
-        torch.Generator().manual_seed(777)
+        torch.Generator().manual_seed(experiment_config.seed_num*(777))
         splits = random_split(single_tensor_set, [size_to_mix, size_to_leave])
         data_to_mix = transform_to_TensorDataset(splits[0])
         data_to_mix_list.append(data_to_mix)
@@ -139,7 +139,7 @@ def get_mix_tensor_list(target_original_data_dict):
     # Step 1: Get all the keys
 
 
-    rnd.seed(19)
+    rnd.seed(experiment_config.seed_num*(19))
     keys = list(target_original_data_dict.keys())
     rnd.shuffle(keys)
     groups = [keys[i:i + identical_clients] for i in range(0, len(keys), identical_clients)]
@@ -162,7 +162,7 @@ def get_match_mix_clients(mix_tensor_list,clients_tensor_list):
         for image in second_list:
             data_per_client_list.append(image)
 
-        rnd.seed(658+17*(i+1))
+        rnd.seed(experiment_config.seed_num*(658+17*(i+1)))
         rnd.shuffle(data_per_client_list)
         ans.append(transform_to_TensorDataset(data_per_client_list))
     return ans
@@ -216,7 +216,7 @@ def get_image_split_list_classes(tensor_list):
 
         for image in tensor_col:
             image_list.append(image)
-    rnd.seed(543 + 5235 * (i + 3))
+    rnd.seed(experiment_config.seed_num*(543 + 5235 * (i + 3)))
     rnd.shuffle(image_list)
     chunk_size = len(image_list) // experiment_config.identical_clients
 
@@ -246,10 +246,10 @@ def get_image_split_list_classes_dich(tensor_list, num_clients, alpha,i):
 
 
     for class_id, class_data in enumerate(tensor_list):
-        np.random.seed(17+(i+1)*17+class_id)  # For reproducibility
+        np.random.seed(experiment_config.seed_num*(17+(i+1)*17+class_id) ) # For reproducibility
 
         data = list(class_data)  # Convert to list for shuffling
-        rnd.seed(13+(i+1)*123+class_id)
+        rnd.seed(experiment_config.seed_num*(13+(i+1)*123+class_id))
         rnd.shuffle(data)
 
         # Dirichlet distribution over clients (for this class)
@@ -289,7 +289,7 @@ def get_data_per_client_dict_and_mix_list(mix_list,target_original_data_dict,dat
         num_c = int(experiment_config.num_clients / experiment_config.number_of_optimal_clusters)
         image_split_list_classes.append( get_image_split_list_classes_dich(tensor_list,num_c,experiment_config.alpha_dich,i))
 
-        torch.manual_seed(42)
+        torch.manual_seed(experiment_config.seed_num*(42))
 
         for identical_clients_index in range(len(image_split_list_classes[0])):
 
@@ -315,7 +315,7 @@ def get_data_per_client_dict_and_mix_list(mix_list,target_original_data_dict,dat
     rnd.shuffle(mix_list)
 
 
-    mix_list = split_list(mix_list, experiment_config.num_clients, 1357)
+    mix_list = split_list(mix_list, experiment_config.num_clients, experiment_config.seed_num*(1357))
     return mix_list
 
 
@@ -330,7 +330,7 @@ def get_clients_non_iid_data(target_original_data_dict):
         for image_list in image_lists:
             try:
                 image_list.extend(mix_list[i])
-                rnd.seed(523 + 412 * (i + 7))
+                rnd.seed(experiment_config.seed_num*(523 + 412 * (i + 7)))
                 rnd.shuffle(image_list)
             except:
                 break
@@ -420,7 +420,7 @@ def complete_client_data(clients_data_dict, data_to_mix,data_size_per_client):
                     new_data_to_mix.append(image)
             data_to_mix = new_data_to_mix
 
-            rnd.seed(counter*17)
+            rnd.seed(experiment_config.seed_num*(counter*17))
             rnd.shuffle(new_subset)
             new_td = transform_to_TensorDataset(new_subset)
             ans[class_name].append(new_td)
@@ -460,7 +460,7 @@ def cut_data_for_partial_use_of_data(class_target,data_by_classification_dict):
 
 def get_server_data(server_data_dict):
     server_data = create_server_data(server_data_dict)
-    rnd.seed(42)
+    rnd.seed(experiment_config.seed_num*(42))
     rnd.shuffle(server_data)
     return transform_to_TensorDataset(server_data)
 
@@ -490,7 +490,7 @@ def split_clients_server_data_IID(train_set,server_split_ratio):
     split_sizes = [client_data_size] * experiment_config.num_clients  # List of client dataset sizes
     split_sizes.append(server_data_size)  # Add the remaining data for the server
     seed = 42
-    torch.manual_seed(seed)
+    torch.manual_seed(experiment_config.seed_num*(seed))
     splits = random_split(train_set, split_sizes)
     client_data_sets = splits[:-1]  # All client datasets
 
@@ -525,7 +525,7 @@ def get_clients_mix_data(clients_data_dict):
             for image in tens_data:
                 ans[group_num].append(image)
     for group_num,images in ans.items():
-        rnd.seed(42)
+        rnd.seed(experiment_config.seed_num*(42))
         rnd.shuffle(images)
         ans[group_num] = transform_to_TensorDataset(images)
     return ans
@@ -742,7 +742,7 @@ def split_clients_server_data(train_set):
     client_data_size = total_client_data_size #// experiment_config.identical_clients  # Each client gets an equal share
     split_sizes = [client_data_size,server_data_size] #* experiment_config.identical_clients  # List of client dataset sizes
 
-    torch.Generator().manual_seed(999)
+    torch.Generator().manual_seed(experiment_config.seed_num*(999))
     splits = random_split(train_set_images, split_sizes)
     clients_data = transform_to_TensorDataset(splits[0])  # All client datasets
     server_data = transform_to_TensorDataset(splits[1])
@@ -855,9 +855,13 @@ def create_clients(client_data_dict,server_data,test_set,server_test_data):
         for data_ in data_list:
             ids_list.append(id_)
             known_clusters[cluster_num].append(id_)
-            if experiment_config.algorithm_selection ==AlgorithmSelected.PseudoLabelsClusters or experiment_config.algorithm_selection == AlgorithmSelected.PseudoLabelsNoServerModel:
+            if experiment_config.algorithm_selection ==AlgorithmSelected.PseudoLabelsClusters:
                 c = Client(id_=id_, client_data=data_, global_data=server_data, global_test_data=server_test_data,
                               local_test_data=test_set[group_name][data_index])
+
+            if  experiment_config.algorithm_selection == AlgorithmSelected.PseudoLabelsNoServerModel:
+                c = Client(id_=id_, client_data=data_, global_data=server_data, global_test_data=server_test_data,
+                           local_test_data=test_set[group_name][data_index])
             if experiment_config.algorithm_selection ==AlgorithmSelected.NoFederatedLearning:
 
                 c = Client_NoFederatedLearning(id_=id_, client_data=data_, global_data=server_data, global_test_data=server_test_data,

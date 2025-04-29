@@ -21,6 +21,7 @@ import torch
 import torch.nn as nn
 
 
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 class AlexNet(nn.Module):
     def __init__(self, num_classes, num_clusters=1):
@@ -76,11 +77,8 @@ class AlexNet(nn.Module):
         # If no cluster_id is given, return outputs from all heads
         return {f"head_{i}": head(x) for i, head in self.heads.items()}
 
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
 
 # Define VGG16 for server
-
 class VGGServer(nn.Module):
     def __init__(self, num_classes, num_clusters=1):
         super(VGGServer, self).__init__()
@@ -117,41 +115,30 @@ class VGGServer(nn.Module):
         return {f"head_{i}": head(x) for i, head in self.heads.items()}
 
 
-
 class ResNetServer(nn.Module):
     def __init__(self, num_classes, num_clusters=1):
         super(ResNetServer, self).__init__()
+        base_model = models.resnet152(weights=None)  # No pretraining
+        self.backbone = nn.Sequential(*list(base_model.children())[:-1])  # Exclude the final FC layer
+        self.feature_dim = base_model.fc.in_features  # Usually 2048
+
         self.num_clusters = num_clusters
 
-        # Load ResNet-50 without pretrained weights
-        resnet = models.resnet152(weights=None)
-
-        # Remove the final classification layer
-        self.backbone = nn.Sequential(*list(resnet.children())[:-1])  # Up to avgpool
-        self.flatten = nn.Flatten()
-
-        # ResNet50 last layer before classifier outputs 2048 features
-        self.base_fc = nn.Linear(2048, num_classes)
-
         if num_clusters == 1:
-            self.head = nn.Linear(num_classes, num_classes)
+            self.head = nn.Linear(self.feature_dim, num_classes)
         else:
             self.heads = nn.ModuleDict({
                 f"head_{i}": nn.Sequential(
-                    nn.Linear(num_classes, 512), nn.ReLU(),
-                    nn.Linear(512, 256), nn.ReLU(),
-                    nn.Linear(256, num_classes)
+                    nn.Linear(self.feature_dim, 1024), nn.ReLU(),
+                    nn.Linear(1024, 512), nn.ReLU(),
+                    nn.Linear(512, num_classes)
                 ) for i in range(num_clusters)
             })
 
     def forward(self, x, cluster_id=None):
-        # Resize input to match ResNet's expected input size
+        # Resize input to match expected size
         x = nn.functional.interpolate(x, size=(224, 224), mode='bilinear', align_corners=False)
-
-        # Feature extraction
-        x = self.backbone(x)
-        x = self.flatten(x)
-        x = self.base_fc(x)
+        x = self.backbone(x).squeeze()  # (B, 2048, 1, 1) -> (B, 2048)
 
         if self.num_clusters == 1:
             return self.head(x)
@@ -160,7 +147,6 @@ class ResNetServer(nn.Module):
             return self.heads[f"head_{cluster_id}"](x)
 
         return {f"head_{i}": head(x) for i, head in self.heads.items()}
-
 
 # Lightweight CNN (Teacher Model)
 class SmallCNN(nn.Module):
@@ -237,7 +223,7 @@ class LearningEntity(ABC):
 
     def initialize_weights(self, layer):
         """Initialize weights for the model layers."""
-        self.seed = self.seed+1
+        self.seed = experiment_config.seed_num*(self.seed+1)
         torch.manual_seed(self.seed)  # For PyTorch
         torch.cuda.manual_seed(self.seed)  # For CUDA (if using GPU)
         torch.cuda.manual_seed_all(self.seed)  # For multi-GPU
@@ -347,7 +333,13 @@ class LearningEntity(ABC):
             with torch.no_grad():
                 for i, (inputs, targets) in enumerate(test_loader):
                     inputs, targets = inputs.to(device), targets.to(device)
+
+
+
+
                     outputs = model(inputs, cluster_id=cluster_id)
+                    if outputs.dim() == 1:
+                        outputs = outputs.unsqueeze(0)  # make it [1, num_classes]
                     preds = outputs.argmax(dim=1)
                     model_correct_matrix[model_idx, i] = (preds == targets).item()
 
@@ -378,6 +370,9 @@ class LearningEntity(ABC):
                 outputs = model(inputs, cluster_id=cluster_id)
 
                 # Get the top-1 predictions directly
+                if outputs.dim() == 1:
+                    outputs = outputs.unsqueeze(0)
+
                 top_1_preds = outputs.argmax(dim=1)
 
                 # Update the total number of predictions and correct predictions
@@ -415,12 +410,15 @@ class LearningEntity(ABC):
 
                 outputs = model(inputs, cluster_id=cluster_id)
 
+                # Ensure outputs has correct dimensions
+                if outputs.dim() == 1:
+                    outputs = outputs.unsqueeze(0)  # make it [1, num_classes]
+
                 # Top-k predictions (returns both values and indices)
-                if experiment_config.num_classes<k:
+                if experiment_config.num_classes < k:
                     return 0
                 else:
                     _, topk_preds = outputs.topk(k, dim=1)
-
                 # Check if the correct label is in the top-k predictions
                 correct += (topk_preds == targets.unsqueeze(1)).any(dim=1).sum().item()
                 total += targets.size(0)
