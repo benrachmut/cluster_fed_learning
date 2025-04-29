@@ -606,8 +606,7 @@ def get_data_set(is_train ):
     if dataset == DataSet.EMNIST_balanced:
         print("Using grayscale transform for EMNIST")
         transform = transforms.Compose([
-            transforms.Grayscale(num_output_channels=3),  # Convert 1-channel to 3-channel
-            transforms.Resize(224),  # Resize to match ResNet input
+            transforms.Grayscale(num_output_channels=3),
             transforms.ToTensor(),
         ])
 
