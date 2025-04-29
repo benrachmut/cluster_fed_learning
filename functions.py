@@ -648,7 +648,8 @@ def get_data_set(is_train ):
 
 
     if experiment_config.data_set_selected == DataSet.EMNIST_balanced:
-        train_set = EMNIST(root='./data', split='balanced', train=is_train, download=True, transform=transform)
+        train_set = EMNIST(root='./data', split='balanced', train=is_train, download=True,
+           transform=transforms.ToTensor())#EMNIST(root='./data', split='balanced', train=is_train, download=True, transform=transform)
 
     data_by_classification_dict = get_data_by_classification(train_set)
     selected_classes_list = sorted(data_by_classification_dict.keys())[:experiment_config.num_classes]
