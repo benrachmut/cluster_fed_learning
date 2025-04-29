@@ -606,11 +606,17 @@ def get_data_set(is_train ):
     if dataset == DataSet.EMNIST_balanced:
         print("Using grayscale transform for EMNIST")
         transform = transforms.Compose([
-            transforms.Resize((32, 32)),
-            transforms.Lambda(lambda img: img.convert("RGB")),  # Convert grayscale to RGB
+            transforms.Grayscale(num_output_channels=3),  # Convert 1-channel to 3-channel
+            transforms.Resize(224),  # Resize to match ResNet input
             transforms.ToTensor(),
-            transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))  # Use RGB normalization
         ])
+
+        #transform = transforms.Compose([
+        #    transforms.Resize((32, 32)),
+        #    transforms.Lambda(lambda img: img.convert("RGB")),  # Convert grayscale to RGB
+        #    transforms.ToTensor(),
+        #    transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))  # Use RGB normalization
+        #])
     else:
         print("Using RGB transform for dataset")
         transform = transforms.Compose([
@@ -649,7 +655,7 @@ def get_data_set(is_train ):
 
     if experiment_config.data_set_selected == DataSet.EMNIST_balanced:
         train_set = EMNIST(root='./data', split='balanced', train=is_train, download=True,
-           transform=transforms.ToTensor())#EMNIST(root='./data', split='balanced', train=is_train, download=True, transform=transform)
+           transform=transform)#EMNIST(root='./data', split='balanced', train=is_train, download=True, transform=transform)
 
     data_by_classification_dict = get_data_by_classification(train_set)
     selected_classes_list = sorted(data_by_classification_dict.keys())[:experiment_config.num_classes]
