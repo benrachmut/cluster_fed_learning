@@ -457,7 +457,7 @@ if __name__ == '__main__':
     print(device)
     torch.manual_seed(experiment_config.seed_num)
     seed_num_list = [1,2,3]
-    data_sets_list = [DataSet.CIFAR10]
+    data_sets_list = [DataSet.TinyImageNet]
     num_clients_list = [25]#[25]
     num_opt_clusters_list =[5] #[5]
     mix_percentage = 0.1
