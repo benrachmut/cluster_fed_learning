@@ -89,8 +89,7 @@ def run_FedAvg():
             for server_input_tech in server_input_tech_list:
                 experiment_config.server_input_tech = server_input_tech
                 data_to_pickle[data_set.name][num_clients][num_opt_clusters][server_split_ratio][
-                            alpha_dicht][
-                    algorithm_selection.name][net_type.name][net_cluster_technique.name][server_input_tech.name] = {}
+                            alpha_dicht][algorithm_selection.name][experiment_config.seed_num][net_type.name][net_cluster_technique.name][server_input_tech.name] = {}
 
                 for cluster_technique in [ClusterTechnique.kmeans]:
                     experiment_config.cluster_technique = cluster_technique
@@ -458,7 +457,7 @@ if __name__ == '__main__':
     print(device)
     torch.manual_seed(experiment_config.seed_num)
     seed_num_list = [1,2,3]
-    data_sets_list = [DataSet.EMNIST_balanced]
+    data_sets_list = [DataSet.CIFAR100]
     num_clients_list = [25]#[25]
     num_opt_clusters_list =[5] #[5]
     mix_percentage = 0.1
