@@ -604,18 +604,18 @@ def get_data_set(is_train ):
     print(f"Loading dataset: {dataset}")
 
     if dataset == DataSet.EMNIST_balanced:
-        print("Using grayscale transform for EMNIST")
-        transform = transforms.Compose([
-            transforms.Grayscale(num_output_channels=3),
-            transforms.ToTensor(),
-        ])
-
+        #print("Using grayscale transform for EMNIST")
         #transform = transforms.Compose([
-        #    transforms.Resize((32, 32)),
-        #    transforms.Lambda(lambda img: img.convert("RGB")),  # Convert grayscale to RGB
+        #    transforms.Grayscale(num_output_channels=3),
         #    transforms.ToTensor(),
-        #    transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))  # Use RGB normalization
         #])
+
+        transform = transforms.Compose([
+            transforms.Resize((32, 32)),
+            transforms.Lambda(lambda img: img.convert("RGB")),  # Convert grayscale to RGB
+            transforms.ToTensor(),
+            transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))  # Use RGB normalization
+        ])
     else:
         print("Using RGB transform for dataset")
         transform = transforms.Compose([
