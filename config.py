@@ -214,6 +214,8 @@ class ExperimentConfig:
             self.batch_size = 64  # 32
         if data_set == DataSet.EMNIST_balanced:
             self.num_classes = 47
+            self.batch_size = 64  # 32
+
         if data_set == DataSet.SVHN:
             self.num_classes = 10
 

@@ -132,12 +132,6 @@ def get_data_per_algo(algo):
         return analize_pFedCK(algo)
 
 
-def update_data(data, data_type):
-    for algo, xy_dict in data.items():
-        new_xy = {x + 1: y for x, y in xy_dict.items()}  # shift x keys by +1
-        new_xy[0.0] = start_point[data_type]             # add new point at x = 0
-        data[algo] = dict(sorted(new_xy.items()))        # optional: sort by x if desired
-
 if __name__ == '__main__':
     cluster_names = {"Optimal":"CBG",1:"No Clusters"} #Cluster By Group
     algo_names={AlgorithmSelected.PseudoLabelsClusters.name:"CPL-Fed"

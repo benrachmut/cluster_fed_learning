@@ -55,7 +55,7 @@ if __name__ == '__main__':
     merged_dict = merged_dict["CIFAR100"][25][5][0.2]
     #ans = {}
     data_for_graph = {}#{"Server":[],"Clients":[]}
-    for dich in [100]:
+    for dich in [5,100]:
         data_for_graph[dich] = {}
         merged_dict_dich = merged_dict[dich]
         for algo in merged_dict_dich.keys():
@@ -67,6 +67,11 @@ if __name__ == '__main__':
                 data_for_graph[dich]["Clients"]=feedback["Clients"]
 
 
-    for dich in [100]:
+
+
+    for dich in [100,5]:
+        update_data(data_for_graph[dich]["Server"], DataSet.CIFAR100.name)
+        update_data(data_for_graph[dich]["Clients"], DataSet.CIFAR100.name)
+
         create_CPL_graph(data_for_graph[dich], "Iteration", "Accuracy (%)", "figures","Iterations_CPL_"+str(dich))
 
