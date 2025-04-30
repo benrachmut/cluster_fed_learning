@@ -149,18 +149,22 @@ if __name__ == '__main__':
               "pFedCK": "purple"}
 
 
-    all_data = read_all_pkls("graph_algo_final")
+    all_data = read_all_pkls("all_pickles_data")
     merged_dict1 = merge_dicts(all_data)
     top_what_list = [1,5,10]
     for top_what in top_what_list:
-        for data_type in [DataSet.EMNIST_balanced.name]:
-            merged_dict = merged_dict1[data_type][25][5][0.2][100]
-            data_for_graph = {}
-            merged_dict_dich = copy.deepcopy(merged_dict)
-            for algo in merged_dict_dich.keys():
-                merged_dict_dich_algo = merged_dict_dich[algo]
-                feedback = get_data_per_algo(algo)
-                data_for_graph.update(feedback)
+        for data_type in [DataSet.CIFAR100.name]:
+            for dich in [5]:
+                merged_dict = merged_dict1[data_type][25][5][0.2][5]
+                #merged_dict = switch_algo_and_seed(merged_dict)
+
+
+                data_for_graph = {}
+                merged_dict_dich = copy.deepcopy(merged_dict)
+                for algo in merged_dict_dich.keys():
+                    merged_dict_dich_algo = merged_dict_dich[algo]
+                    feedback = get_data_per_algo(algo)
+                    data_for_graph.update(feedback)
 
 
 

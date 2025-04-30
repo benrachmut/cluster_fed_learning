@@ -115,6 +115,43 @@ class VGGServer(nn.Module):
         return {f"head_{i}": head(x) for i, head in self.heads.items()}
 
 
+class DenseNetServer(nn.Module):
+    def __init__(self, num_classes, num_clusters=1):
+        super(DenseNetServer, self).__init__()
+
+        # Load DenseNet121 without pre-trained weights
+        self.densenet = models.densenet121(weights=None)
+
+        # Replace the final classifier to output num_classes
+        self.densenet.classifier = nn.Linear(self.densenet.classifier.in_features, num_classes)
+
+        self.num_clusters = num_clusters
+
+        if num_clusters == 1:
+            self.head = nn.Linear(num_classes, num_classes)
+        else:
+            self.heads = nn.ModuleDict({
+                f"head_{i}": nn.Sequential(
+                    nn.Linear(num_classes, 512), nn.ReLU(),
+                    nn.Linear(512, 256), nn.ReLU(),
+                    nn.Linear(256, num_classes)
+                ) for i in range(num_clusters)
+            })
+
+    def forward(self, x, cluster_id=None):
+        # Resize input for DenseNet
+        x = nn.functional.interpolate(x, size=(224, 224), mode='bilinear', align_corners=False)
+        x = self.densenet(x)  # Backbone feature output
+
+        if self.num_clusters == 1:
+            return self.head(x)
+
+        if cluster_id is not None:
+            return self.heads[f"head_{cluster_id}"](x)
+
+        return {f"head_{i}": head(x) for i, head in self.heads.items()}
+
+
 class ResNetServer(nn.Module):
     def __init__(self, num_classes, num_clusters=1):
         super(ResNetServer, self).__init__()
@@ -193,8 +230,8 @@ def get_server_model():
     if experiment_config.server_net_type == NetType.VGG:
         return VGGServer(num_classes=experiment_config.num_classes,num_clusters=num_heads).to(device)
 
-    if experiment_config.server_net_type == NetType.ResNet:
-        return ResNetServer(num_classes=experiment_config.num_classes,num_clusters=num_heads).to(device)
+    if experiment_config.server_net_type == NetType.DenseNetServer:
+        return DenseNetServer(num_classes=experiment_config.num_classes,num_clusters=num_heads).to(device)
 
 
 class LearningEntity(ABC):
@@ -1150,18 +1187,18 @@ class Client_FedAvg(Client):
                     flag = True
 
             if experiment_config.data_set_selected == DataSet.CIFAR10 or experiment_config.data_set_selected == DataSet.SVHN:
-                if acc != 10:
+                if acc != 10and acc_test!=10:
                     break
                 else:
                     flag = True
                     #self.model.apply(self.initialize_weights)
             if experiment_config.data_set_selected == DataSet.TinyImageNet:
-                if acc != 0.5:
+                if acc != 0.5 and acc_test!=0.5:
                     break
                 else:
                     flag = True
             if experiment_config.data_set_selected == DataSet.EMNIST_balanced:
-                if acc > 2.14:
+                if acc > 2.14 and acc_test>2.14:
                     break
                 else:
                     flag = True
