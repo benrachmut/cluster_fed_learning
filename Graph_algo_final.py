@@ -3,134 +3,6 @@ from main_ import *
 from Graph_global import *
 from config import AlgorithmSelected
 
-def analize_PseudoLabelsClusters(algo):
-    ans = {}
-    for net_type in merged_dict_dich_algo.keys():
-        algo_name = algo_names[algo]+","
-        if net_type == NetsType.C_alex_S_vgg.name:
-            dict_ = merged_dict_dich_algo[NetsType.C_alex_S_vgg.name]
-            algo_name = algo_name+ "VGG,"
-        if net_type == NetsType.C_alex_S_alex.name:
-            dict_ = merged_dict_dich_algo[NetsType.C_alex_S_alex.name]
-            algo_name =  algo_name+"AlexNet,"
-        dict1 = dict_["multi_model"]["max"][ClusterTechnique.greedy_elimination_L2.name]["similar_to_cluster"]
-
-        try:
-            for weights_ in [WeightForPS.withWeights.name]:
-                dict2 =dict1[weights_]
-                for const in [InputConsistency.withInputConsistency.name]:
-                    dict3=dict2[const]
-                    for epsilon in dict3.keys():
-                        rd = dict3[epsilon]
-                        if top_what == 1:
-                            ans[algo_name+ "Server" ] = get_avg_of_entity(rd.server_accuracy_per_client_1_max)
-                        if top_what == 5:
-                            ans[algo_name+ "Server" ] = get_avg_of_entity(rd.server_accuracy_per_client_5_max)
-                        if top_what == 10:
-                            ans[algo_name+ "Server" ] = get_avg_of_entity(rd.server_accuracy_per_client_10_max)
-                        #ans[algo_name+ "Clients"] = get_avg_of_entity(rd.client_accuracy_per_client_1)
-
-        except:
-
-
-
-                rd = dict1[0][WeightForPS.withWeights.name][InputConsistency.withInputConsistency.name]
-                if top_what == 1:
-                    ans[algo_name + "Server"] = get_avg_of_entity(rd.server_accuracy_per_client_1_max)
-                if top_what == 5:
-                    ans[algo_name + "Server"] = get_avg_of_entity(rd.server_accuracy_per_client_5_max)
-                if top_what == 10:
-                    ans[algo_name + "Server"] = get_avg_of_entity(rd.server_accuracy_per_client_10_max)
-                # ans[algo_name+ "Clients"] = get_avg_of_entity(rd.client_accuracy_per_client_1)
-
-    return ans
-
-
-def analize_PseudoLabelsNoServerModel(algo):
-    ans = {}
-    algo_name = algo_names[algo]
-    dict_ = merged_dict_dich_algo["C_alex"]["no_model"]["mean"]["kmeans"]["similar_to_client"]
-    for cluster in dict_.keys():
-        if cluster == 1:
-            algo_name = algo_name #+ cluster_names[cluster]
-            rd = dict_[cluster]
-
-            if top_what == 1:
-                ans[algo_name] = get_avg_of_entity(rd.client_accuracy_per_client_1)
-            if top_what == 5:
-                ans[algo_name] = get_avg_of_entity(rd.client_accuracy_per_client_5)
-            if top_what == 10:
-                ans[algo_name] = get_avg_of_entity(rd.client_accuracy_per_client_10)
-
-
-    return ans
-
-def analize_NoFederatedLearning(algo):
-    ans = {}
-    algo_name = algo_names[algo]
-
-    rd = merged_dict_dich_algo["C_alex_S_alex"]
-    fixed_dict = {}
-
-    if top_what == 1:
-        data_to_fix = rd.client_accuracy_per_client_1
-    if top_what == 5:
-        data_to_fix = rd.client_accuracy_per_client_5
-    if top_what == 10:
-        data_to_fix = rd.client_accuracy_per_client_10
-
-    for client_id, dict_x_y in data_to_fix.items():
-        dict_x_y_fixed = {}
-        for x,y in dict_x_y.items():
-            dict_x_y_fixed[x/5-1]=y
-        fixed_dict[client_id]=dict_x_y_fixed
-    ans[algo_name] = get_avg_of_entity(fixed_dict)
-    return ans
-
-def analize_FedAvg(algo):
-    ans = {}
-    algo_name = algo_names[algo]
-
-    try:
-        rd = merged_dict_dich_algo["C_alex_S_alex"]["multi_model"]["max"]["kmeans"]["similar_to_cluster"][1]
-    except:
-        rd = merged_dict_dich_algo["C_alex_S_alex"]["no_model"]["mean"]["kmeans"]["similar_to_cluster"][1]
-
-    if top_what == 1:
-        ans[algo_name] = get_avg_of_entity(rd.client_accuracy_per_client_1)
-    if top_what == 5:
-        ans[algo_name] = get_avg_of_entity(rd.client_accuracy_per_client_5)
-    if top_what == 10:
-        ans[algo_name] = get_avg_of_entity(rd.client_accuracy_per_client_10)
-    return ans
-
-def analize_pFedCK(algo):
-    ans = {}
-    algo_name = algo_names[algo]
-    for net_type in merged_dict_dich_algo.keys():
-        rd = merged_dict_dich_algo[net_type]
-        if top_what == 1:
-            ans[algo_name] = get_avg_of_entity(rd.client_accuracy_per_client_1)
-        if top_what == 5:
-            ans[algo_name] = get_avg_of_entity(rd.client_accuracy_per_client_5)
-        if top_what == 10:
-            ans[algo_name] = get_avg_of_entity(rd.client_accuracy_per_client_10)
-        return ans
-
-
-def get_data_per_algo(algo):
-
-    if algo == AlgorithmSelected.PseudoLabelsClusters.name:
-        return analize_PseudoLabelsClusters(algo)
-    if algo == AlgorithmSelected.PseudoLabelsNoServerModel.name:
-        return  analize_PseudoLabelsNoServerModel(algo)
-    if algo == AlgorithmSelected.NoFederatedLearning.name:
-        return analize_NoFederatedLearning(algo)
-    if algo == AlgorithmSelected.FedAvg.name:
-        return analize_FedAvg(algo)
-    if algo == AlgorithmSelected.pFedCK.name:
-        return analize_pFedCK(algo)
-
 
 
 def extract_rd_PseudoLabelsClusters(algo,dict_):
@@ -199,22 +71,23 @@ def get_PseudoLabelsClusters_name(algo,dict_):
 
 def switch_algo_and_seed(merged_dict):
     rds = {}
-    for seed in merged_dict.keys():
+    for seed in seeds_dict[data_type]:
         for algo in merged_dict[seed]:
             algo_name = algo_names[algo]
-
             if algo == AlgorithmSelected.PseudoLabelsClusters.name:
                 algo_name_list = get_PseudoLabelsClusters_name(algo,merged_dict[seed][algo])
                 for name_ in algo_name_list:
                     if name_ not in rds.keys() :
-                        rds[algo_name] = []
+                        rds[name_] = []
 
             elif algo_name not in rds.keys() :
                 rds[algo_name] = []
             rd_output = extract_rd(algo, merged_dict[seed][algo])
             if isinstance(rd_output,dict):
                 for k,v in rd_output.items():
-                    rds[k] = v
+                    if k not in rds:
+                        rds[k]=[]
+                    rds[k].append(v)
             else:
                 rds[algo_name].append(rd_output)
 
@@ -222,7 +95,56 @@ def switch_algo_and_seed(merged_dict):
 
             #ans[algo].append(merged_dict[seed][algo])
     return rds
+
+def get_data_per_client_client(rd):
+    if top_what == 1:
+        return rd.client_accuracy_per_client_1
+    if top_what == 5:
+        return  rd.client_accuracy_per_client_5
+    if top_what == 10:
+        return  rd.client_accuracy_per_client_10
+def fix_data_NoFederatedLearning(data_per_client):
+    ans = {}
+    for client_id, dict_x_y in data_per_client.items():
+        dict_x_y_fixed = {}
+        for x, y in dict_x_y.items():
+            dict_x_y_fixed[x / 5 - 1] = y
+        ans[client_id] = dict_x_y_fixed
+    return ans
+def get_data_per_client_server(rd):
+    if top_what == 1:
+        return rd.server_accuracy_per_client_1_max
+    if top_what == 5:
+        return  rd.server_accuracy_per_client_5_max
+    if top_what == 10:
+        return  rd.server_accuracy_per_client_10_max
+def get_data_per_client(rd,algo):
+    if algo == algo_names[AlgorithmSelected.NoFederatedLearning.name]:
+        data_per_client = get_data_per_client_client(rd)
+        data_per_client = fix_data_NoFederatedLearning(data_per_client)
+    if algo == algo_names[AlgorithmSelected.pFedCK.name] or algo == algo_names[
+        AlgorithmSelected.PseudoLabelsNoServerModel.name]:
+        data_per_client = get_data_per_client_client(rd)
+    if algo ==algo_names[AlgorithmSelected.PseudoLabelsClusters.name]+",VGG" or algo ==algo_names[AlgorithmSelected.PseudoLabelsClusters.name]+",AlexNet":
+        data_per_client = get_data_per_client_server(rd)
+    update_data(data_per_client, data_type)
+    return data_per_client
+def collect_data_per_iteration(merged_dict):
+    ans = {}
+    for algo, rd_list in merged_dict.items():
+        data_per_iteration = {}
+        for rd in rd_list:
+            data_per_client = get_data_per_client(rd,algo)
+            for client_id, data_dict in data_per_client.items():
+                for iter_, v in data_dict.items():
+                    if iter_ not in data_per_iteration.keys():
+                        data_per_iteration[iter_] = []
+                    data_per_iteration[iter_].append(v)
+        ans[algo] = data_per_iteration
+    return ans
+
 if __name__ == '__main__':
+
     cluster_names = {"Optimal":"CBG",1:"No Clusters"} #Cluster By Group
     algo_names={AlgorithmSelected.PseudoLabelsClusters.name:"CPL-Fed"
         ,AlgorithmSelected.PseudoLabelsNoServerModel.name:"FedMd",
@@ -245,22 +167,13 @@ if __name__ == '__main__':
     for top_what in top_what_list:
         for data_type in [DataSet.CIFAR100.name]:
             for dich in [5]:
-                merged_dict = merged_dict1[data_type][25][5][0.2][5]
+                merged_dict = merged_dict1[data_type][25][5][0.2][dich]
                 merged_dict = switch_algo_and_seed(merged_dict)
-
-
-                data_for_graph = {}
-
-                merged_dict_dich = copy.deepcopy(merged_dict)
-                for algo in merged_dict_dich.keys():
-                    merged_dict_dich_algo = merged_dict_dich[algo]
-                    feedback = get_data_per_algo(algo)
-                    data_for_graph.update(feedback)
+                data_for_graph = collect_data_per_iteration(merged_dict)
+                print()
 
 
 
-            start_point = {DataSet.CIFAR100.name:1,DataSet.CIFAR10.name:10,DataSet.TinyImageNet.name:0.5,DataSet.EMNIST_balanced.name:2.13,DataSet.SVHN.name:10}
-            update_data(data_for_graph,data_type)
 
             #for dich in [100]:
             #    t = {}

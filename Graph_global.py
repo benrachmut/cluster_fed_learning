@@ -2,13 +2,12 @@ import os
 import pickle
 
 from config import *
-from main_ import RecordData
-
-
-
+import numpy as np
+import matplotlib.pyplot as plt
+from scipy import stats
 algo_names={AlgorithmSelected.PseudoLabelsClusters.name:"C-PL",AlgorithmSelected.PseudoLabelsNoServerModel.name:"C-PL-NSM",AlgorithmSelected.NoFederatedLearning.name:"No FL"  }
 net_name = {"C_alex_S_alex": "S_AlexNet", "C_alex_S_vgg": "S_VGG-16"}
-
+seeds_dict = {DataSet.CIFAR100.name:[1],DataSet.CIFAR10.name:[1,2,3],DataSet.EMNIST_balanced.name:[1,2,3],DataSet.TinyImageNet.name:[1,2,3]}
 
 
 def read_all_pkls(folder_path):
@@ -96,7 +95,7 @@ def update_data(data, data_type):
         new_xy[0.0] = start_point[data_type]             # add new point at x = 0
         data[algo] = dict(sorted(new_xy.items()))        # optional: sort by x if desired
 
-def create_algo_graph(data, x_label, y_label, folder_to_save, figure_name,colors,y_lim):
+def create_algo_graph(data, x_label, y_label, folder_to_save, figure_name,colors,y_lim,confidence = 0.95):
     linewidth = 2
     markersize = 3
 
@@ -105,36 +104,71 @@ def create_algo_graph(data, x_label, y_label, folder_to_save, figure_name,colors
 
     lines = []
     labels = []
+    for algorithm_name, iter_dict in data.items():
+        # Get iterations (x-values)
+        x_values = sorted(iter_dict.keys())
+        means = []
+        lower_bounds = []
+        upper_bounds = []
 
-    for algorithm_name, xy_values in data.items():
-        x_values = list(xy_values.keys())
-        y_values = list(xy_values.values())
+        for it in x_values:
+            accs = np.array(iter_dict[it])  # List of accuracies for the current iteration
+            mean = np.mean(accs)  # Mean accuracy
+            stderr = stats.sem(accs)  # Standard error
+            n = len(accs)  # Number of samples
+            h = stderr * stats.t.ppf((1 + confidence) / 2., n - 1)  # Confidence interval half-width
+
+            means.append(mean)
+            lower_bounds.append(mean - h)
+            upper_bounds.append(mean + h)
+            # Convert to arrays for plotting
+        x_values = np.array(x_values)
+        means = np.array(means)
+        lower_bounds = np.array(lower_bounds)
+        upper_bounds = np.array(upper_bounds)
+
+        # Get the color for the algorithm
+        color = colors.get(algorithm_name, "black")
+
+        # Plot the mean accuracy line
         line, = ax.plot(
             x_values,
-            y_values,
+            means,
             marker='o',
             linewidth=linewidth,
-            color=colors.get(algorithm_name, "black"),
+            color=color,
             linestyle='solid',
             markersize=markersize
         )
         lines.append(line)
         labels.append(algorithm_name)
 
-    # Set axis labels
-    ax.set_xlabel(x_label, fontsize=axes_titles_font)
-    ax.set_ylabel(y_label, fontsize=axes_titles_font)
+        # Fill the confidence interval
+        ax.fill_between(
+            x_values,
+            lower_bounds,
+            upper_bounds,
+            color=color,
+            alpha=0.2
+        )
 
-    # Tick font size
-    ax.tick_params(axis='both', labelsize=tick_font_size)
+    # Set axis labels
+
+
+    ax.set_xlabel(x_label, fontsize=14)
+    ax.set_ylabel(y_label, fontsize=14)
 
     # Optional: Set fixed y-limits
     if y_lim is not None:
         ax.set_ylim(y_lim)
 
-    # Save the main figure without legend
+    # Tick font size
+    ax.tick_params(axis='both', labelsize=12)
+
+    # Show the main figure
     plt.show()
 
+    # Save the main figure without legend
     fig.savefig(f"{folder_to_save}/{figure_name}.pdf", format="pdf", bbox_inches='tight')
     plt.close(fig)
 
@@ -145,20 +179,17 @@ def create_algo_graph(data, x_label, y_label, folder_to_save, figure_name,colors
     legend = legend_ax.legend(
         lines,
         labels,
-        fontsize=legend_font_size,
+        fontsize=12,
         loc="center",
         ncol=len(lines),
         frameon=False,
         handlelength=2.5,
         columnspacing=1.0
     )
-    # Show the figure before saving
+    # Save legend figure
     legend_fig.savefig(f"{folder_to_save}/{figure_name}_legend.pdf", format="pdf", bbox_inches='tight', pad_inches=0.05)
 
 
-import matplotlib.pyplot as plt
-
-import matplotlib.pyplot as plt
 
 def create_variant_graph(data, x_label, y_label, folder_to_save, figure_name):
     # Define the font sizes and line width
