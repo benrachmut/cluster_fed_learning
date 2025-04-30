@@ -404,7 +404,7 @@ def run_PseudoLabelsNoServerModel():
                         algorithm_selection.name][net_type.name][net_cluster_technique.name][
                         server_input_tech.name][cluster_technique.name] = {}
 
-                    for server_feedback_technique in server_feedback_technique_list:
+                    for server_feedback_technique in [ServerFeedbackTechnique.similar_to_client]:
                         experiment_config.server_feedback_technique = server_feedback_technique
                         data_to_pickle[data_set.name][num_clients][num_opt_clusters][server_split_ratio][alpha_dicht][experiment_config.seed_num][
                             algorithm_selection.name][net_type.name][net_cluster_technique.name][
@@ -455,7 +455,7 @@ def run_exp_by_algo():
 
 if __name__ == '__main__':
     print(device)
-    seed_num_list = [1,2,3]
+    seed_num_list = [3]
     data_sets_list = [DataSet.CIFAR10]
     num_clients_list = [25]#[25]
     num_opt_clusters_list =[5] #[5]
@@ -465,7 +465,7 @@ if __name__ == '__main__':
     cluster_additions = [0]#[-4,-3,-2,-1,0,1,2,3,4] #  # 0.96,0.5,0.75,1,1.25,1.5,1.75,2]
     print("epsilons:", cluster_additions)
     print(("alpha_dichts", alpha_dichts))
-    algorithm_selection_list =[AlgorithmSelected.PseudoLabelsClusters]#, AlgorithmSelected.NoFederatedLearning, AlgorithmSelected.pFedCK]#, AlgorithmSelected.NoFederatedLearning, AlgorithmSelected.pFedCK]#,AlgorithmSelected.PseudoLabelsClusters]
+    algorithm_selection_list =[AlgorithmSelected.pFedCK]#, AlgorithmSelected.NoFederatedLearning, AlgorithmSelected.pFedCK]#, AlgorithmSelected.NoFederatedLearning, AlgorithmSelected.pFedCK]#,AlgorithmSelected.PseudoLabelsClusters]
     #[AlgorithmSelected.PseudoLabelsNoServerModel]
     #[AlgorithmSelected.FedAvg, AlgorithmSelected.NoFederatedLearning, AlgorithmSelected.pFedCK]
     #[AlgorithmSelected.PseudoLabelsClusters]

@@ -132,6 +132,96 @@ def get_data_per_algo(algo):
         return analize_pFedCK(algo)
 
 
+
+def extract_rd_PseudoLabelsClusters(algo,dict_):
+    ans = {}
+
+    names = get_PseudoLabelsClusters_name(algo, dict_)
+
+    for name in names:
+        if name == algo_names[algo]+",AlexNet":
+            dict_1 = dict_[NetsType.C_alex_S_alex.name]
+        if name == algo_names[algo]+",VGG":
+            dict_1 = dict_[NetsType.C_alex_S_vgg.name]
+        rd = dict_1["multi_model"]["max"][ClusterTechnique.greedy_elimination_L2.name]["similar_to_cluster"][0][
+                WeightForPS.withWeights.name][InputConsistency.withInputConsistency.name]
+
+        ans[name] = rd
+
+    return ans
+
+
+def extract_rd_PseudoLabelsNoServerModel(algo,dict_):
+
+    return dict_["C_alex"]["no_model"]["mean"]["kmeans"]["similar_to_client"][1]
+
+
+
+
+
+
+
+
+def extract_rd_FedAvg(algo,dict_):
+    print("TODO4")
+
+
+def extract_rd_pFedCK(algo,dict_):
+    for net_type in dict_.keys():
+        return dict_[net_type]
+
+
+
+
+def extract_rd(algo,dict_):
+    if algo == AlgorithmSelected.PseudoLabelsClusters.name:
+        return extract_rd_PseudoLabelsClusters(algo,dict_)
+    if algo == AlgorithmSelected.PseudoLabelsNoServerModel.name:
+        return extract_rd_PseudoLabelsNoServerModel(algo,dict_)
+    if algo == AlgorithmSelected.NoFederatedLearning.name:
+        return dict_["C_alex_S_alex"]
+    if algo == AlgorithmSelected.FedAvg.name:
+        return extract_rd_FedAvg(algo,dict_)
+    if algo == AlgorithmSelected.pFedCK.name:
+        return extract_rd_pFedCK(algo,dict_)
+
+
+def get_PseudoLabelsClusters_name(algo,dict_):
+    ans = []
+    for net_type in dict_.keys():
+        algo_name = algo_names[algo] + ","
+        if net_type == NetsType.C_alex_S_vgg.name:
+            algo_name = algo_name + "VGG"
+        if net_type == NetsType.C_alex_S_alex.name:
+            algo_name = algo_name + "AlexNet"
+        ans.append(algo_name)
+    return  ans
+
+def switch_algo_and_seed(merged_dict):
+    rds = {}
+    for seed in merged_dict.keys():
+        for algo in merged_dict[seed]:
+            algo_name = algo_names[algo]
+
+            if algo == AlgorithmSelected.PseudoLabelsClusters.name:
+                algo_name_list = get_PseudoLabelsClusters_name(algo,merged_dict[seed][algo])
+                for name_ in algo_name_list:
+                    if name_ not in rds.keys() :
+                        rds[algo_name] = []
+
+            elif algo_name not in rds.keys() :
+                rds[algo_name] = []
+            rd_output = extract_rd(algo, merged_dict[seed][algo])
+            if isinstance(rd_output,dict):
+                for k,v in rd_output.items():
+                    rds[k] = v
+            else:
+                rds[algo_name].append(rd_output)
+
+
+
+            #ans[algo].append(merged_dict[seed][algo])
+    return rds
 if __name__ == '__main__':
     cluster_names = {"Optimal":"CBG",1:"No Clusters"} #Cluster By Group
     algo_names={AlgorithmSelected.PseudoLabelsClusters.name:"CPL-Fed"
@@ -156,10 +246,11 @@ if __name__ == '__main__':
         for data_type in [DataSet.CIFAR100.name]:
             for dich in [5]:
                 merged_dict = merged_dict1[data_type][25][5][0.2][5]
-                #merged_dict = switch_algo_and_seed(merged_dict)
+                merged_dict = switch_algo_and_seed(merged_dict)
 
 
                 data_for_graph = {}
+
                 merged_dict_dich = copy.deepcopy(merged_dict)
                 for algo in merged_dict_dich.keys():
                     merged_dict_dich_algo = merged_dict_dich[algo]
