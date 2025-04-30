@@ -264,7 +264,7 @@ class LearningEntity(ABC):
         safe_seed = int(self.seed) % (2 ** 31)
 
         # Update the seed with experiment_config.seed_num
-        self.seed = experiment_config.seed_num * (safe_seed + 1)
+        self.seed = (self.seed + 1)
         torch.manual_seed(self.seed)  # For PyTorch
         torch.cuda.manual_seed(self.seed)  # For CUDA (if using GPU)
         torch.cuda.manual_seed_all(self.seed)  # For multi-GPU
@@ -1161,13 +1161,15 @@ class Client_FedAvg(Client):
             if t == 0:
                 #self.model.apply(self.initialize_weights)
                 #self.model.apply(self.initialize_weights)
+
+
                 self.model.apply(self.initialize_weights)
 
             if t > 0:
                 if flag:
                     self.model.apply(self.initialize_weights)
                 else:
-                    self.model.apply(self.initialize_weights)
+                    #self.model.apply(self.initialize_weights)
 
                     self.model.load_state_dict(self.weights_received)
 

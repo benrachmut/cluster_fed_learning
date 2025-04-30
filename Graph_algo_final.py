@@ -153,8 +153,8 @@ if __name__ == '__main__':
                 AlgorithmSelected.FedAvg.name:"FedAvg",
                 AlgorithmSelected.pFedCK.name:"pFedCK"
                 }
-    colors = {"CPL-Fed,VGG,Server": "blue",
-              "CPL-Fed,AlexNet,Server": "red",
+    colors = {"CPL-Fed,VGG": "blue",
+              "CPL-Fed,AlexNet": "red",
               "FedMd": "Green",
               "No FL": "Gray",
               "FedAvg": "brown",
