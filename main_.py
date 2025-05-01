@@ -455,8 +455,8 @@ def run_exp_by_algo():
 
 if __name__ == '__main__':
     print(device)
-    seed_num_list = [5]
-    data_sets_list = [DataSet.CIFAR100]
+    seed_num_list = [1]
+    data_sets_list = [DataSet.CIFAR10]
     num_clients_list = [25]#[25]
     num_opt_clusters_list =[5] #[5]
     mix_percentage = 0.1
@@ -532,7 +532,7 @@ if __name__ == '__main__':
                             data_to_pickle[data_set.name][num_clients][num_opt_clusters][server_split_ratio][
                                 alpha_dicht][experiment_config.seed_num] = {}
                             clients_train_data_dict, server_train_data, clients_test_data_dict, server_test_data = create_data()
-
+                            print("current_seed_num",current_seed_num)
 
                             for algorithm_selection in algorithm_selection_list:
                                 experiment_config.algorithm_selection = algorithm_selection

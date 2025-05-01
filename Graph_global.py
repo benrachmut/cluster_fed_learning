@@ -7,7 +7,7 @@ import matplotlib.pyplot as plt
 from scipy import stats
 algo_names={AlgorithmSelected.PseudoLabelsClusters.name:"C-PL",AlgorithmSelected.PseudoLabelsNoServerModel.name:"C-PL-NSM",AlgorithmSelected.NoFederatedLearning.name:"No FL"  }
 net_name = {"C_alex_S_alex": "S_AlexNet", "C_alex_S_vgg": "S_VGG-16"}
-seeds_dict = {DataSet.CIFAR100.name:[1],DataSet.CIFAR10.name:[1,2,3],DataSet.EMNIST_balanced.name:[1,2,3],DataSet.TinyImageNet.name:[1,2,3]}
+seeds_dict = {DataSet.CIFAR100.name:[1,2,3,5],DataSet.CIFAR10.name:[1,2,3],DataSet.EMNIST_balanced.name:[1,2,3],DataSet.TinyImageNet.name:[1,2,3]}
 
 
 def read_all_pkls(folder_path):
