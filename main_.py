@@ -467,7 +467,7 @@ if __name__ == '__main__':
     print(("alpha_dichts", alpha_dichts))
     algorithm_selection_list =[AlgorithmSelected.PseudoLabelsNoServerModel]#, AlgorithmSelected.NoFederatedLearning, AlgorithmSelected.pFedCK]#, AlgorithmSelected.NoFederatedLearning, AlgorithmSelected.pFedCK]#,AlgorithmSelected.PseudoLabelsClusters]
     #[AlgorithmSelected.PseudoLabelsNoServerModel]
-    #[AlgorithmSelected.FedAvg, AlgorithmSelected.NoFederatedLearning, AlgorithmSelected.pFedCK]
+    #[AlgorithmSelected.PseudoLabelsNoServerModel,AlgorithmSelected.FedAvg, AlgorithmSelected.NoFederatedLearning, AlgorithmSelected.pFedCK]
     #[AlgorithmSelected.PseudoLabelsClusters]
 
     #,AlgorithmSelected.FedAvg,AlgorithmSelected.PseudoLabelsNoServerModel]
