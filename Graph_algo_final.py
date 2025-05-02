@@ -35,8 +35,7 @@ def extract_rd_PseudoLabelsNoServerModel(algo,dict_):
 
 
 def extract_rd_FedAvg(algo,dict_):
-    print("TODO4")
-
+    return dict_[NetsType.C_alex_S_alex.name]["multi_model"]["max"]["kmeans"]["similar_to_cluster"][1]
 
 def extract_rd_pFedCK(algo,dict_):
     for net_type in dict_.keys():
@@ -109,6 +108,7 @@ def fix_data_NoFederatedLearning(data_per_client):
         dict_x_y_fixed = {}
         for x, y in dict_x_y.items():
             dict_x_y_fixed[x / 5 - 1] = y
+        dict_x_y_fixed[max(dict_x_y_fixed.keys())+1] = dict_x_y_fixed[max(dict_x_y_fixed.keys())]
         ans[client_id] = dict_x_y_fixed
     return ans
 def get_data_per_client_server(rd):
@@ -123,7 +123,7 @@ def get_data_per_client(rd,algo):
         data_per_client = get_data_per_client_client(rd)
         data_per_client = fix_data_NoFederatedLearning(data_per_client)
     if algo == algo_names[AlgorithmSelected.pFedCK.name] or algo == algo_names[
-        AlgorithmSelected.PseudoLabelsNoServerModel.name]:
+        AlgorithmSelected.PseudoLabelsNoServerModel.name]  or algo == algo_names[AlgorithmSelected.FedAvg.name]:
         data_per_client = get_data_per_client_client(rd)
     if algo ==algo_names[AlgorithmSelected.PseudoLabelsClusters.name]+",VGG" or algo ==algo_names[AlgorithmSelected.PseudoLabelsClusters.name]+",AlexNet":
         data_per_client = get_data_per_client_server(rd)
@@ -165,7 +165,7 @@ if __name__ == '__main__':
     merged_dict1 = merge_dicts(all_data)
     top_what_list = [1,5,10]
     for top_what in top_what_list:
-        for data_type in [DataSet.CIFAR10.name]:
+        for data_type in [DataSet.CIFAR100.name]:
             for dich in [5]:
                 merged_dict = merged_dict1[data_type][25][5][0.2][dich]
                 merged_dict = switch_algo_and_seed(merged_dict,dich)
