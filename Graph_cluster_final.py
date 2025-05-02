@@ -30,12 +30,7 @@ def analize_PseudoLabelsClusters(dict_):
 
 if __name__ == '__main__':
 
-    algo_names={AlgorithmSelected.PseudoLabelsClusters.name:"CPL"
-        ,AlgorithmSelected.PseudoLabelsNoServerModel.name:"CPL-NSM",
-        AlgorithmSelected.NoFederatedLearning.name:"No FL",
-        AlgorithmSelected.Centralized.name:"Centralized",
-                AlgorithmSelected.FedAvg.name:"FedAvg",
-                }
+
 
 
     all_data = read_all_pkls("graph_clusters_final")

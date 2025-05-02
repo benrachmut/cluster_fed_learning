@@ -146,19 +146,8 @@ def collect_data_per_iteration(merged_dict):
 if __name__ == '__main__':
 
     cluster_names = {"Optimal":"CBG",1:"No Clusters"} #Cluster By Group
-    algo_names={AlgorithmSelected.PseudoLabelsClusters.name:"CPL-Fed"
-        ,AlgorithmSelected.PseudoLabelsNoServerModel.name:"FedMd",
-        AlgorithmSelected.NoFederatedLearning.name:"No FL",
-        AlgorithmSelected.Centralized.name:"Centralized",
-                AlgorithmSelected.FedAvg.name:"FedAvg",
-                AlgorithmSelected.pFedCK.name:"pFedCK"
-                }
-    colors = {"CPL-Fed,VGG": "blue",
-              "CPL-Fed,AlexNet": "red",
-              "FedMd": "Green",
-              "No FL": "Gray",
-              "FedAvg": "brown",
-              "pFedCK": "purple"}
+
+
 
 
     all_data = read_all_pkls("all_pickles_data")
