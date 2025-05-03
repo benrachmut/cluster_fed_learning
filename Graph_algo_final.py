@@ -150,11 +150,11 @@ if __name__ == '__main__':
 
 
 
-    all_data = read_all_pkls("all_pickles_data")
+    all_data = read_all_pkls("data_algo")
     merged_dict1 = merge_dicts(all_data)
     top_what_list = [1,5,10]
     for top_what in top_what_list:
-        for data_type in [DataSet.CIFAR100.name]:
+        for data_type in [DataSet.EMNIST_balanced.name]:
             for dich in [5]:
                 merged_dict = merged_dict1[data_type][25][5][0.2][dich]
                 merged_dict = switch_algo_and_seed(merged_dict,dich)

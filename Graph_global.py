@@ -15,7 +15,7 @@ algo_names={AlgorithmSelected.PseudoLabelsClusters.name:"MAPFL"
                 }
 #1,2,3,5,7
 net_name = {"C_alex_S_alex": "S_AlexNet", "C_alex_S_vgg": "S_VGG-16"}#
-seeds_dict = {5:{DataSet.CIFAR100.name:[1,2,3,5,7],DataSet.CIFAR10.name:[2,4,5,6,9],DataSet.EMNIST_balanced.name:[],DataSet.TinyImageNet.name:[]}}
+seeds_dict = {5:{DataSet.CIFAR100.name:[1,2,3,5,7],DataSet.CIFAR10.name:[2,4,5,6,9],DataSet.EMNIST_balanced.name:[1,2,3,4,5,6,7,8],DataSet.TinyImageNet.name:[1,2,3,4,5,6,7,8]}}
 colors = {"MAPFL,VGG": "blue",
           "MAPFL,AlexNet": "red",
           "FedMd": "Green",
