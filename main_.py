@@ -455,7 +455,7 @@ def run_exp_by_algo():
 
 if __name__ == '__main__':
     print(device)
-    seed_num_list = [5]# 5,6,9[1,2,3,4,5,6,7,8,9]#10:[2,4,5,6,9]#100:[1,2,3,5,7]#[1,2,3,4,5,6,7,8,9]
+    seed_num_list = [6]# 5,6,9[1,2,3,4,5,6,7,8,9]#10:[2,4,5,6,9]#100:[1,2,3,5,7]#[1,2,3,4,5,6,7,8,9]
     data_sets_list = [DataSet.CIFAR10]
     num_clients_list = [25]#[25]
     num_opt_clusters_list =[5] #[5]
