@@ -458,7 +458,7 @@ if __name__ == '__main__':
     seed_num_list = [1]#10:[2,4,5,6,9]#100:[1,2,3,5,7]#[1,2,3,4,5,6,7,8,9]
     data_sets_list = [DataSet.CIFAR100]
     num_clients_list = [25]#[25]
-    num_opt_clusters_list =[5] #[5]
+    num_opt_clusters_list =[100] #[5]
     mix_percentage = 0.1
     server_split_ratio_list = [0.2]
     alpha_dichts =[5] #[3,2,100,10,5,1] #[3,2,1,]
