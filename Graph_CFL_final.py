@@ -44,7 +44,7 @@ if __name__ == '__main__':
 
 
 
-    all_data = read_all_pkls("graph_CFL_final")
+    all_data = read_all_pkls("data_client_server")
     merged_dict = merge_dicts(all_data)
 
     merged_dict = merged_dict["CIFAR100"][25][5][0.2]
