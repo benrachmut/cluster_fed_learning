@@ -1,0 +1,58 @@
+from Graph_algo_final import switch_algo_and_seed_algo
+from Graph_global import *
+from main_ import *
+
+
+def switch_algo_and_seed_client_server(merged_dict, dich):
+    rds = {}
+    for seed in seeds_dict[dich][data_type]:
+        for algo in merged_dict[seed]:
+            algo_name = algo_names[algo]
+
+            algo_name_list = get_PseudoLabelsClusters_name(algo,merged_dict[seed][algo])
+            for name_ in algo_name_list:
+                if name_ not in rds.keys() :
+                    name_to_place = ""
+                    if name_ == "MAPFL,VGG":
+                        name_to_place = "VGG"
+                    else:
+                        name_to_place = "AlexNet"
+
+                    rds[name_to_place] = []
+                rd_output = extract_rd_PseudoLabelsClusters_server_client(algo,merged_dict[seed][algo])#extract_rd(algo, )
+                for k,v in rd_output.items():
+                    if k not in rds:
+                        rds[k]=[]
+                    rds[k].append(v)
+    return rds
+
+
+if __name__ == '__main__':
+
+    cluster_names = {"Optimal":"CBG",1:"No Clusters"} #Cluster By Group
+
+    all_data = read_all_pkls("data_client_server")
+    merged_dict1 = merge_dicts(all_data)
+    top_what_list = [1,5,10]
+    for top_what in top_what_list:
+        for data_type in [DataSet.CIFAR100.name]:
+            for dich in [5,100]:
+                merged_dict = merged_dict1[data_type][25][5][0.2][dich]
+                merged_dict = switch_algo_and_seed_algo(merged_dict,dich,data_type)
+                new_name_dict = {}
+                for k,v in merged_dict.items():
+                    new_name_dict[change_dict_name_server_client[k]]=v
+                data_for_graph = collect_data_per_server_client_iteration(new_name_dict,top_what,data_type)
+                print()
+                if top_what == 1:
+                    y_label = "Top-1 Accuracy (%)"
+                if top_what == 5:
+                    y_label = "Top-5 Accuracy (%)"
+                if top_what == 10:
+                    y_label = "Top-10 Accuracy (%)"
+
+
+
+                create_algo_graph(data_for_graph, "Iteration", y_label, "figures",
+                                  "Algo_Comp" + data_type + "_top=" + str(top_what))
+
