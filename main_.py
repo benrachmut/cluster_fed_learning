@@ -462,7 +462,7 @@ if __name__ == '__main__':
     mix_percentage = 0.1
     server_split_ratio_list = [0.2]
     alpha_dichts =[5] #[3,2,100,10,5,1] #[3,2,1,]
-    cluster_additions = [2]#[-4,-3,-2,-1,0,1,2,3,4] #  # 0.96,0.5,0.75,1,1.25,1.5,1.75,2]
+    cluster_additions = [0]#[-4,-3,-2,-1,0,1,2,3,4] #  # 0.96,0.5,0.75,1,1.25,1.5,1.75,2]
     print("epsilons:", cluster_additions)
     print(("alpha_dichts", alpha_dichts))
     algorithm_selection_list =[AlgorithmSelected.PseudoLabelsClusters]#, AlgorithmSelected.NoFederatedLearning, AlgorithmSelected.pFedCK]#, AlgorithmSelected.NoFederatedLearning, AlgorithmSelected.pFedCK]#,AlgorithmSelected.PseudoLabelsClusters]
@@ -487,7 +487,7 @@ if __name__ == '__main__':
     server_feedback_technique_list = [ServerFeedbackTechnique.similar_to_cluster]#[ServerFeedbackTechnique.similar_to_cluster,ServerFeedbackTechnique.similar_to_client]
     num_cluster_list = [1]#[1,"Optimal"]
     weights_for_ps_list = [WeightForPS.withWeights]#,WeightForPS.withoutWeights ]
-    input_consistency_list = [InputConsistency.withInputConsistency]#,InputConsistency.withoutInputConsistency]
+    input_consistency_list = [InputConsistency.withoutInputConsistency]#,InputConsistency.withoutInputConsistency]
     # centralized
     nets_types_Centralized_list = [NetsType.S_vgg]
     num_cluster_Centralized_list = [1]
