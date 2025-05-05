@@ -19,8 +19,8 @@ change_dict_name_server_client = {"MAPFL,AlexNet":"AlexNet","MAPFL,VGG":"VGG"}
 net_name = {"C_alex_S_alex": "S_AlexNet", "C_alex_S_vgg": "S_VGG-16"}#
 seeds_dict = {100:{DataSet.CIFAR100.name:[1],DataSet.CIFAR10.name:[1],DataSet.EMNIST_balanced.name:[1],DataSet.TinyImageNet.name:[1]}
 
-
-,5:{DataSet.CIFAR100.name:[1,2,3,5,7],DataSet.CIFAR10.name:[2,4,5,6,9],DataSet.EMNIST_balanced.name:[1,2,3],DataSet.TinyImageNet.name:[1,2,3]}}
+#5:{DataSet.CIFAR100.name:[1,2,3,5,7],DataSet.CIFAR10.name:[2,4,5,6,9]
+,5:{DataSet.CIFAR100.name:[1,2,3],DataSet.CIFAR10.name:[2,4,5],DataSet.EMNIST_balanced.name:[1,2,3],DataSet.TinyImageNet.name:[1,2,3]}}
 colors = {"MAPFL,VGG": "blue",
           "MAPFL,AlexNet": "red",
           "FedMd": "Green",
@@ -239,7 +239,7 @@ def switch_algo_and_seed(merged_dict,dich,data_type):
             #ans[algo].append(merged_dict[seed][algo])
     return rds
 
-def create_2x2_algo_grid(all_data_dict, x_label, y_label_dict, y_lim_dict=None, confidence=0.95):
+def create_2x2_algo_grid(all_data_dict, x_label, y_label_dict, y_lim_dict=None, confidence=0.95, dich = 5):
     assert len(all_data_dict) == 4, "You must provide exactly 4 datasets for a 2x2 grid."
 
     linewidth = 2
@@ -311,10 +311,74 @@ def create_2x2_algo_grid(all_data_dict, x_label, y_label_dict, y_lim_dict=None, 
     fig.legend(global_lines, global_labels, loc='upper center', ncol=len(global_labels), fontsize=12, frameon=False)
 
     plt.tight_layout(rect=[0, 0, 1, 0.95])
+    fig.savefig("figures/all_algos_alpha_"+str(dich)+".pdf", format="pdf")
     plt.show()
     return fig
 
+def plot_model_server_client_grid(data_dict, x_label="Iterations", y_label="Top-1 Accuracy (%)", confidence=0.95):
+    assert len(data_dict) == 2, "Expected exactly 2 alphas for a 1x2 plot."
 
+    model_colors = {"AlexNet": "red", "VGG": "blue"}
+    line_styles = {"Server": "solid", "Clients": "dashed"}
+
+    fig, axs = plt.subplots(1, 2, figsize=(12, 5))
+    axs = axs.flatten()
+
+    global_lines = []
+    global_labels = []
+    seen_labels = set()
+
+    for i, (alpha_name, model_data) in enumerate(data_dict.items()):
+        ax = axs[i]
+        for model_name, role_data in model_data.items():
+            color = model_colors.get(model_name, "black")
+
+            for role, iter_data in role_data.items():
+                linestyle = line_styles.get(role, "solid")
+                x_values = sorted(iter_data.keys())
+                means = []
+                lower_bounds = []
+                upper_bounds = []
+
+                for it in x_values:
+                    vals = np.array(iter_data[it])
+                    mean = np.mean(vals)
+                    stderr = stats.sem(vals)
+                    n = len(vals)
+                    h = stderr * stats.t.ppf((1 + confidence) / 2., n - 1)
+
+                    means.append(mean)
+                    lower_bounds.append(mean - h)
+                    upper_bounds.append(mean + h)
+
+                x_values = np.array(x_values)
+                means = np.array(means)
+                lower_bounds = np.array(lower_bounds)
+                upper_bounds = np.array(upper_bounds)
+
+                label = f"{model_name}-{role}"
+                line, = ax.plot(x_values, means, label=label, color=color, linestyle=linestyle)
+                ax.fill_between(x_values, lower_bounds, upper_bounds, color=color, alpha=0.2, linestyle=linestyle)
+
+                # Add to global legend if not already included
+                if label not in seen_labels:
+                    global_lines.append(line)
+                    global_labels.append(label)
+                    seen_labels.add(label)
+
+        ax.set_title(f"$\\alpha = {alpha_name}$", fontsize=14)
+        ax.set_xlabel(x_label, fontsize=12)
+        ax.set_ylabel(y_label, fontsize=12)
+        ax.tick_params(axis='both', labelsize=10)
+
+    # Shared legend on top
+    fig.legend(global_lines, global_labels, loc='upper center', ncol=len(global_labels), fontsize=11, frameon=False)
+
+    plt.tight_layout(rect=[0, 0, 1, 0.92])  # Leave room for legend
+    fig.savefig("figures/client_server_alphas"+".pdf", format="pdf")
+
+    plt.show()
+    return fig
 
 def get_PseudoLabelsClusters_name(algo,dict_):
     ans = []
@@ -472,7 +536,8 @@ def collect_data_per_server_client_iteration(merged_dict,top_what,data_type):
 
         #ans[algo] = data_per_iteration_client
         ans[algo]={"Clients":data_per_iteration_client}
-        ans[algo]={"Server":data_per_iteration_server}
+        ans[algo]["Server"] = data_per_iteration_server
+        print()
 
     return ans
 
