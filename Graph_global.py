@@ -17,7 +17,7 @@ algo_names={AlgorithmSelected.PseudoLabelsClusters.name:"MAPFL"
 
 change_dict_name_server_client = {"MAPFL,AlexNet":"AlexNet","MAPFL,VGG":"VGG"}
 net_name = {"C_alex_S_alex": "S_AlexNet", "C_alex_S_vgg": "S_VGG-16"}#
-seeds_dict = {100:{DataSet.CIFAR100.name:[1],DataSet.CIFAR10.name:[1],DataSet.EMNIST_balanced.name:[1],DataSet.TinyImageNet.name:[1]}
+seeds_dict = {100:{DataSet.CIFAR100.name:[1],DataSet.CIFAR10.name:[2],DataSet.EMNIST_balanced.name:[1],DataSet.TinyImageNet.name:[1]}
 
 #5:{DataSet.CIFAR100.name:[1,2,3,5,7],DataSet.CIFAR10.name:[2,4,5,6,9]
 ,5:{DataSet.CIFAR100.name:[1,2,3],DataSet.CIFAR10.name:[2,4,5],DataSet.EMNIST_balanced.name:[1,2,3],DataSet.TinyImageNet.name:[1,2,3]}}
@@ -68,8 +68,8 @@ def merge_dicts(dict_list):
 
 axes_titles_font = 14
 axes_number_font = 14
-legend_font_size = 8
-tick_font_size = 10
+legend_font_size = 14
+tick_font_size = 14
 linewidth = 3
 
 
@@ -294,21 +294,26 @@ def create_2x2_algo_grid(all_data_dict, x_label, y_label_dict, y_lim_dict=None, 
                 already_plotted_algorithms.add(algorithm_name)
 
             ax.fill_between(x_values, lower_bounds, upper_bounds, color=color, alpha=0.2)
+        # axes_titles_font = 14
+        # axes_number_font = 14
+        # legend_font_size = 14
+        # tick_font_size = 10
+        ax.set_title(title, fontsize=axes_number_font)
+        ax.set_xlabel(x_label, fontsize=axes_titles_font)
 
-        ax.set_title(title, fontsize=14)
-        ax.set_xlabel(x_label, fontsize=12)
-        ax.set_ylabel(y_label_dict.get(title, "Metric"), fontsize=12)
+
+        ax.set_ylabel(y_label_dict.get(title, "Metric"), fontsize=axes_titles_font)
 
         # 🔽 Set y-axis limit if specified for this plot
         if y_lim_dict and title in y_lim_dict:
             ax.set_ylim(y_lim_dict[title])
 
-        ax.tick_params(axis='both', labelsize=10)
+        ax.tick_params(axis='both', labelsize=tick_font_size)
 
     for j in range(len(all_data_dict), 4):
-        fig.delaxes(axs[j])
+        fig.delaxes(axs[j],fontsize=axes_titles_font)
 
-    fig.legend(global_lines, global_labels, loc='upper center', ncol=len(global_labels), fontsize=12, frameon=False)
+    fig.legend(global_lines, global_labels, loc='upper center', ncol=len(global_labels), fontsize=legend_font_size, frameon=False)
 
     plt.tight_layout(rect=[0, 0, 1, 0.95])
     fig.savefig("figures/all_algos_alpha_"+str(dich)+".pdf", format="pdf")
@@ -321,12 +326,29 @@ def plot_model_server_client_grid(data_dict, x_label="Iterations", y_label="Top-
     model_colors = {"AlexNet": "red", "VGG": "blue"}
     line_styles = {"Server": "solid", "Clients": "dashed"}
 
+    # Font sizes
+    axes_titles_font = 14
+    axes_number_font = 14
+    legend_font_size = 12
+    tick_font_size = 12
+
     fig, axs = plt.subplots(1, 2, figsize=(12, 5))
     axs = axs.flatten()
 
     global_lines = []
     global_labels = []
     seen_labels = set()
+
+    # First, compute global ymin and ymax
+    all_vals = []
+    for model_data in data_dict.values():
+        for role_data in model_data.values():
+            for iter_data in role_data.values():
+                for vals in iter_data.values():
+                    all_vals.extend(vals)
+
+    ymin = 10
+    ymax = 36
 
     for i, (alpha_name, model_data) in enumerate(data_dict.items()):
         ax = axs[i]
@@ -360,22 +382,20 @@ def plot_model_server_client_grid(data_dict, x_label="Iterations", y_label="Top-
                 line, = ax.plot(x_values, means, label=label, color=color, linestyle=linestyle)
                 ax.fill_between(x_values, lower_bounds, upper_bounds, color=color, alpha=0.2, linestyle=linestyle)
 
-                # Add to global legend if not already included
                 if label not in seen_labels:
                     global_lines.append(line)
                     global_labels.append(label)
                     seen_labels.add(label)
 
-        ax.set_title(f"$\\alpha = {alpha_name}$", fontsize=14)
-        ax.set_xlabel(x_label, fontsize=12)
-        ax.set_ylabel(y_label, fontsize=12)
-        ax.tick_params(axis='both', labelsize=10)
+        ax.set_title(f"$\\alpha = {alpha_name}$", fontsize=axes_number_font)
+        ax.set_xlabel(x_label, fontsize=axes_titles_font)
+        ax.set_ylabel(y_label, fontsize=axes_titles_font)
+        ax.tick_params(axis='both', labelsize=tick_font_size)
+        ax.set_ylim(ymin, ymax)  # <-- Force same y-limits
 
-    # Shared legend on top
-    fig.legend(global_lines, global_labels, loc='upper center', ncol=len(global_labels), fontsize=11, frameon=False)
-
-    plt.tight_layout(rect=[0, 0, 1, 0.92])  # Leave room for legend
-    fig.savefig("figures/client_server_alphas"+".pdf", format="pdf")
+    fig.legend(global_lines, global_labels, loc='upper center', ncol=len(global_labels), fontsize=legend_font_size, frameon=False)
+    plt.tight_layout(rect=[0, 0, 1, 0.92])
+    fig.savefig("figures/client_server_alphas.pdf", format="pdf")
 
     plt.show()
     return fig

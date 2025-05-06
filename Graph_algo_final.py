@@ -33,7 +33,7 @@ if __name__ == '__main__':
     what_top_dict = {DataSet.CIFAR100.name:1,DataSet.CIFAR10.name:1,DataSet.TinyImageNet.name:5,DataSet.EMNIST_balanced.name:1}
     #for top_what in top_what_list:
     data_for_graph={}
-    for dich  in [5]:
+    for dich  in [100]:
         for data_type in [DataSet.CIFAR100.name,DataSet.CIFAR10.name,DataSet.TinyImageNet.name,DataSet.EMNIST_balanced.name]:
             merged_dict = merged_dict1[data_type][25][5][0.2][dich]
             merged_dict = switch_algo_and_seed(merged_dict, dich=dich,data_type=data_type)
