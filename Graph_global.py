@@ -66,9 +66,9 @@ def merge_dicts(dict_list):
                 combined[key] = value  # Add new key-value pair
     return combined
 
-axes_titles_font = 14
+axes_titles_font = 16
 axes_number_font = 14
-legend_font_size = 14
+legend_font_size = 16
 tick_font_size = 14
 linewidth = 3
 
@@ -113,6 +113,14 @@ def update_data(data, data_type):
         new_xy[0.0] = start_point[data_type]             # add new point at x = 0
         data[algo] = dict(sorted(new_xy.items()))        # optional: sort by x if desired
 
+def update_data_v2(data, data_type):
+    #for algo, xy_dict in data.items():
+    new_xy = {x + 1: y for x, y in data.items()}  # shift x keys by +1
+    new_xy[0.0] = []
+    for _ in range(0,len(new_xy[1])):
+        new_xy[0.0].append(start_point[data_type])             # add new point at x = 0
+    data = dict(sorted(new_xy.items()))
+    return data
 def create_algo_graph(data, x_label, y_label, folder_to_save, figure_name,y_lim = None,confidence = 0.95):
     linewidth = 2
     markersize = 3
@@ -326,11 +334,7 @@ def plot_model_server_client_grid(data_dict, x_label="Iterations", y_label="Top-
     model_colors = {"AlexNet": "red", "VGG": "blue"}
     line_styles = {"Server": "solid", "Clients": "dashed"}
 
-    # Font sizes
-    axes_titles_font = 14
-    axes_number_font = 14
-    legend_font_size = 12
-    tick_font_size = 12
+
 
     fig, axs = plt.subplots(1, 2, figsize=(12, 5))
     axs = axs.flatten()
@@ -347,7 +351,7 @@ def plot_model_server_client_grid(data_dict, x_label="Iterations", y_label="Top-
                 for vals in iter_data.values():
                     all_vals.extend(vals)
 
-    ymin = 10
+    ymin = 20
     ymax = 36
 
     for i, (alpha_name, model_data) in enumerate(data_dict.items()):
@@ -553,6 +557,8 @@ def collect_data_per_server_client_iteration(merged_dict,top_what,data_type):
                         data_per_iteration_server[iter_] = []
                     data_per_iteration_server[iter_].append(v)
 
+        data_per_iteration_client = update_data_v2(data_per_iteration_client, data_type)
+        data_per_iteration_server = update_data_v2(data_per_iteration_server, data_type)
 
         #ans[algo] = data_per_iteration_client
         ans[algo]={"Clients":data_per_iteration_client}
