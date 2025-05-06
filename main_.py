@@ -459,13 +459,13 @@ if __name__ == '__main__':
     data_sets_list = [DataSet.CIFAR100]
     num_clients_list = [25]#[25]
     num_opt_clusters_list =[5] #[5]
-    mix_percentage = 0.1
+    mix_percentage = 0.2
     server_split_ratio_list = [0.2]
     alpha_dichts =[5] #[3,2,100,10,5,1] #[3,2,1,]
-    cluster_additions = [-4]#[-4,-3,-2,-1,0,1,2,3,4] #  # 0.96,0.5,0.75,1,1.25,1.5,1.75,2]
+    cluster_additions = [0]#[-4,-3,-2,-1,0,1,2,3,4] #  # 0.96,0.5,0.75,1,1.25,1.5,1.75,2]
     print("epsilons:", cluster_additions)
     print(("alpha_dichts", alpha_dichts))
-    algorithm_selection_list =[AlgorithmSelected.PseudoLabelsClusters]#, AlgorithmSelected.NoFederatedLearning, AlgorithmSelected.pFedCK]#, AlgorithmSelected.NoFederatedLearning, AlgorithmSelected.pFedCK]#,AlgorithmSelected.PseudoLabelsClusters]
+    algorithm_selection_list =[AlgorithmSelected.PseudoLabelsNoServerModel]#, AlgorithmSelected.NoFederatedLearning, AlgorithmSelected.pFedCK]#, AlgorithmSelected.NoFederatedLearning, AlgorithmSelected.pFedCK]#,AlgorithmSelected.PseudoLabelsClusters]
     #[AlgorithmSelected.PseudoLabelsNoServerModel]
     #[AlgorithmSelected.PseudoLabelsNoServerModel,AlgorithmSelected.FedAvg, AlgorithmSelected.NoFederatedLearning, AlgorithmSelected.pFedCK]
     #[AlgorithmSelected.PseudoLabelsClusters]
