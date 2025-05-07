@@ -26,7 +26,7 @@ if __name__ == '__main__':
 
     cluster_names = {"Optimal":"CBG",1:"No Clusters"} #Cluster By Group
 
-    all_data = read_all_pkls("tttt")#("data_algo")
+    all_data = read_all_pkls("data_algo")#("data_algo")
     merged_dict1 = merge_dicts(all_data)
     #top_what_list = [1,5,10]
 
@@ -34,14 +34,14 @@ if __name__ == '__main__':
     #for top_what in top_what_list:
     data_for_graph={}
     for dich  in [5]:
-        for data_type in [DataSet.CIFAR100.name]:#[DataSet.CIFAR100.name,DataSet.CIFAR10.name,DataSet.TinyImageNet.name,DataSet.EMNIST_balanced.name]:
+        for data_type in [DataSet.CIFAR100.name,DataSet.CIFAR10.name,DataSet.TinyImageNet.name,DataSet.EMNIST_balanced.name]:
             merged_dict = merged_dict1[data_type][25][5][0.2][dich]
             merged_dict = switch_algo_and_seed(merged_dict, dich=dich,data_type=data_type)
             data_for_graph[data_type] = collect_data_per_iteration(merged_dict,what_top_dict[data_type],data_type)
 
 
         y_label_dict = {DataSet.CIFAR100.name:"Top-1 Accuracy (%)",DataSet.CIFAR10.name:"Top-1 Accuracy (%)",DataSet.TinyImageNet.name:"Top-5 Accuracy (%)",DataSet.EMNIST_balanced.name:"Top-1 Accuracy (%)"}
-        y_lim = {DataSet.CIFAR100.name:[0,37],DataSet.CIFAR10.name:[60,80],DataSet.TinyImageNet.name:[0,40],DataSet.EMNIST_balanced.name:[60,95]}
+        y_lim = {DataSet.CIFAR100.name:[0,37],DataSet.CIFAR10.name:[60,80],DataSet.TinyImageNet.name:[0,40],DataSet.EMNIST_balanced.name:[70,95]}
         #y_lim = None
         #if data_type == DataSet.CIFAR10.name and top_what == 1:
         #    y_lim = [60,83]

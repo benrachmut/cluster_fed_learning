@@ -12,7 +12,7 @@ def switch_algo_and_seed_client_server(merged_dict, dich):
             for name_ in algo_name_list:
                 if name_ not in rds.keys() :
                     name_to_place = ""
-                    if name_ == "MAPFL,VGG":
+                    if name_ == "MAPL,VGG":
                         name_to_place = "VGG"
                     else:
                         name_to_place = "AlexNet"

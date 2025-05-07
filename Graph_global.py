@@ -6,7 +6,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from scipy import stats
 
-algo_names={AlgorithmSelected.PseudoLabelsClusters.name:"MAPFL"
+algo_names={AlgorithmSelected.PseudoLabelsClusters.name:"MAPL"
         ,AlgorithmSelected.PseudoLabelsNoServerModel.name:"FedMd",
         AlgorithmSelected.NoFederatedLearning.name:"No FL",
         AlgorithmSelected.Centralized.name:"Centralized",
@@ -15,14 +15,14 @@ algo_names={AlgorithmSelected.PseudoLabelsClusters.name:"MAPFL"
                 }
 #1,2,3,5,7
 
-change_dict_name_server_client = {"MAPFL,AlexNet":"AlexNet","MAPFL,VGG":"VGG"}
+change_dict_name_server_client = {"MAPL,AlexNet":"AlexNet","MAPL,VGG":"VGG"}
 net_name = {"C_alex_S_alex": "S_AlexNet", "C_alex_S_vgg": "S_VGG-16"}#
 seeds_dict = {100:{DataSet.CIFAR100.name:[1],DataSet.CIFAR10.name:[2],DataSet.EMNIST_balanced.name:[1],DataSet.TinyImageNet.name:[1]}
 
 #5:{DataSet.CIFAR100.name:[1,2,3,5,7],DataSet.CIFAR10.name:[2,4,5,6,9]
 ,5:{DataSet.CIFAR100.name:[1,2,3],DataSet.CIFAR10.name:[2,4,5],DataSet.EMNIST_balanced.name:[1,2,3],DataSet.TinyImageNet.name:[1,2,3]}}
-colors = {"MAPFL,VGG": "blue",
-          "MAPFL,AlexNet": "red",
+colors = {"MAPL,VGG": "blue",
+          "MAPL,AlexNet": "red",
           "FedMd": "Green",
           "No FL": "Gray",
           "FedAvg": "brown",
@@ -488,7 +488,7 @@ def extract_rd_PseudoLabelsClusters_server_client(algo,dict_):
         rd = dict_1["multi_model"]["max"][ClusterTechnique.greedy_elimination_L2.name]["similar_to_cluster"][0][
                 WeightForPS.withWeights.name][InputConsistency.withInputConsistency.name]
 
-        if name == "MAPFL,VGG":
+        if name == "MAPL,VGG":
             name_to_place = "VGG"
         else:
             name_to_place = "AlexNet"
