@@ -219,6 +219,38 @@ import numpy as np
 import matplotlib.pyplot as plt
 from scipy import stats
 
+def get_clusters_list():
+
+def switch_algo_and_seed_cluster(merged_dict,dich,data_type):
+    rds = {}
+    for seed in seeds_dict[dich][data_type]:
+        get_clusters_list(merged_dict())
+
+        for algo in merged_dict[seed]:
+            algo_name = algo_names[algo]
+            if algo == AlgorithmSelected.PseudoLabelsClusters.name:
+                algo_name_list = get_PseudoLabelsClusters_name(algo,merged_dict[seed][algo])
+                for name_ in algo_name_list:
+                    if name_ not in rds.keys() :
+                        rds[name_] = []
+
+            elif algo_name not in rds.keys() :
+                rds[algo_name] = []
+
+
+            rd_output = extract_rd(algo, merged_dict[seed][algo])
+            if isinstance(rd_output,dict):
+                for k,v in rd_output.items():
+                    if k not in rds:
+                        rds[k]=[]
+                    rds[k].append(v)
+            else:
+                rds[algo_name].append(rd_output)
+
+
+
+            #ans[algo].append(merged_dict[seed][algo])
+    return rds
 
 def switch_algo_and_seed(merged_dict,dich,data_type):
     rds = {}
@@ -247,7 +279,7 @@ def switch_algo_and_seed(merged_dict,dich,data_type):
             #ans[algo].append(merged_dict[seed][algo])
     return rds
 
-def create_2x2_algo_grid(all_data_dict, x_label, y_label_dict, y_lim_dict=None, confidence=0.95, dich = 5):
+def create_2x2_algo_grid(all_data_dict, x_label, y_label_dict, y_lim_dict=None, confidence=0.95, dich=5):
     assert len(all_data_dict) == 4, "You must provide exactly 4 datasets for a 2x2 grid."
 
     linewidth = 2
@@ -259,6 +291,9 @@ def create_2x2_algo_grid(all_data_dict, x_label, y_label_dict, y_lim_dict=None, 
     global_lines = []
     global_labels = []
     already_plotted_algorithms = set()
+
+    # Manual order of algorithms in the legend
+    manual_legend_order = [ "MAPL,VGG", "pFedCK", "FedMd","FedAvg", "No FL"]
 
     for i, (title, data) in enumerate(all_data_dict.items()):
         ax = axs[i]
@@ -302,29 +337,34 @@ def create_2x2_algo_grid(all_data_dict, x_label, y_label_dict, y_lim_dict=None, 
                 already_plotted_algorithms.add(algorithm_name)
 
             ax.fill_between(x_values, lower_bounds, upper_bounds, color=color, alpha=0.2)
-        # axes_titles_font = 14
-        # axes_number_font = 14
-        # legend_font_size = 14
-        # tick_font_size = 10
+
         ax.set_title(title, fontsize=axes_number_font)
         ax.set_xlabel(x_label, fontsize=axes_titles_font)
-
-
         ax.set_ylabel(y_label_dict.get(title, "Metric"), fontsize=axes_titles_font)
 
-        # 🔽 Set y-axis limit if specified for this plot
         if y_lim_dict and title in y_lim_dict:
             ax.set_ylim(y_lim_dict[title])
 
         ax.tick_params(axis='both', labelsize=tick_font_size)
 
-    for j in range(len(all_data_dict), 4):
-        fig.delaxes(axs[j],fontsize=axes_titles_font)
+    # Reorder the lines and labels manually as per the desired order
+    sorted_lines = []
+    sorted_labels = []
+    for label in manual_legend_order:
+        if label in global_labels:
+            idx = global_labels.index(label)
+            sorted_lines.append(global_lines[idx])
+            sorted_labels.append(global_labels[idx])
 
+    # Now update global_lines and global_labels to reflect the manual order
+    global_lines = sorted_lines
+    global_labels = sorted_labels
+
+    # Create the legend with the manually ordered lines and labels
     fig.legend(global_lines, global_labels, loc='upper center', ncol=len(global_labels), fontsize=legend_font_size, frameon=False)
 
     plt.tight_layout(rect=[0, 0, 1, 0.95])
-    fig.savefig("figures/all_algos_alpha_"+str(dich)+".pdf", format="pdf")
+    fig.savefig("figures/all_algos_alpha_" + str(dich) + ".pdf", format="pdf")
     plt.show()
     return fig
 
@@ -495,6 +535,8 @@ def extract_rd_PseudoLabelsClusters_server_client(algo,dict_):
         ans[name_to_place] = rd
 
     return ans
+
+
 
 def extract_rd_PseudoLabelsClusters(algo,dict_):
     ans = {}

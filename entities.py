@@ -509,6 +509,8 @@ class LearningEntity(ABC):
         return avg_loss  # Return the average loss
 
 
+
+
 class Client(LearningEntity):
     def __init__(self, id_, client_data, global_data,global_test_data,local_test_data):
         LearningEntity.__init__(self,id_,global_data,global_test_data)
@@ -640,6 +642,8 @@ class Client(LearningEntity):
 
             self.pseudo_label_to_send = self.evaluate()
             what_to_send = self.pseudo_label_to_send
+
+
             self.size_sent[t] = (what_to_send.numel() * what_to_send.element_size()) / (1024 * 1024)
             self.pseudo_label_L2[t] = self.get_pseudo_label_L2(what_to_send)
             acc = self.evaluate_accuracy_single(self.local_test_set)
@@ -667,6 +671,11 @@ class Client(LearningEntity):
                 else:
                     self.model.apply(self.initialize_weights)
         print("hi")
+
+
+        #self.print_grad_size()
+
+
         self.accuracy_per_client_1[t] = self.evaluate_accuracy_single(self.local_test_set, k=1)
         self.accuracy_per_client_10[t] = self.evaluate_accuracy(self.local_test_set, k=10)
         self.accuracy_per_client_100[t] = self.evaluate_accuracy(self.local_test_set, k=100)
@@ -1056,6 +1065,25 @@ class Client(LearningEntity):
 
         return result_to_print
 
+    def print_grad_size(self):
+
+        # Measure total gradient size (L2 norm and memory in bytes)
+        total_grad_elements = 0
+        total_grad_bytes = 0
+        grad_norms = []
+
+        for param in self.model.parameters():
+            if param.grad is not None:
+                total_grad_elements += param.grad.numel()
+                total_grad_bytes += param.grad.numel() * param.grad.element_size()
+                grad_norms.append(param.grad.detach().norm(2))
+
+        if grad_norms:
+            total_l2_norm = torch.norm(torch.stack(grad_norms), 2).item()
+            print(f"Total gradient L2 norm: {total_l2_norm:.4f}")
+        print(f"Total gradient elements: {total_grad_elements}")
+        print(f"Total gradient size: {total_grad_bytes / 1024 / 1024:.4f} MB")
+        print()
 
 class Client_pFedCK(Client):
     def __init__(self, id_, client_data, global_data, global_test_data, local_test_data):

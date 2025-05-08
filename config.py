@@ -132,6 +132,7 @@ class AlgorithmSelected(Enum):
     Centralized = 5
     FedAvg = 6
     pFedCK = 7
+    COMET = 8
 class DataDistTypes(Enum):
     NaiveNonIID = 1
     Dirichlet1 = 2

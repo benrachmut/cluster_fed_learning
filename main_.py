@@ -428,6 +428,54 @@ def run_PseudoLabelsNoServerModel():
                                                cluster_technique, server_feedback_technique,
                                                num_clusters)
 
+def run_COMET():
+    for net_type in nets_types_list_PseudoLabelsClusters:
+        experiment_config.update_net_type(net_type)
+
+        data_to_pickle[data_set.name][num_clients][num_opt_clusters][server_split_ratio][
+            alpha_dicht][experiment_config.seed_num][algorithm_selection.name][net_type.name] = {}
+
+        for net_cluster_technique in net_cluster_technique_list:
+            experiment_config.net_cluster_technique = net_cluster_technique
+            data_to_pickle[data_set.name][num_clients][num_opt_clusters][server_split_ratio][
+                alpha_dicht][experiment_config.seed_num][
+                algorithm_selection.name][net_type.name][net_cluster_technique.name] = {}
+
+            for server_input_tech in server_input_tech_list:
+                experiment_config.server_input_tech = server_input_tech
+                data_to_pickle[data_set.name][num_clients][num_opt_clusters][server_split_ratio][alpha_dicht][experiment_config.seed_num][
+                    algorithm_selection.name][net_type.name][net_cluster_technique.name][server_input_tech.name] = {}
+
+                for cluster_technique in [ClusterTechnique.kmeans]:
+                    experiment_config.cluster_technique = cluster_technique
+                    data_to_pickle[data_set.name][num_clients][num_opt_clusters][server_split_ratio][alpha_dicht][experiment_config.seed_num][
+                        algorithm_selection.name][net_type.name][net_cluster_technique.name][
+                        server_input_tech.name][cluster_technique.name] = {}
+
+                    for server_feedback_technique in [ServerFeedbackTechnique.similar_to_client]:
+                        experiment_config.server_feedback_technique = server_feedback_technique
+                        data_to_pickle[data_set.name][num_clients][num_opt_clusters][server_split_ratio][alpha_dicht][experiment_config.seed_num][
+                            algorithm_selection.name][net_type.name][net_cluster_technique.name][
+                            server_input_tech.name][cluster_technique.name][server_feedback_technique.name] = {}
+
+                        for num_clusters in [5]:
+                            experiment_config.num_clusters = num_clusters
+
+
+
+                            clients, clients_ids, clients_test_by_id_dict = create_clients(clients_train_data_dict,
+                                                                                           server_train_data,
+                                                                                           clients_test_data_dict,
+                                                                                           server_test_data)
+                            server = Server_PseudoLabelsNoServerModel(id_="server", global_data=server_train_data,
+                                                                      test_data=server_test_data,
+                                                                      clients_ids=clients_ids,
+                                                                      clients_test_data_dict=clients_test_by_id_dict)
+
+                            iterate_fl_clusters(clients, server, net_type, net_cluster_technique, server_input_tech,
+                                               cluster_technique, server_feedback_technique,
+                                               num_clusters)
+
 def run_exp_by_algo():
     experiment_config.weights_for_ps = WeightForPS.withoutWeights
     experiment_config.input_consistency = InputConsistency.withoutInputConsistency
@@ -437,6 +485,9 @@ def run_exp_by_algo():
 
     if algorithm_selection == AlgorithmSelected.PseudoLabelsNoServerModel:
         run_PseudoLabelsNoServerModel()  # Running
+
+    if algorithm_selection == AlgorithmSelected.COMET:
+        run_COMET()
 
     if algorithm_selection == AlgorithmSelected.NoFederatedLearning:
         run_NoFederatedLearning()
@@ -455,7 +506,7 @@ def run_exp_by_algo():
 
 if __name__ == '__main__':
     print(device)
-    seed_num_list = [2]#10:[2,4,5,6,9]#100:[1,2,3,5,7]#[1,2,3,4,5,6,7,8,9]
+    seed_num_list = [1,2,3]#10:[2,4,5,6,9]#100:[1,2,3,5,7]#[1,2,3,4,5,6,7,8,9]
     data_sets_list = [DataSet.CIFAR100]
     num_clients_list = [25]#[25]
     num_opt_clusters_list =[5] #[5]
@@ -465,7 +516,7 @@ if __name__ == '__main__':
     cluster_additions = [0]#[-4,-3,-2,-1,0,1,2,3,4] #  # 0.96,0.5,0.75,1,1.25,1.5,1.75,2]
     print("epsilons:", cluster_additions)
     print(("alpha_dichts", alpha_dichts))
-    algorithm_selection_list =[AlgorithmSelected.PseudoLabelsClusters]#, AlgorithmSelected.NoFederatedLearning, AlgorithmSelected.pFedCK]#, AlgorithmSelected.NoFederatedLearning, AlgorithmSelected.pFedCK]#,AlgorithmSelected.PseudoLabelsClusters]
+    algorithm_selection_list =[AlgorithmSelected.COMET]#, AlgorithmSelected.NoFederatedLearning, AlgorithmSelected.pFedCK]#, AlgorithmSelected.NoFederatedLearning, AlgorithmSelected.pFedCK]#,AlgorithmSelected.PseudoLabelsClusters]
     #[AlgorithmSelected.PseudoLabelsNoServerModel]
     #[AlgorithmSelected.PseudoLabelsNoServerModel,AlgorithmSelected.FedAvg, AlgorithmSelected.NoFederatedLearning, AlgorithmSelected.pFedCK]
     #[AlgorithmSelected.PseudoLabelsClusters]
@@ -487,7 +538,7 @@ if __name__ == '__main__':
     server_feedback_technique_list = [ServerFeedbackTechnique.similar_to_cluster]#[ServerFeedbackTechnique.similar_to_cluster,ServerFeedbackTechnique.similar_to_client]
     num_cluster_list = [1]#[1,"Optimal"]
     weights_for_ps_list = [WeightForPS.withWeights]#,WeightForPS.withoutWeights ]
-    input_consistency_list = [InputConsistency.withoutInputConsistency]#,InputConsistency.withoutInputConsistency]
+    input_consistency_list = [InputConsistency.withInputConsistency]#,InputConsistency.withoutInputConsistency]
     # centralized
     nets_types_Centralized_list = [NetsType.S_vgg]
     num_cluster_Centralized_list = [1]
