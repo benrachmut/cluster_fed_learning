@@ -236,7 +236,7 @@ class ExperimentConfig:
             if self.algorithm_selection == AlgorithmSelected.COMET:
                 self.learning_rate_train_c = 0.0008
             elif self.algorithm_selection == AlgorithmSelected.PseudoLabelsNoServerModel:
-                self.learning_rate_train_c = 0.001
+                self.learning_rate_train_c = 0.002
             else:
                 self.learning_rate_train_c = 0.0001
 
