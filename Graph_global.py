@@ -11,8 +11,10 @@ algo_names={AlgorithmSelected.PseudoLabelsClusters.name:"MAPL"
         AlgorithmSelected.NoFederatedLearning.name:"No FL",
         AlgorithmSelected.Centralized.name:"Centralized",
                 AlgorithmSelected.FedAvg.name:"FedAvg",
-                AlgorithmSelected.pFedCK.name:"pFedCK"
-                }
+                AlgorithmSelected.pFedCK.name:"pFedCK",
+            AlgorithmSelected.COMET.name: "COMET"
+
+            }
 #1,2,3,5,7
 
 change_dict_name_server_client = {"MAPL,AlexNet":"AlexNet","MAPL,VGG":"VGG"}
@@ -20,13 +22,15 @@ net_name = {"C_alex_S_alex": "S_AlexNet", "C_alex_S_vgg": "S_VGG-16"}#
 seeds_dict = {100:{DataSet.CIFAR100.name:[1],DataSet.CIFAR10.name:[2],DataSet.EMNIST_balanced.name:[1],DataSet.TinyImageNet.name:[1]}
 
 #5:{DataSet.CIFAR100.name:[1,2,3,5,7],DataSet.CIFAR10.name:[2,4,5,6,9]
-,5:{DataSet.CIFAR100.name:[1,2,3],DataSet.CIFAR10.name:[2,4,5],DataSet.EMNIST_balanced.name:[1,2,3],DataSet.TinyImageNet.name:[1,2,3]}}
+,5:{DataSet.CIFAR100.name:[1],DataSet.CIFAR10.name:[2,4,5],DataSet.EMNIST_balanced.name:[1,2,3],DataSet.TinyImageNet.name:[1]}}
 colors = {"MAPL,VGG": "blue",
+"COMET":"Orange",
           "MAPL,AlexNet": "red",
           "FedMd": "Green",
           "No FL": "Gray",
           "FedAvg": "brown",
-          "pFedCK": "purple"}
+          "pFedCK": "purple"
+          }
 
 def read_all_pkls(folder_path):
     # Path to the folder containing pickle files
@@ -219,37 +223,19 @@ import numpy as np
 import matplotlib.pyplot as plt
 from scipy import stats
 
-def get_clusters_list():
+
+
 
 def switch_algo_and_seed_cluster(merged_dict,dich,data_type):
     rds = {}
     for seed in seeds_dict[dich][data_type]:
-        get_clusters_list(merged_dict())
-
-        for algo in merged_dict[seed]:
-            algo_name = algo_names[algo]
-            if algo == AlgorithmSelected.PseudoLabelsClusters.name:
-                algo_name_list = get_PseudoLabelsClusters_name(algo,merged_dict[seed][algo])
-                for name_ in algo_name_list:
-                    if name_ not in rds.keys() :
-                        rds[name_] = []
-
-            elif algo_name not in rds.keys() :
-                rds[algo_name] = []
-
-
-            rd_output = extract_rd(algo, merged_dict[seed][algo])
-            if isinstance(rd_output,dict):
-                for k,v in rd_output.items():
-                    if k not in rds:
-                        rds[k]=[]
-                    rds[k].append(v)
-            else:
-                rds[algo_name].append(rd_output)
-
-
-
-            #ans[algo].append(merged_dict[seed][algo])
+        temp_dict = merged_dict[seed][AlgorithmSelected.PseudoLabelsClusters.name][NetsType.C_alex_S_vgg.name]["multi_model"]["max"][ClusterTechnique.greedy_elimination_L2.name]["similar_to_cluster"]
+        for cluster_num,d2 in temp_dict.items():
+            cluster_correct_num = cluster_num+5
+            rd = d2[WeightForPS.withWeights.name][InputConsistency.withInputConsistency.name]
+            if cluster_correct_num not in rds:
+                rds[cluster_correct_num] = []
+            rds[cluster_correct_num].append(rd)
     return rds
 
 def switch_algo_and_seed(merged_dict,dich,data_type):
@@ -293,7 +279,7 @@ def create_2x2_algo_grid(all_data_dict, x_label, y_label_dict, y_lim_dict=None, 
     already_plotted_algorithms = set()
 
     # Manual order of algorithms in the legend
-    manual_legend_order = [ "MAPL,VGG", "pFedCK", "FedMd","FedAvg", "No FL"]
+    manual_legend_order = [ "MAPL,VGG", "pFedCK", "FedMd","FedAvg", "No FL","COMET"]
 
     for i, (title, data) in enumerate(all_data_dict.items()):
         ax = axs[i]
@@ -368,6 +354,58 @@ def create_2x2_algo_grid(all_data_dict, x_label, y_label_dict, y_lim_dict=None, 
     plt.show()
     return fig
 
+
+def create_single_avg_plot(data_dict, x_label="X", y_label="Y", confidence=0.95, output_path="figures/number_of_clusters.pdf"):
+    """
+    Plots a blue average curve with confidence intervals from a dictionary.
+
+    Parameters:
+        data_dict (dict): Keys are x-values, values are lists of y-values.
+        x_label (str): Label for the x-axis.
+        y_label (str): Label for the y-axis.
+        confidence (float): Confidence level for shading (default is 0.95).
+        output_path (str): Path to save the figure as a PDF.
+    """
+    # Sort the data by x-values
+    sorted_items = sorted(data_dict.items())
+    x_vals = np.array([x for x, _ in sorted_items])
+    means = []
+    lower_bounds = []
+    upper_bounds = []
+
+    for _, values in sorted_items:
+        values = np.array(values)
+        mean = np.mean(values)
+        stderr = stats.sem(values)
+        n = len(values)
+        h = stderr * stats.t.ppf((1 + confidence) / 2., n - 1) if n > 1 else 0
+
+        means.append(mean)
+        lower_bounds.append(mean - h)
+        upper_bounds.append(mean + h)
+
+    means = np.array(means)
+    lower_bounds = np.array(lower_bounds)
+    upper_bounds = np.array(upper_bounds)
+
+    fig, ax = plt.subplots(figsize=(6, 4))
+    line, = ax.plot(x_vals, means, color='blue', marker='o', linewidth=2, markersize=4, label="MAPL,VGG")
+    ax.fill_between(x_vals, lower_bounds, upper_bounds, color='blue', alpha=0.2)
+
+    ax.set_xlabel(x_label, fontsize=axes_titles_font)
+    ax.set_ylabel(y_label, fontsize=axes_titles_font)
+    ax.tick_params(axis='both', labelsize=tick_font_size)
+
+    # Legend above the plot, centered
+    ax.legend(loc='lower center', bbox_to_anchor=(0.5, 1.05), ncol=1, fontsize=legend_font_size, frameon=False)
+
+    # Adjust layout to make space for legend
+    plt.tight_layout(rect=[0, 0, 1, 0.93])
+
+    if output_path:
+        fig.savefig(output_path, format="pdf", bbox_inches="tight")
+
+    plt.show()
 def plot_model_server_client_grid(data_dict, x_label="Iterations", y_label="Top-1 Accuracy (%)", confidence=0.95):
     assert len(data_dict) == 2, "Expected exactly 2 alphas for a 1x2 plot."
 
@@ -493,7 +531,7 @@ def get_data_per_client(rd,algo,top_what,data_type):
         data_per_client = get_data_per_client_client(rd,top_what)
         data_per_client = fix_data_NoFederatedLearning(data_per_client)
     if algo == algo_names[AlgorithmSelected.pFedCK.name] or algo == algo_names[
-        AlgorithmSelected.PseudoLabelsNoServerModel.name]  or algo == algo_names[AlgorithmSelected.FedAvg.name]:
+        AlgorithmSelected.PseudoLabelsNoServerModel.name]  or algo == algo_names[AlgorithmSelected.FedAvg.name]  or algo == algo_names[AlgorithmSelected.COMET.name]:
         data_per_client = get_data_per_client_client(rd,top_what)
     if algo ==algo_names[AlgorithmSelected.PseudoLabelsClusters.name]+",VGG" or algo ==algo_names[AlgorithmSelected.PseudoLabelsClusters.name]+",AlexNet":
         data_per_client = get_data_per_client_server(rd,top_what)
@@ -572,6 +610,10 @@ def extract_rd(algo,dict_):
         return extract_rd_PseudoLabelsClusters(algo,dict_)
     if algo == AlgorithmSelected.PseudoLabelsNoServerModel.name:
         return extract_rd_PseudoLabelsNoServerModel(algo,dict_)
+    if algo == AlgorithmSelected.COMET.name :
+        try:
+            return  dict_[NetsType.C_alex_S_vgg.name]["multi_model"]["max"]["kmeans"]["similar_to_client"][5]
+        except: return dict_["C_alex"]["no_model"]["mean"]["kmeans"]["similar_to_client"][5]
     if algo == AlgorithmSelected.NoFederatedLearning.name:
         return dict_["C_alex_S_alex"]
     if algo == AlgorithmSelected.FedAvg.name:

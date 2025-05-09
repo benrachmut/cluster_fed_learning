@@ -506,8 +506,8 @@ def run_exp_by_algo():
 
 if __name__ == '__main__':
     print(device)
-    seed_num_list = [2,4,5]#10:[2,4,5,6,9]#100:[1,2,3,5,7]#[1,2,3,4,5,6,7,8,9]
-    data_sets_list = [DataSet.CIFAR10]
+    seed_num_list = [1]#[2,4,5]#10:[2,4,5,6,9]#100:[1,2,3,5,7]#[1,2,3,4,5,6,7,8,9]
+    data_sets_list = [DataSet.CIFAR100]
     num_clients_list = [25]#[25]
     num_opt_clusters_list =[5] #[5]
     mix_percentage = 0.1
@@ -585,9 +585,9 @@ if __name__ == '__main__':
                             clients_train_data_dict, server_train_data, clients_test_data_dict, server_test_data = create_data()
                             print("current_seed_num",current_seed_num)
 
-                            for algorithm_selection in algorithm_selection_list:
+                            for algorithm_selection in algorithm_selection_list :
                                 experiment_config.algorithm_selection = algorithm_selection
-                                if algorithm_selection == AlgorithmSelected.PseudoLabelsNoServerModel:
+                                if algorithm_selection == AlgorithmSelected.PseudoLabelsNoServerModel or algorithm_selection == AlgorithmSelected.COMET:
                                     nets_types_list_PseudoLabelsClusters = [NetsType.C_alex]
                                     net_cluster_technique_list = [NetClusterTechnique.no_model]
                                     server_input_tech_list = [ServerInputTech.mean]

@@ -233,7 +233,8 @@ class ExperimentConfig:
         if net_type == NetsType.C_alex_S_alex or net_type == NetsType.C_alex or net_type==NetsType.S_alex or net_type==NetsType.S_vgg:
             self.client_net_type = NetType.ALEXNET
             self.server_net_type = NetType.ALEXNET
-            self.learning_rate_train_c = 0.0001
+            self.learning_rate_train_c = 0.0008
+
             self.learning_rate_fine_tune_c = 0.001
             self.learning_rate_train_s = 0.001
 

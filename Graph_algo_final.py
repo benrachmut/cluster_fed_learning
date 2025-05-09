@@ -34,7 +34,7 @@ if __name__ == '__main__':
     #for top_what in top_what_list:
     data_for_graph={}
     for dich  in [5]:
-        for data_type in [DataSet.CIFAR100.name,DataSet.CIFAR10.name,DataSet.TinyImageNet.name,DataSet.EMNIST_balanced.name]:
+        for data_type in [DataSet.TinyImageNet.name,DataSet.EMNIST_balanced.name,DataSet.CIFAR100.name,DataSet.CIFAR10.name]:
             merged_dict = merged_dict1[data_type][25][5][0.2][dich]
             merged_dict = switch_algo_and_seed(merged_dict, dich=dich,data_type=data_type)
             data_for_graph[data_type] = collect_data_per_iteration(merged_dict,what_top_dict[data_type],data_type)
@@ -49,6 +49,14 @@ if __name__ == '__main__':
         #    y_lim = [85,100]
         #if data_type == DataSet.EMNIST_balanced.name and top_what == 1:
         #    y_lim = [80,95]
+
+        ttt = {}
+        for data_type, d1 in data_for_graph.items():
+            ttt[data_type] ={}
+            for algo, d2 in d1.items():
+                ttt[data_type][algo] ={}
+                for i,l in d2.items():
+                    ttt[data_type][algo][i] = sum(l)/len(l)
         create_2x2_algo_grid(data_for_graph, x_label ="Iteration" , y_label_dict=y_label_dict, y_lim_dict=y_lim, confidence=0.95, dich = dich)
 
         #create_algo_graph(data_for_graph, "Iteration", y_label, "figures","Algo_Comp"+data_type+"_top="+str(top_what),colors,y_lim)
