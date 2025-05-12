@@ -22,7 +22,7 @@ net_name = {"C_alex_S_alex": "S_AlexNet", "C_alex_S_vgg": "S_VGG-16"}#
 seeds_dict = {100:{DataSet.CIFAR100.name:[1],DataSet.CIFAR10.name:[2],DataSet.EMNIST_balanced.name:[1],DataSet.TinyImageNet.name:[1]}
 
 #5:{DataSet.CIFAR100.name:[1,2,3,5,7],DataSet.CIFAR10.name:[2,4,5,6,9]
-,5:{DataSet.CIFAR100.name:[1],DataSet.CIFAR10.name:[2,4,5],DataSet.EMNIST_balanced.name:[1,2],DataSet.TinyImageNet.name:[1,2,3]}}
+,5:{DataSet.CIFAR100.name:[1,2,3],DataSet.CIFAR10.name:[2,4,5],DataSet.EMNIST_balanced.name:[1,2,3],DataSet.TinyImageNet.name:[1,2,3]}}
 colors = {"MAPL,VGG": "blue",
 "COMET":"Orange",
           "MAPL,AlexNet": "red",
@@ -265,6 +265,96 @@ def switch_algo_and_seed(merged_dict,dich,data_type):
             #ans[algo].append(merged_dict[seed][algo])
     return rds
 
+
+def create_1x4_algo_grid(all_data_dict, x_label, y_label_dict, y_lim_dict=None, confidence=0.95, dich=5):
+    assert len(all_data_dict) == 4, "You must provide exactly 4 datasets for a 1x4 grid."
+
+    linewidth = 2
+    markersize = 3
+
+    fig, axs = plt.subplots(1, 4, figsize=(20, 5))  # Changed from 2x2 to 1x4
+    axs = axs.flatten()
+
+    global_lines = []
+    global_labels = []
+    already_plotted_algorithms = set()
+
+    # Manual order of algorithms in the legend
+    manual_legend_order = ["MAPL,VGG", "COMET", "pFedCK", "FedMd", "FedAvg", "No FL"]
+
+    for i, (title, data) in enumerate(all_data_dict.items()):
+        ax = axs[i]
+        for algorithm_name, iter_dict in data.items():
+            x_values = sorted(iter_dict.keys())
+            means = []
+            lower_bounds = []
+            upper_bounds = []
+
+            for it in x_values:
+                accs = np.array(iter_dict[it])
+                mean = np.mean(accs)
+                stderr = stats.sem(accs)
+                n = len(accs)
+                h = stderr * stats.t.ppf((1 + confidence) / 2., n - 1)
+
+                means.append(mean)
+                lower_bounds.append(mean - h)
+                upper_bounds.append(mean + h)
+
+            x_values = np.array(x_values)
+            means = np.array(means)
+            lower_bounds = np.array(lower_bounds)
+            upper_bounds = np.array(upper_bounds)
+
+            color = colors.get(algorithm_name, "black")
+
+            line, = ax.plot(
+                x_values,
+                means,
+                marker='o',
+                linewidth=linewidth,
+                color=color,
+                linestyle='solid',
+                markersize=markersize,
+                label=algorithm_name if algorithm_name not in already_plotted_algorithms else None
+            )
+
+            if algorithm_name not in already_plotted_algorithms:
+                global_lines.append(line)
+                global_labels.append(algorithm_name)
+                already_plotted_algorithms.add(algorithm_name)
+
+            ax.fill_between(x_values, lower_bounds, upper_bounds, color=color, alpha=0.2)
+
+        ax.set_title(title, fontsize=axes_number_font)
+        ax.set_xlabel(x_label, fontsize=axes_titles_font)
+        ax.set_ylabel(y_label_dict.get(title, "Metric"), fontsize=axes_titles_font)
+
+        if y_lim_dict and title in y_lim_dict:
+            ax.set_ylim(y_lim_dict[title])
+
+        ax.tick_params(axis='both', labelsize=tick_font_size)
+
+    # Reorder the lines and labels manually as per the desired order
+    sorted_lines = []
+    sorted_labels = []
+    for label in manual_legend_order:
+        if label in global_labels:
+            idx = global_labels.index(label)
+            sorted_lines.append(global_lines[idx])
+            sorted_labels.append(global_labels[idx])
+
+    global_lines = sorted_lines
+    global_labels = sorted_labels
+
+    # Create the legend with the manually ordered lines and labels
+    fig.legend(global_lines, global_labels, loc='upper center', ncol=len(global_labels), fontsize=20, frameon=False)
+
+    plt.tight_layout(rect=[0, 0, 1, 0.93])  # Adjusted for wider layout
+    fig.savefig("figures/all_algos_alpha_" + str(dich) + ".pdf", format="pdf")
+    plt.show()
+    return fig
+
 def create_2x2_algo_grid(all_data_dict, x_label, y_label_dict, y_lim_dict=None, confidence=0.95, dich=5):
     assert len(all_data_dict) == 4, "You must provide exactly 4 datasets for a 2x2 grid."
 
@@ -279,7 +369,7 @@ def create_2x2_algo_grid(all_data_dict, x_label, y_label_dict, y_lim_dict=None, 
     already_plotted_algorithms = set()
 
     # Manual order of algorithms in the legend
-    manual_legend_order = [ "MAPL,VGG", "pFedCK", "FedMd","FedAvg", "No FL","COMET"]
+    manual_legend_order = [ "MAPL,VGG", "COMET","pFedCK", "FedMd","FedAvg", "No FL"]
 
     for i, (title, data) in enumerate(all_data_dict.items()):
         ax = axs[i]
@@ -347,7 +437,7 @@ def create_2x2_algo_grid(all_data_dict, x_label, y_label_dict, y_lim_dict=None, 
     global_labels = sorted_labels
 
     # Create the legend with the manually ordered lines and labels
-    fig.legend(global_lines, global_labels, loc='upper center', ncol=len(global_labels), fontsize=legend_font_size, frameon=False)
+    fig.legend(global_lines, global_labels, loc='upper center', ncol=len(global_labels), fontsize=14, frameon=False)
 
     plt.tight_layout(rect=[0, 0, 1, 0.95])
     fig.savefig("figures/all_algos_alpha_" + str(dich) + ".pdf", format="pdf")
