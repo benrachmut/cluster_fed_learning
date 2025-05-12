@@ -19,7 +19,7 @@ algo_names={AlgorithmSelected.PseudoLabelsClusters.name:"MAPL"
 
 change_dict_name_server_client = {"MAPL,AlexNet":"AlexNet","MAPL,VGG":"VGG"}
 net_name = {"C_alex_S_alex": "S_AlexNet", "C_alex_S_vgg": "S_VGG-16"}#
-seeds_dict = {100:{DataSet.CIFAR100.name:[1],DataSet.CIFAR10.name:[2],DataSet.EMNIST_balanced.name:[1],DataSet.TinyImageNet.name:[1]}
+seeds_dict = {100:{DataSet.CIFAR100.name:[1,2,3],DataSet.CIFAR10.name:[2,4,5],DataSet.EMNIST_balanced.name:[1,2,3],DataSet.TinyImageNet.name:[1,2,3]}
 
 #5:{DataSet.CIFAR100.name:[1,2,3,5,7],DataSet.CIFAR10.name:[2,4,5,6,9]
 ,5:{DataSet.CIFAR100.name:[1,2,3],DataSet.CIFAR10.name:[2,4,5],DataSet.EMNIST_balanced.name:[1,2,3],DataSet.TinyImageNet.name:[1,2,3]}}
