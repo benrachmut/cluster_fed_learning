@@ -297,10 +297,32 @@ class LearningEntity(ABC):
         torch.manual_seed(self.num+t*17)
         torch.cuda.manual_seed(self.num+t*17)
 
-        self.iteration_context(t)
+        if t == 0 and self.id_ != "server":
+            # Wrap the model to multi-GPU if available
+            if torch.cuda.device_count() > 1:
+                self.model = nn.DataParallel(self.model)
+            self.iteration_context(t)
+        elif t > 0 and self.id_ != "server":
+            # Load the model from file
+            self.model = get_client_model()
+            # Wrap the model to multi-GPU if available
+            if torch.cuda.device_count() > 1:
+                self.model = nn.DataParallel(self.model)
+            self.model.load_state_dict(torch.load("./models/model_{}.pth".format(self.id_)))
+            self.iteration_context(t)
+        elif self.id_ == "server":
+            # Wrap the model to multi-GPU if available
+            if torch.cuda.device_count() > 1:
+                self.model = nn.DataParallel(self.model)
+            self.iteration_context(t)
 
-
-
+        if self.id_ != "server":
+            # Save the model state after training to a file
+            torch.save(self.model.state_dict(), "./models/model_{}.pth".format(self.id_))
+            # Unload the model from memory
+            del self.model
+            
+            
         #if isinstance(self,Client):
         #    self.loss_measures[t]=self.evaluate_test_loss()
         #    self.accuracy_test_measures[t]=self.evaluate_accuracy(self.test_set)
