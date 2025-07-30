@@ -298,22 +298,13 @@ class LearningEntity(ABC):
         torch.cuda.manual_seed(self.num+t*17)
 
         if t == 0 and self.id_ != "server":
-            # Wrap the model to multi-GPU if available
-            if torch.cuda.device_count() > 1:
-                self.model = nn.DataParallel(self.model)
             self.iteration_context(t)
         elif t > 0 and self.id_ != "server":
             # Load the model from file
             self.model = get_client_model()
-            # Wrap the model to multi-GPU if available
-            if torch.cuda.device_count() > 1:
-                self.model = nn.DataParallel(self.model)
             self.model.load_state_dict(torch.load("./models/model_{}.pth".format(self.id_)))
             self.iteration_context(t)
         elif self.id_ == "server":
-            # Wrap the model to multi-GPU if available
-            if torch.cuda.device_count() > 1:
-                self.model = nn.DataParallel(self.model)
             self.iteration_context(t)
 
         if self.id_ != "server":
