@@ -616,6 +616,14 @@ def get_data_set(is_train ):
             transforms.ToTensor(),
             transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))  # Use RGB normalization
         ])
+    elif dataset == DataSet.IMAGENET:
+        transform = transforms.Compose([
+        transforms.Resize(256),  # Resize to 256 then crop
+        transforms.CenterCrop(224),  # Standard size for ImageNet models
+        transforms.ToTensor(),
+        transforms.Normalize(mean=[0.485, 0.456, 0.406],
+                             std =[0.229, 0.224, 0.225])
+        ])
     else:
         print("Using RGB transform for dataset")
         transform = transforms.Compose([
@@ -627,6 +635,10 @@ def get_data_set(is_train ):
 
     if experiment_config.data_set_selected == DataSet.CIFAR100:
         train_set = torchvision.datasets.CIFAR100(root='./data', train=is_train, download=True, transform=transform)
+
+    elif experiment_config.data_set_selected == DataSet.IMAGENET:
+        imagenet_dir = '/mnt/myssd/Ben/imagenet/train' if is_train else '/mnt/myssd/Ben/imagenet/val'
+        train_set = torchvision.datasets.ImageNet(root=imagenet_dir, transform=transform)
 
     if experiment_config.data_set_selected == DataSet.CIFAR10:
         train_set = torchvision.datasets.CIFAR10(root='./data', train=is_train, download=True, transform=transform)

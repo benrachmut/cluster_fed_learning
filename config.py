@@ -82,6 +82,7 @@ class DataSet(Enum):
     TinyImageNet = "TinyImageNet"
     EMNIST_balanced = "EMNIST_balanced"
     SVHN = "SVHN"
+    IMAGENET = "ImageNet"
 
 
 class DataType(Enum):
@@ -222,6 +223,10 @@ class ExperimentConfig:
 
         if data_set == DataSet.SVHN:
             self.num_classes = 10
+        
+        if data_set == DataSet.IMAGENET:
+            self.num_classes = 1000
+            self.batch_size = 64
 
     def to_dict(self):
         """Returns a dictionary of attribute names and their values."""

@@ -507,8 +507,8 @@ def run_exp_by_algo():
 if __name__ == '__main__':
     print(device)
     seed_num_list = [1,2,3]#[2,4,5]#10:[2,4,5,6,9]#100:[1,2,3,5,7]#[1,2,3,4,5,6,7,8,9]
-    data_sets_list = [DataSet.CIFAR100]
-    num_clients_list = [25]#[25]
+    data_sets_list = [DataSet.IMAGENET]
+    num_clients_list = [100]#[25]
     num_opt_clusters_list =[5] #[5]
     mix_percentage = 0.1
     server_split_ratio_list = [0.2]
@@ -516,7 +516,7 @@ if __name__ == '__main__':
     cluster_additions = [0]#[-4,-3,-2,-1,0,1,2,3,4] #  # 0.96,0.5,0.75,1,1.25,1.5,1.75,2]
     print("epsilons:", cluster_additions)
     print(("alpha_dichts", alpha_dichts))
-    algorithm_selection_list =[AlgorithmSelected.PseudoLabelsNoServerModel]
+    algorithm_selection_list =[AlgorithmSelected.PseudoLabelsClusters]
     #AlgorithmSelected.FedAvg,AlgorithmSelected.NoFederatedLearning,AlgorithmSelected.pFedCK
     #AlgorithmSelected.PseudoLabelsClusters
     #AlgorithmSelected.COMET,AlgorithmSelected.PseudoLabelsNoServerModel
