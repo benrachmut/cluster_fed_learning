@@ -638,7 +638,7 @@ def get_data_set(is_train ):
 
     elif experiment_config.data_set_selected == DataSet.IMAGENET:
         imagenet_dir = '/mnt/myssd/Ben/imagenet/train' if is_train else '/mnt/myssd/Ben/imagenet/val'
-        train_set = torchvision.datasets.ImageNet(root=imagenet_dir, transform=transform)
+        train_set = torchvision.datasets.ImageFolder(root=imagenet_dir, transform=transform)
 
     if experiment_config.data_set_selected == DataSet.CIFAR10:
         train_set = torchvision.datasets.CIFAR10(root='./data', train=is_train, download=True, transform=transform)
