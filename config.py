@@ -207,6 +207,9 @@ class ExperimentConfig:
 
         self.cluster_addition = None
 
+        # Memory-efficient tensor creation batch size (for ImageNet)
+        self.tensor_creation_batch_size = 1000  # Batch size for creating tensor datasets
+
 
     def update_num_classes(self,data_set):
         self.data_set_selected = data_set

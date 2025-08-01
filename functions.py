@@ -35,6 +35,25 @@ def get_data_by_classification(data_set):
         data_by_classification[image[1]].append(image)
     return data_by_classification
 
+def get_data_by_classification_memory_efficient(data_set):
+    """
+    Memory-efficient version that stores indices instead of actual data.
+    This prevents loading all images into memory at once.
+    """
+    data_by_classification = defaultdict(list)
+    
+    # Store indices instead of actual data
+    for idx in range(len(data_set)):
+        sample = data_set[idx]
+        if isinstance(sample, tuple) and len(sample) == 2:
+            _, label = sample
+        else:
+            label = sample[1]
+        
+        data_by_classification[label].append(idx)
+    
+    return data_by_classification
+
 
 def create_torch_mix_set(data_to_mix_list):
     combined_indices = []
@@ -645,7 +664,7 @@ def get_data_set(is_train ):
     if experiment_config.data_set_selected == DataSet.CIFAR100:
         train_set = torchvision.datasets.CIFAR100(root='./data', train=is_train, download=True, transform=transform)
 
-    elif experiment_config.data_set_selected == DataSet.IMAGENET:
+    if experiment_config.data_set_selected == DataSet.IMAGENET:
         imagenet_dir = '/mnt/myssd/Ben/imagenet/train' if is_train else '/mnt/myssd/Ben/imagenet/val'
         train_set = torchvision.datasets.ImageFolder(root=imagenet_dir, transform=transform)
 
@@ -677,12 +696,21 @@ def get_data_set(is_train ):
         train_set = EMNIST(root='./data', split='balanced', train=is_train, download=True,
            transform=transform)#EMNIST(root='./data', split='balanced', train=is_train, download=True, transform=transform)
 
-    data_by_classification_dict = get_data_by_classification(train_set)
-    selected_classes_list = sorted(data_by_classification_dict.keys())[:experiment_config.num_classes]
-
-
-    clients_data_dict, server_data = split_clients_server_data_Non_IID(data_by_classification_dict, selected_classes_list)
-
+    # Use memory-efficient classification for ImageNet to prevent memory explosion
+    if experiment_config.data_set_selected == DataSet.IMAGENET:
+        print("Using memory-efficient data classification for ImageNet...")
+        data_by_classification_dict = get_data_by_classification_memory_efficient(train_set)
+        selected_classes_list = sorted(data_by_classification_dict.keys())[:experiment_config.num_classes]
+        
+        # Use memory-efficient splitting
+        clients_data_dict, server_data = split_clients_server_data_memory_efficient(
+            data_by_classification_dict, selected_classes_list, train_set
+        )
+    else:
+        # Use original method for other datasets
+        data_by_classification_dict = get_data_by_classification(train_set)
+        selected_classes_list = sorted(data_by_classification_dict.keys())[:experiment_config.num_classes]
+        clients_data_dict, server_data = split_clients_server_data_Non_IID(data_by_classification_dict, selected_classes_list)
 
     return selected_classes_list, clients_data_dict, server_data
 
@@ -954,3 +982,65 @@ def create_mean_df(clients, file_name):
     average_loss_df.to_csv(file_name + ".csv", index=False)
 
     return average_loss_df
+
+def create_tensor_dataset_from_indices(dataset, indices, batch_size=None):
+    """
+    Create TensorDataset from indices in batches to avoid memory overflow.
+    """
+    if batch_size is None:
+        batch_size = getattr(experiment_config, 'tensor_creation_batch_size', 1000)
+    
+    images = []
+    targets = []
+    
+    for i in range(0, len(indices), batch_size):
+        batch_indices = indices[i:i + batch_size]
+        batch_data = [dataset[idx] for idx in batch_indices]
+        
+        batch_images = [item[0] for item in batch_data]
+        batch_targets = [item[1] for item in batch_data]
+        
+        images.extend(batch_images)
+        targets.extend(batch_targets)
+    
+    images_tensor = torch.stack(images)
+    targets_tensor = torch.tensor(targets)
+    
+    return TensorDataset(images_tensor, targets_tensor)
+
+def split_clients_server_data_memory_efficient(data_by_classification_dict, selected_classes, dataset):
+    """
+    Memory-efficient version that works with indices instead of full data.
+    """
+    clients_data_dict = {}
+    server_data_dict = {}
+    
+    for class_name in selected_classes:
+        indices = data_by_classification_dict[class_name]
+        
+        # Split indices for clients and server
+        total_size = len(indices)
+        server_size = int(total_size * experiment_config.server_split_ratio)
+        client_size = total_size - server_size
+        
+        # Shuffle indices
+        torch.Generator().manual_seed(experiment_config.seed_num * (999 + hash(class_name)))
+        shuffled_indices = torch.randperm(total_size).tolist()
+        shuffled_indices = [indices[i] for i in shuffled_indices]
+        
+        # Split indices
+        client_indices = shuffled_indices[:client_size]
+        server_indices = shuffled_indices[client_size:]
+        
+        # Create datasets from indices
+        clients_data_dict[class_name] = create_tensor_dataset_from_indices(dataset, client_indices)
+        server_data_dict[class_name] = create_tensor_dataset_from_indices(dataset, server_indices)
+    
+    # Combine server data
+    all_server_indices = []
+    for indices in server_data_dict.values():
+        all_server_indices.extend(indices)
+    
+    server_data = create_tensor_dataset_from_indices(dataset, all_server_indices)
+    
+    return clients_data_dict, server_data
