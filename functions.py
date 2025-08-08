@@ -623,11 +623,7 @@ def get_data_set(is_train ):
     print(f"Loading dataset: {dataset}")
 
     if dataset == DataSet.EMNIST_balanced:
-        #print("Using grayscale transform for EMNIST")
-        #transform = transforms.Compose([
-        #    transforms.Grayscale(num_output_channels=3),
-        #    transforms.ToTensor(),
-        #])
+
 
         transform = transforms.Compose([
             transforms.Resize((32, 32)),
@@ -694,7 +690,7 @@ def get_data_set(is_train ):
 
     if experiment_config.data_set_selected == DataSet.EMNIST_balanced:
         train_set = EMNIST(root='./data', split='balanced', train=is_train, download=True,
-           transform=transform)#EMNIST(root='./data', split='balanced', train=is_train, download=True, transform=transform)
+           transform=transform)
 
     # Use memory-efficient classification for ImageNet to prevent memory explosion
     if experiment_config.data_set_selected == DataSet.IMAGENET:

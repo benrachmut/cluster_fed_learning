@@ -140,9 +140,10 @@ class DataDistTypes(Enum):
 
 class ExperimentConfig:
     def __init__(self):
+        self.is_with_memory_load=None
         self.weights_for_ps = None
         self.input_consistency = None
-
+        self.server_amount_data = None
         self.which_net_arch = None
         self.seed_num = 1
         self.iterations = 20

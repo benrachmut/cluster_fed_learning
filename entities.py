@@ -20,8 +20,8 @@ import numpy as np
 import torch
 import torch.nn as nn
 
-
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
 
 class AlexNet(nn.Module):
     def __init__(self, num_classes, num_clusters=1):
@@ -185,6 +185,7 @@ class ResNetServer(nn.Module):
 
         return {f"head_{i}": head(x) for i, head in self.heads.items()}
 
+
 # Lightweight CNN (Teacher Model)
 class SmallCNN(nn.Module):
     def __init__(self, num_classes=10):
@@ -209,6 +210,7 @@ class SmallCNN(nn.Module):
         logits = self.classifier(features)
         return logits, features
 
+
 def get_client_model():
     if experiment_config.client_net_type == NetType.ALEXNET:
         return AlexNet(num_classes=experiment_config.num_classes).to(device)
@@ -216,9 +218,8 @@ def get_client_model():
         return VGGServer(num_classes=experiment_config.num_classes).to(device)
 
 
-
 def get_server_model():
-    if experiment_config.net_cluster_technique== NetClusterTechnique.multi_head:
+    if experiment_config.net_cluster_technique == NetClusterTechnique.multi_head:
         num_heads = experiment_config.num_clusters
         if isinstance(num_heads, str):
             num_heads = experiment_config.number_of_optimal_clusters
@@ -226,37 +227,36 @@ def get_server_model():
         num_heads = 1
 
     if experiment_config.server_net_type == NetType.ALEXNET:
-        return AlexNet(num_classes=experiment_config.num_classes,num_clusters=num_heads).to(device)
+        return AlexNet(num_classes=experiment_config.num_classes, num_clusters=num_heads).to(device)
     if experiment_config.server_net_type == NetType.VGG:
-        return VGGServer(num_classes=experiment_config.num_classes,num_clusters=num_heads).to(device)
+        return VGGServer(num_classes=experiment_config.num_classes, num_clusters=num_heads).to(device)
 
     if experiment_config.server_net_type == NetType.DenseNetServer:
-        return DenseNetServer(num_classes=experiment_config.num_classes,num_clusters=num_heads).to(device)
+        return DenseNetServer(num_classes=experiment_config.num_classes, num_clusters=num_heads).to(device)
 
 
 class LearningEntity(ABC):
-    def __init__(self,id_,global_data,test_global_data):
-        self.test_global_data= test_global_data
-        self.seed =experiment_config.seed_num
+    def __init__(self, id_, global_data, test_global_data):
+        self.test_global_data = test_global_data
+        self.seed = experiment_config.seed_num
         self.global_data = global_data
         self.pseudo_label_received = {}
         self.pseudo_label_to_send = None
         self.current_iteration = 0
         self.epoch_count = 0
         self.id_ = id_
-        self.model=None
-        #self.weights = None
+        self.model = None
+        # self.weights = None
         self.accuracy_per_client_1 = {}
-        self.accuracy_per_client_10= {}
-        self.accuracy_per_client_100= {}
-        self.accuracy_per_client_5= {}
+        self.accuracy_per_client_10 = {}
+        self.accuracy_per_client_100 = {}
+        self.accuracy_per_client_5 = {}
         self.size_sent = {}
-        #self.accuracy_per_client_5 = {}
+        # self.accuracy_per_client_5 = {}
 
-        #self.accuracy_pl_measures= {}
-        #self.accuracy_test_measures_k_half_cluster = {}
-        #self.accuracy_pl_measures_k_half_cluster= {}
-
+        # self.accuracy_pl_measures= {}
+        # self.accuracy_test_measures_k_half_cluster = {}
+        # self.accuracy_pl_measures_k_half_cluster= {}
 
     def initialize_weights(self, layer):
         """Initialize weights for the model layers."""
@@ -269,20 +269,18 @@ class LearningEntity(ABC):
         torch.cuda.manual_seed(self.seed)  # For CUDA (if using GPU)
         torch.cuda.manual_seed_all(self.seed)  # For multi-GPU
 
-
         if isinstance(layer, (nn.Linear, nn.Conv2d)):
             nn.init.kaiming_normal_(layer.weight, mode='fan_out', nonlinearity='relu')
             if layer.bias is not None:
                 nn.init.zeros_(layer.bias)
 
-    #def set_weights(self):
-        #if self.weights  is None:
-        #    self.model.apply(self.initialize_weights)
-        #else:
-        #    self.model.apply(self.weights)
+    # def set_weights(self):
+    # if self.weights  is None:
+    #    self.model.apply(self.initialize_weights)
+    # else:
+    #    self.model.apply(self.weights)
 
-
-    def get_pseudo_label_L2(self,pseudo_labels):
+    def get_pseudo_label_L2(self, pseudo_labels):
         loader = DataLoader(self.global_data, batch_size=len(self.global_data))
         X_tensor, Y_tensor = next(iter(loader))  # Gets all data
         # Convert to NumPy (if needed)
@@ -291,54 +289,39 @@ class LearningEntity(ABC):
         num_classes = pseudo_labels.shape[1]
         ground_truth_onehot = F.one_hot(torch.tensor(ground_truth), num_classes=num_classes).float().numpy()
 
-        return  np.mean(np.linalg.norm(pseudo_labels - ground_truth_onehot, axis=1) ** 2)
-    def iterate(self,t):
-        #self.set_weights()
-        torch.manual_seed(self.num+t*17)
-        torch.cuda.manual_seed(self.num+t*17)
+        return np.mean(np.linalg.norm(pseudo_labels - ground_truth_onehot, axis=1) ** 2)
 
-        if t == 0 and self.id_ != "server":
-            self.iteration_context(t)
-        elif t > 0 and self.id_ != "server":
-            # Load the model from file
-            self.model = get_client_model()
-            self.model.load_state_dict(torch.load("./models/model_{}.pth".format(self.id_)))
-            self.iteration_context(t)
-        elif self.id_ == "server":
-            self.iteration_context(t)
+    def iterate(self, t):
+        # self.set_weights()
+        torch.manual_seed(self.num + t * 17)
+        torch.cuda.manual_seed(self.num + t * 17)
+        if experiment_config.is_with_memory_load:
+            if t == 0 and self.id_ != "server":
+                self.iteration_context(t)
+            elif t > 0 and self.id_ != "server":
+                # Load the model from file
+                self.model = get_client_model()
+                self.model.load_state_dict(torch.load("./models/model_{}.pth".format(self.id_)))
+                self.iteration_context(t)
+            elif self.id_ == "server":
+                self.iteration_context(t)
 
-        if self.id_ != "server":
-            # Save the model state after training to a file
-            torch.save(self.model.state_dict(), "./models/model_{}.pth".format(self.id_))
-            # Unload the model from memory
-            del self.model
-            
-            
-        #if isinstance(self,Client):
-        #    self.loss_measures[t]=self.evaluate_test_loss()
-        #    self.accuracy_test_measures[t]=self.evaluate_accuracy(self.test_set)
-        #    self.accuracy_pl_measures[t]=self.evaluate_accuracy(self.global_data)
-        #    self.accuracy_test_measures_k_half_cluster[t]=self.evaluate_accuracy(self.test_set,self.model)
-        #    self.accuracy_pl_measures_k_half_cluster[t]=self.evaluate_accuracy(self.global_data,self.model)
+            if self.id_ != "server":
+                # Save the model state after training to a file
+                torch.save(self.model.state_dict(), "./models/model_{}.pth".format(self.id_))
+                # Unload the model from memory
+                del self.model
+        else: self.iteration_context(t)
 
 
-
-        #if isinstance(self,Server) and experiment_config.server_feedback_technique == ServerFeedbackTechnique.similar_to_cluster:
-            #raise Exception("need to evaluate use backbone")
-        #    for cluster_id in range(experiment_config.num_clusters):
-        #        self.loss_measures[cluster_id][t] = self.evaluate_test_loss(cluster_id=cluster_id, model=None)
-        #        self.accuracy_test_measures[cluster_id][t] = self.evaluate_accuracy(self.test_set,model= None,k=1,cluster_id=cluster_id )
-        #        self.accuracy_pl_measures[cluster_id][t] = self.evaluate_accuracy(self.global_data,model= None,k=1,cluster_id=cluster_id )
-        #        self.accuracy_test_measures_k_half_cluster[cluster_id][t] = self.evaluate_accuracy(self.test_set ,model= None, k = experiment_config.num_clusters // 2,cluster_id=cluster_id )
-        #        self.accuracy_pl_measures_k_half_cluster[cluster_id][t] = self.evaluate_accuracy(self.global_data,model= None, k =experiment_config.num_clusters // 2,cluster_id=cluster_id )
     @abstractmethod
-    def iteration_context(self,t):
+    def iteration_context(self, t):
         pass
 
     def evaluate(self, model=None):
         if model is None:
             model = self.model
-    #    print("*** Generating Pseudo-Labels with Probabilities ***")
+        #    print("*** Generating Pseudo-Labels with Probabilities ***")
 
         # Create a DataLoader for the global data
         global_data_loader = DataLoader(self.global_data, batch_size=experiment_config.batch_size, shuffle=False)
@@ -359,10 +342,10 @@ class LearningEntity(ABC):
         # Concatenate all probabilities into a single tensor (2D matrix)
         all_probs = torch.cat(all_probs, dim=0)
 
-       #print(f"Shape of the 2D pseudo-label matrix: {all_probs.shape}")
+        # print(f"Shape of the 2D pseudo-label matrix: {all_probs.shape}")
         return all_probs
 
-    def evaluate_max_accuracy_per_point(self,models, data_, k=1, cluster_id=None):
+    def evaluate_max_accuracy_per_point(self, models, data_, k=1, cluster_id=None):
         """
         Evaluate the per-point max accuracy across multiple models.
 
@@ -388,9 +371,6 @@ class LearningEntity(ABC):
                 for i, (inputs, targets) in enumerate(test_loader):
                     inputs, targets = inputs.to(device), targets.to(device)
 
-
-
-
                     outputs = model(inputs, cluster_id=cluster_id)
                     if outputs.dim() == 1:
                         outputs = outputs.unsqueeze(0)  # make it [1, num_classes]
@@ -405,7 +385,6 @@ class LearningEntity(ABC):
 
         print(f"Average max accuracy across models: {average_max_accuracy:.2f}%")
         return average_max_accuracy
-
 
     def evaluate_accuracy_single(self, data_, model=None, k=1, cluster_id=None):
         if model is None:
@@ -436,6 +415,7 @@ class LearningEntity(ABC):
         accuracy = 100 * correct / total if total > 0 else 0.0
         print(f"Accuracy for cluster {cluster_id if cluster_id is not None else 'default'}: {accuracy:.2f}%")
         return accuracy
+
     def evaluate_accuracy(self, data_, model=None, k=1, cluster_id=None):
         if model is None:
             model = self.model
@@ -480,6 +460,7 @@ class LearningEntity(ABC):
         accuracy = 100 * correct / total if total > 0 else 0.0
         print(f"Top-{k} Accuracy for cluster {cluster_id if cluster_id is not None else 'default'}: {accuracy:.2f}%")
         return accuracy
+
     def evaluate_test_loss(self, cluster_id=None, model=None):
         """
         Evaluate the model on the test set and return the loss for a specific cluster head.
@@ -522,25 +503,22 @@ class LearningEntity(ABC):
         return avg_loss  # Return the average loss
 
 
-
-
 class Client(LearningEntity):
-    def __init__(self, id_, client_data, global_data,global_test_data,local_test_data):
-        LearningEntity.__init__(self,id_,global_data,global_test_data)
-        self.num = (self.id_+1)*17
-        self.local_test_set= local_test_data
+    def __init__(self, id_, client_data, global_data, global_test_data, local_test_data):
+        LearningEntity.__init__(self, id_, global_data, global_test_data)
+        self.num = (self.id_ + 1) * 17
+        self.local_test_set = local_test_data
 
         self.local_data = client_data
         self.epoch_count = 0
         self.model = get_client_model()
         self.model.apply(self.initialize_weights)
-        #self.train_learning_rate = experiment_config.learning_rate_train_c
-        #self.weights = None
-        self.global_data =global_data
+        # self.train_learning_rate = experiment_config.learning_rate_train_c
+        # self.weights = None
+        self.global_data = global_data
         self.server = None
         self.pseudo_label_L2 = {}
         self.global_label_distribution = self.get_label_distribution()
-
 
     def get_label_distribution(self):
         label_counts = defaultdict(int)
@@ -638,7 +616,10 @@ class Client(LearningEntity):
         self.current_iteration = t
 
         for _ in range(10):
-            if t>0:
+            if t > 1:
+                if t == 1:
+                    self.model.apply(self.initialize_weights)
+
                 if experiment_config.input_consistency == InputConsistency.withInputConsistency:
                     if experiment_config.weights_for_ps:
                         train_loss = self.train_with_consistency_and_weights(self.pseudo_label_received)
@@ -651,11 +632,13 @@ class Client(LearningEntity):
                     else:
                         train_loss = self.train(self.pseudo_label_received)
 
-            train_loss = self.fine_tune()
+            if t == 0:
+                train_loss = self.fine_tune(50)
+            else:
+                train_loss = self.fine_tune()
 
             self.pseudo_label_to_send = self.evaluate()
             what_to_send = self.pseudo_label_to_send
-
 
             self.size_sent[t] = (what_to_send.numel() * what_to_send.element_size()) / (1024 * 1024)
             self.pseudo_label_L2[t] = self.get_pseudo_label_L2(what_to_send)
@@ -663,31 +646,29 @@ class Client(LearningEntity):
 
             acc_test = self.evaluate_accuracy_single(self.test_global_data)
             if experiment_config.data_set_selected == DataSet.CIFAR100:
-                if acc != 1 and acc_test!=1:
+                if acc != 1 and acc_test != 1:
                     break
                 else:
                     self.model.apply(self.initialize_weights)
-            if experiment_config.data_set_selected == DataSet.CIFAR10 or experiment_config.data_set_selected == DataSet.SVHN :
-                if acc != 10 and acc_test!=10:
+            if experiment_config.data_set_selected == DataSet.CIFAR10 or experiment_config.data_set_selected == DataSet.SVHN:
+                if acc != 10 and acc_test != 10:
                     break
                 else:
                     self.model.apply(self.initialize_weights)
             if experiment_config.data_set_selected == DataSet.TinyImageNet:
-                if acc != 0.5 and acc_test !=0.5:
+                if acc != 0.5 and acc_test != 0.5:
                     break
                 else:
                     self.model.apply(self.initialize_weights)
 
             if experiment_config.data_set_selected == DataSet.EMNIST_balanced:
-                if acc > 2.14 and acc_test>2.14:
+                if acc > 2.14 and acc_test > 2.14:
                     break
                 else:
                     self.model.apply(self.initialize_weights)
         print("hi")
 
-
-        #self.print_grad_size()
-
+        # self.print_grad_size()
 
         self.accuracy_per_client_1[t] = self.evaluate_accuracy_single(self.local_test_set, k=1)
         self.accuracy_per_client_10[t] = self.evaluate_accuracy(self.local_test_set, k=10)
@@ -770,7 +751,7 @@ class Client(LearningEntity):
         self.model.train()
 
         criterion_kl = nn.KLDivLoss(reduction='batchmean')
-        lambda_consistency = experiment_config.lambda_consistency # You can tune this
+        lambda_consistency = experiment_config.lambda_consistency  # You can tune this
         criterion_consistency = nn.MSELoss()
 
         optimizer = torch.optim.Adam(self.model.parameters(), lr=experiment_config.learning_rate_train_c)
@@ -832,7 +813,7 @@ class Client(LearningEntity):
 
         return avg_loss
 
-    def get_global_label_distribution(self, k ):
+    def get_global_label_distribution(self, k):
         return self.global_label_distribution.get(k, 0)
 
     def train_with_weights(self, mean_pseudo_labels):
@@ -850,8 +831,6 @@ class Client(LearningEntity):
         self.model.train()
         optimizer = torch.optim.Adam(self.model.parameters(), lr=experiment_config.learning_rate_train_c)
         pseudo_targets_all = mean_pseudo_labels.to(device)
-
-
 
         for epoch in range(experiment_config.epochs_num_train_client):
             self.epoch_count += 1
@@ -882,7 +861,7 @@ class Client(LearningEntity):
 
                 # Get weights based on true labels
                 weights = torch.tensor(
-                    [    self.get_global_label_distribution(label.item()) /len(self.global_data) for label in true_labels],
+                    [self.get_global_label_distribution(label.item()) / len(self.global_data) for label in true_labels],
                     dtype=torch.float32, device=device
                 ).unsqueeze(1)  # (batch_size, 1)
 
@@ -891,8 +870,8 @@ class Client(LearningEntity):
                 weighted_loss = (loss_per_sample * weights.squeeze()).mean()
                 loss = weighted_loss
 
-                #print("Type of loss:", type(loss))
-                #print("Loss value:", loss)
+                # print("Type of loss:", type(loss))
+                # print("Loss value:", loss)
 
                 if torch.isnan(loss) or torch.isinf(loss):
                     print(f"NaN or Inf loss encountered at batch {batch_idx}: {loss}")
@@ -908,37 +887,38 @@ class Client(LearningEntity):
 
         return avg_loss
 
-    def train(self,mean_pseudo_labels):
+    def train(self, mean_pseudo_labels):
 
         print(f"Mean pseudo-labels shape: {mean_pseudo_labels.shape}")  # Should be (num_data_points, num_classes)
 
         print(f"*** {self.__str__()} train ***")
-        server_loader = DataLoader(self.global_data, batch_size=experiment_config.batch_size, shuffle=False, num_workers=0,
+        server_loader = DataLoader(self.global_data, batch_size=experiment_config.batch_size, shuffle=False,
+                                   num_workers=0,
                                    drop_last=True)
-        #server_loader = DataLoader(self.global_data, batch_size=experiment_config.batch_size, shuffle=False,
+        # server_loader = DataLoader(self.global_data, batch_size=experiment_config.batch_size, shuffle=False,
         #                           num_workers=0)
-        #print(1)
+        # print(1)
         self.model.train()
         criterion = nn.KLDivLoss(reduction='batchmean')
-        optimizer = torch.optim.Adam( self.model.parameters(), lr=experiment_config.learning_rate_train_c)
-        #optimizer = torch.optim.Adam(self.model.parameters(), lr=experiment_config.learning_rate_train_c,
+        optimizer = torch.optim.Adam(self.model.parameters(), lr=experiment_config.learning_rate_train_c)
+        # optimizer = torch.optim.Adam(self.model.parameters(), lr=experiment_config.learning_rate_train_c,
         #                             weight_decay=1e-4)
 
         pseudo_targets_all = mean_pseudo_labels.to(device)
 
         for epoch in range(experiment_config.epochs_num_train_client):
-            #print(2)
+            # print(2)
 
             self.epoch_count += 1
             epoch_loss = 0
 
             for batch_idx, (inputs, _) in enumerate(server_loader):
-                #print(batch_idx)
+                # print(batch_idx)
 
                 inputs = inputs.to(device)
                 optimizer.zero_grad()
 
-                outputs =  self.model(inputs)
+                outputs = self.model(inputs)
                 # Check for NaN or Inf in outputs
 
                 # Convert model outputs to log probabilities
@@ -981,20 +961,19 @@ class Client(LearningEntity):
             avg_loss = epoch_loss / len(server_loader)
             print(f"Epoch [{epoch + 1}/{experiment_config.epochs_num_train_client}], Loss: {avg_loss:.4f}")
 
-        #self.weights =self.model.state_dict()
+        # self.weights =self.model.state_dict()
         return avg_loss
-
 
     def __str__(self):
         return "Client " + str(self.id_)
 
-    def fine_tune(self):
+    def fine_tune(self, num_of_epochs =experiment_config.epochs_num_input_fine_tune_clients):
         print("*** " + self.__str__() + " fine-tune ***")
 
         # Load the weights into the model
-        #if self.weights is  None:
+        # if self.weights is  None:
         #    self.model.apply(self.initialize_weights)
-        #else:
+        # else:
         #    self.model.load_state_dict(self.weights)
 
         # Create a DataLoader for the local data
@@ -1007,7 +986,7 @@ class Client(LearningEntity):
 
         optimizer = torch.optim.Adam(self.model.parameters(), lr=experiment_config.learning_rate_fine_tune_c)
 
-        epochs = experiment_config.epochs_num_input_fine_tune_clients
+        epochs = num_of_epochs
         for epoch in range(epochs):
             self.epoch_count += 1
             epoch_loss = 0
@@ -1025,9 +1004,9 @@ class Client(LearningEntity):
 
             result_to_print = epoch_loss / len(fine_tune_loader)
             print(f"Epoch [{epoch + 1}/{epochs}], Loss: {result_to_print:.4f}")
-        #self.weights = self.model.state_dict()self.weights = self.model.state_dict()
+        # self.weights = self.model.state_dict()self.weights = self.model.state_dict()
 
-        return  result_to_print
+        return result_to_print
 
     def fine_tune_with_consistency(self):
         print("*** " + self.__str__() + " fine-tune ***")
@@ -1098,6 +1077,7 @@ class Client(LearningEntity):
         print(f"Total gradient size: {total_grad_bytes / 1024 / 1024:.4f} MB")
         print()
 
+
 class Client_pFedCK(Client):
     def __init__(self, id_, client_data, global_data, global_test_data, local_test_data):
         super().__init__(id_, client_data, global_data, global_test_data, local_test_data)
@@ -1109,10 +1089,7 @@ class Client_pFedCK(Client):
         self.personalized_model.load_state_dict(personalized_state)
         self.interactive_model.load_state_dict(interactive_state)
 
-
-
-
-    def train(self,t):
+    def train(self, t):
         self.current_iteration = t
 
         # Save initial interactive model state for variation calculation
@@ -1159,15 +1136,19 @@ class Client_pFedCK(Client):
                 # Sync personalized model with updated interactive model
                 self.personalized_model.load_state_dict(self.interactive_model.state_dict())
 
-            print(f"Epoch {epoch+1}/5 | Personalized Loss: {total_loss_personalized/batch_count:.4f} "
-                  f"| Interactive Loss: {total_loss_interactive/batch_count:.4f}")
+            print(f"Epoch {epoch + 1}/5 | Personalized Loss: {total_loss_personalized / batch_count:.4f} "
+                  f"| Interactive Loss: {total_loss_interactive / batch_count:.4f}")
 
-        self.accuracy_per_client_1[t] = self.evaluate_accuracy_single(data_ = self.local_test_set,model=self.personalized_model, k=1)
-        self.accuracy_per_client_5[t] = self.evaluate_accuracy(data_ = self.local_test_set,model=self.personalized_model, k=5)
-        self.accuracy_per_client_10[t] = self.evaluate_accuracy(data_ = self.local_test_set,model=self.personalized_model, k=10)
-        self.accuracy_per_client_100[t] = self.evaluate_accuracy(data_ = self.local_test_set,model=self.personalized_model, k=100)
+        self.accuracy_per_client_1[t] = self.evaluate_accuracy_single(data_=self.local_test_set,
+                                                                      model=self.personalized_model, k=1)
+        self.accuracy_per_client_5[t] = self.evaluate_accuracy(data_=self.local_test_set, model=self.personalized_model,
+                                                               k=5)
+        self.accuracy_per_client_10[t] = self.evaluate_accuracy(data_=self.local_test_set,
+                                                                model=self.personalized_model, k=10)
+        self.accuracy_per_client_100[t] = self.evaluate_accuracy(data_=self.local_test_set,
+                                                                 model=self.personalized_model, k=100)
 
-        print("accuracy_per_client_1",self.accuracy_per_client_1[t])
+        print("accuracy_per_client_1", self.accuracy_per_client_1[t])
         return self.calculate_param_variation()
 
     def calculate_param_variation(self):
@@ -1188,6 +1169,7 @@ class Client_pFedCK(Client):
         self.interactive_model.load_state_dict(updated_state)
         print(f"Client {self.id_}: Updated interactive model with average parameter variations.")
 
+
 class Client_FedAvg(Client):
     def __init__(self, id_, client_data, global_data, global_test_data, local_test_data):
         Client.__init__(self, id_, client_data, global_data, global_test_data, local_test_data)
@@ -1200,9 +1182,8 @@ class Client_FedAvg(Client):
         flag = False
         for _ in range(1000):
             if t == 0:
-                #self.model.apply(self.initialize_weights)
-                #self.model.apply(self.initialize_weights)
-
+                # self.model.apply(self.initialize_weights)
+                # self.model.apply(self.initialize_weights)
 
                 self.model.apply(self.initialize_weights)
 
@@ -1210,16 +1191,16 @@ class Client_FedAvg(Client):
                 if flag:
                     self.model.apply(self.initialize_weights)
                 else:
-                    #self.model.apply(self.initialize_weights)
+                    # self.model.apply(self.initialize_weights)
 
                     self.model.load_state_dict(self.weights_received)
 
-            self.weights_to_send  = self.fine_tune()
+            self.weights_to_send = self.fine_tune()
 
             total_size = 0
             for param in self.weights_to_send.values():
                 total_size += param.numel() * param.element_size()
-            self.size_sent[t] =total_size / (1024 * 1024)
+            self.size_sent[t] = total_size / (1024 * 1024)
             acc = self.evaluate_accuracy_single(self.local_test_set)
 
             acc_test = self.evaluate_accuracy_single(self.test_global_data)
@@ -1230,18 +1211,18 @@ class Client_FedAvg(Client):
                     flag = True
 
             if experiment_config.data_set_selected == DataSet.CIFAR10 or experiment_config.data_set_selected == DataSet.SVHN:
-                if acc != 10and acc_test!=10:
+                if acc != 10 and acc_test != 10:
                     break
                 else:
                     flag = True
-                    #self.model.apply(self.initialize_weights)
+                    # self.model.apply(self.initialize_weights)
             if experiment_config.data_set_selected == DataSet.TinyImageNet:
-                if acc != 0.5 and acc_test!=0.5:
+                if acc != 0.5 and acc_test != 0.5:
                     break
                 else:
                     flag = True
             if experiment_config.data_set_selected == DataSet.EMNIST_balanced:
-                if acc > 2.14 and acc_test>2.14:
+                if acc > 2.14 and acc_test > 2.14:
                     break
                 else:
                     flag = True
@@ -1251,15 +1232,13 @@ class Client_FedAvg(Client):
         self.accuracy_per_client_10[t] = self.evaluate_accuracy(self.local_test_set, k=10)
         self.accuracy_per_client_100[t] = self.evaluate_accuracy(self.local_test_set, k=100)
 
-
-
     def fine_tune(self):
         print("*** " + self.__str__() + " fine-tune ***")
 
         # Load the weights into the model
-        #if self.weights is  None:
+        # if self.weights is  None:
         #    self.model.apply(self.initialize_weights)
-        #else:
+        # else:
         #    self.model.load_state_dict(self.weights)
 
         # Create a DataLoader for the local data
@@ -1292,12 +1271,12 @@ class Client_FedAvg(Client):
             print(f"Epoch [{epoch + 1}/{epochs}], Loss: {result_to_print:.4f}")
         ans = self.model.state_dict()
 
-        return  ans
+        return ans
 
 
 class Client_NoFederatedLearning(Client):
-    def __init__(self,id_, client_data, global_data,global_test_data,local_test_data,evaluate_every):
-        Client.__init__(self,id_, client_data, global_data,global_test_data,local_test_data)
+    def __init__(self, id_, client_data, global_data, global_test_data, local_test_data, evaluate_every):
+        Client.__init__(self, id_, client_data, global_data, global_test_data, local_test_data)
         self.evaluate_every = evaluate_every
 
     def fine_tune(self):
@@ -1327,7 +1306,7 @@ class Client_NoFederatedLearning(Client):
                 loss.backward()
                 optimizer.step()
                 epoch_loss += loss.item()
-            if   epoch % self.evaluate_every == 0 and epoch!=0:
+            if epoch % self.evaluate_every == 0 and epoch != 0:
                 self.accuracy_per_client_1[epoch] = self.evaluate_accuracy_single(self.local_test_set, k=1)
                 self.accuracy_per_client_5[epoch] = self.evaluate_accuracy(self.local_test_set, k=5)
                 self.accuracy_per_client_10[epoch] = self.evaluate_accuracy(self.local_test_set, k=10)
@@ -1335,47 +1314,47 @@ class Client_NoFederatedLearning(Client):
 
             result_to_print = epoch_loss / len(fine_tune_loader)
             print(f"Epoch [{epoch + 1}/{epochs}], Loss: {result_to_print:.4f}")
-        #self.weights = self.model.state_dict()self.weights = self.model.state_dict()
+        # self.weights = self.model.state_dict()self.weights = self.model.state_dict()
 
-        return  result_to_print
+        return result_to_print
+
 
 class Client_PseudoLabelsClusters_with_division(Client):
     def __init__(self, id_, client_data, global_data, global_test_data, local_test_data):
-        Client.__init__(self,id_, client_data, global_data,global_test_data,local_test_data)
+        Client.__init__(self, id_, client_data, global_data, global_test_data, local_test_data)
 
-
-
-    def train(self,mean_pseudo_labels):
+    def train(self, mean_pseudo_labels):
 
         print(f"Mean pseudo-labels shape: {mean_pseudo_labels.shape}")  # Should be (num_data_points, num_classes)
 
         print(f"*** {self.__str__()} train ***")
-        server_loader = DataLoader(self.global_data[self.current_iteration-1], batch_size=experiment_config.batch_size, shuffle=False, num_workers=0,
+        server_loader = DataLoader(self.global_data[self.current_iteration - 1],
+                                   batch_size=experiment_config.batch_size, shuffle=False, num_workers=0,
                                    drop_last=True)
-        #server_loader = DataLoader(self.global_data, batch_size=experiment_config.batch_size, shuffle=False,
+        # server_loader = DataLoader(self.global_data, batch_size=experiment_config.batch_size, shuffle=False,
         #                           num_workers=0)
-        #print(1)
+        # print(1)
         self.model.train()
         criterion = nn.KLDivLoss(reduction='batchmean')
-        optimizer = torch.optim.Adam( self.model.parameters(), lr=experiment_config.learning_rate_train_c)
-        #optimizer = torch.optim.Adam(self.model.parameters(), lr=experiment_config.learning_rate_train_c,
+        optimizer = torch.optim.Adam(self.model.parameters(), lr=experiment_config.learning_rate_train_c)
+        # optimizer = torch.optim.Adam(self.model.parameters(), lr=experiment_config.learning_rate_train_c,
         #                             weight_decay=1e-4)
 
         pseudo_targets_all = mean_pseudo_labels.to(device)
 
         for epoch in range(experiment_config.epochs_num_train_client):
-            #print(2)
+            # print(2)
 
             self.epoch_count += 1
             epoch_loss = 0
 
             for batch_idx, (inputs, _) in enumerate(server_loader):
-                #print(batch_idx)
+                # print(batch_idx)
 
                 inputs = inputs.to(device)
                 optimizer.zero_grad()
 
-                outputs =  self.model(inputs)
+                outputs = self.model(inputs)
                 # Check for NaN or Inf in outputs
 
                 # Convert model outputs to log probabilities
@@ -1418,17 +1397,17 @@ class Client_PseudoLabelsClusters_with_division(Client):
             avg_loss = epoch_loss / len(server_loader)
             print(f"Epoch [{epoch + 1}/{experiment_config.epochs_num_train_client}], Loss: {avg_loss:.4f}")
 
-        #self.weights =self.model.state_dict()
+        # self.weights =self.model.state_dict()
         return avg_loss
-
 
     def evaluate(self, model=None):
         if model is None:
             model = self.model
-    #    print("*** Generating Pseudo-Labels with Probabilities ***")
+        #    print("*** Generating Pseudo-Labels with Probabilities ***")
 
         # Create a DataLoader for the global data
-        global_data_loader = DataLoader(self.global_data[self.current_iteration], batch_size=experiment_config.batch_size, shuffle=False)
+        global_data_loader = DataLoader(self.global_data[self.current_iteration],
+                                        batch_size=experiment_config.batch_size, shuffle=False)
 
         model.eval()  # Set the model to evaluation mode
 
@@ -1446,27 +1425,28 @@ class Client_PseudoLabelsClusters_with_division(Client):
         # Concatenate all probabilities into a single tensor (2D matrix)
         all_probs = torch.cat(all_probs, dim=0)
 
-       #print(f"Shape of the 2D pseudo-label matrix: {all_probs.shape}")
+        # print(f"Shape of the 2D pseudo-label matrix: {all_probs.shape}")
         return all_probs
 
+
 class Server(LearningEntity):
-    def __init__(self,id_,global_data,test_data, clients_ids,clients_test_data_dict):
-        LearningEntity.__init__(self, id_,global_data,test_data)
-        #self.local_batch = experiment_config.local_batch
+    def __init__(self, id_, global_data, test_data, clients_ids, clients_test_data_dict):
+        LearningEntity.__init__(self, id_, global_data, test_data)
+        # self.local_batch = experiment_config.local_batch
         self.pseudo_label_before_net_L2 = {}
         self.pseudo_label_after_net_L2 = {}
-        self.num = (1000)*17
+        self.num = (1000) * 17
         self.pseudo_label_received = {}
         self.clusters_client_id_dict_per_iter = {}
         self.clients_ids = clients_ids
         self.reset_clients_received_pl()
-        self.clients_test_data_dict=clients_test_data_dict
-        #if experiment_config.server_learning_technique == ServerLearningTechnique.multi_head:
+        self.clients_test_data_dict = clients_test_data_dict
+        # if experiment_config.server_learning_technique == ServerLearningTechnique.multi_head:
         self.accuracy_per_client_1_max = {}
 
         self.previous_centroids_dict = {}
         self.pseudo_label_to_send = {}
-        if isinstance(experiment_config.num_clusters,int):
+        if isinstance(experiment_config.num_clusters, int):
             num_clusters = experiment_config.num_clusters
         else:
             num_clusters = experiment_config.number_of_optimal_clusters
@@ -1476,28 +1456,26 @@ class Server(LearningEntity):
         self.accuracy_test_max = {}
         self.accuracy_global_max = {}
 
-        if num_clusters>0:
-            for cluster_id in  range(num_clusters):
+        if num_clusters > 0:
+            for cluster_id in range(num_clusters):
                 self.previous_centroids_dict[cluster_id] = None
 
-        if  experiment_config.net_cluster_technique == NetClusterTechnique.multi_head:
+        if experiment_config.net_cluster_technique == NetClusterTechnique.multi_head:
             self.model = get_server_model()
             self.model.apply(self.initialize_weights)
 
-
-        if  experiment_config.net_cluster_technique == NetClusterTechnique.multi_model:
+        if experiment_config.net_cluster_technique == NetClusterTechnique.multi_model:
             self.multi_model_dict = {}
 
-            if num_clusters>0:
-                for cluster_id in  range(num_clusters):
+            if num_clusters > 0:
+                for cluster_id in range(num_clusters):
                     self.multi_model_dict[cluster_id] = get_server_model()
                     self.multi_model_dict[cluster_id].apply(self.initialize_weights)
 
-
         self.accuracy_per_client_1_max = {}
-        self.accuracy_per_client_10_max= {}
-        self.accuracy_per_client_100_max= {}
-        self.accuracy_per_client_5_max= {}
+        self.accuracy_per_client_10_max = {}
+        self.accuracy_per_client_100_max = {}
+        self.accuracy_per_client_5_max = {}
 
         for client_id in self.clients_ids:
             self.accuracy_per_client_1[client_id] = {}
@@ -1506,30 +1484,24 @@ class Server(LearningEntity):
             self.accuracy_per_client_10_max[client_id] = {}
             self.accuracy_per_client_100_max[client_id] = {}
 
-        if num_clusters>0:
-            for cluster_id in  range(num_clusters):
+        if num_clusters > 0:
+            for cluster_id in range(num_clusters):
                 self.accuracy_server_test_1[cluster_id] = {}
-                self.accuracy_global_data_1[cluster_id] ={}
-        #self.accuracy_aggregated_head = {}
-        #self.accuracy_pl_measures[cluster_id] = {}
+                self.accuracy_global_data_1[cluster_id] = {}
+        # self.accuracy_aggregated_head = {}
+        # self.accuracy_pl_measures[cluster_id] = {}
 
+        # self.model = get_server_model()
+        # self.model.apply(self.initialize_weights)
+        # self.train_learning_rate = experiment_config.learning_rate_train_s
+        # self.train_epoches = experiment_config.epochs_num_train_server
 
-
-        #self.model = get_server_model()
-        #self.model.apply(self.initialize_weights)
-        #self.train_learning_rate = experiment_config.learning_rate_train_s
-        #self.train_epoches = experiment_config.epochs_num_train_server
-
-        #self.weights = None
-
-
-
-
+        # self.weights = None
 
     def receive_single_pseudo_label(self, sender, info):
         self.pseudo_label_received[sender] = info
 
-    def get_pseudo_label_list_after_models_train(self,mean_pseudo_labels_per_cluster):
+    def get_pseudo_label_list_after_models_train(self, mean_pseudo_labels_per_cluster):
         pseudo_labels_for_model_per_cluster = {}
         for cluster_id, mean_pseudo_label_for_cluster in mean_pseudo_labels_per_cluster.items():
             model_ = self.model_per_cluster[cluster_id]
@@ -1567,16 +1539,17 @@ class Server(LearningEntity):
             selected_labels[mask] = pseudo_labels[mask]
 
         return selected_labels
-    def create_feed_back_to_clients_multihead(self,mean_pseudo_labels_per_cluster,t):
+
+    def create_feed_back_to_clients_multihead(self, mean_pseudo_labels_per_cluster, t):
         for _ in range(experiment_config.num_rounds_multi_head):
             for cluster_id, mean_pseudo_label_for_cluster in mean_pseudo_labels_per_cluster.items():
                 self.train(mean_pseudo_label_for_cluster, cluster_id)
             if experiment_config.server_feedback_technique == ServerFeedbackTechnique.similar_to_cluster:
 
                 for cluster_id in mean_pseudo_labels_per_cluster.keys():
-                        pseudo_labels_for_cluster = self.evaluate_for_cluster(cluster_id)
-                        for client_id in self.clusters_client_id_dict_per_iter[t][cluster_id]:
-                            self.pseudo_label_to_send[client_id] = pseudo_labels_for_cluster
+                    pseudo_labels_for_cluster = self.evaluate_for_cluster(cluster_id)
+                    for client_id in self.clusters_client_id_dict_per_iter[t][cluster_id]:
+                        self.pseudo_label_to_send[client_id] = pseudo_labels_for_cluster
 
         if experiment_config.server_feedback_technique == ServerFeedbackTechnique.similar_to_client:
             pseudo_labels_for_cluster_list = []
@@ -1590,7 +1563,7 @@ class Server(LearningEntity):
             for client_id in self.clients_ids:
                 self.pseudo_label_to_send[client_id] = pseudo_labels_to_send
 
-    def create_feed_back_to_clients_multimodel(self,mean_pseudo_labels_per_cluster,t):
+    def create_feed_back_to_clients_multimodel(self, mean_pseudo_labels_per_cluster, t):
         pl_per_cluster = {}
 
         for cluster_id, mean_pseudo_label_for_cluster in mean_pseudo_labels_per_cluster.items():
@@ -1598,15 +1571,15 @@ class Server(LearningEntity):
             for _ in range(5):
 
                 if experiment_config.input_consistency == InputConsistency.withInputConsistency:
-                    self.train_with_consistency(mean_pseudo_label_for_cluster, 0,selected_model)
+                    self.train_with_consistency(mean_pseudo_label_for_cluster, 0, selected_model)
                 else:
-                    self.train(mean_pseudo_label_for_cluster, 0,selected_model)
+                    self.train(mean_pseudo_label_for_cluster, 0, selected_model)
 
                 acc_global = self.evaluate_accuracy_single(self.test_global_data, model=selected_model, k=1,
-                                              cluster_id=0)
+                                                           cluster_id=0)
 
                 acc_local = self.evaluate_accuracy_single(self.global_data, model=selected_model, k=1,
-                                                           cluster_id=0)
+                                                          cluster_id=0)
 
                 if experiment_config.data_set_selected == DataSet.CIFAR100:
                     if acc_global != 1 and acc_local != 1:
@@ -1632,7 +1605,7 @@ class Server(LearningEntity):
 
             print("hihi")
             if experiment_config.server_feedback_technique == ServerFeedbackTechnique.similar_to_cluster:
-                pseudo_labels_for_cluster = self.evaluate_for_cluster(0,selected_model)
+                pseudo_labels_for_cluster = self.evaluate_for_cluster(0, selected_model)
                 pl_per_cluster[cluster_id] = pseudo_labels_for_cluster
                 for client_id in self.clusters_client_id_dict_per_iter[t][cluster_id]:
                     self.pseudo_label_to_send[client_id] = pseudo_labels_for_cluster
@@ -1643,7 +1616,7 @@ class Server(LearningEntity):
 
                 selected_model = self.multi_model_dict[cluster_id]
                 self.train(mean_pseudo_label_for_cluster, 0, selected_model)
-                pl = self.evaluate_for_cluster(0,selected_model)
+                pl = self.evaluate_for_cluster(0, selected_model)
 
                 pseudo_labels_for_cluster_list.append(pl)
 
@@ -1653,14 +1626,17 @@ class Server(LearningEntity):
                 self.pseudo_label_to_send[client_id] = pseudo_labels_to_send
 
         return pl_per_cluster
-    def evaluate_results(self,t):
 
-        if isinstance(experiment_config.num_clusters,int):
-            num_clusters =experiment_config.num_clusters
+    def evaluate_results(self, t):
+
+        if isinstance(experiment_config.num_clusters, int):
+            num_clusters = experiment_config.num_clusters
         else:
-            num_clusters =experiment_config.number_of_optimal_clusters
+            num_clusters = experiment_config.number_of_optimal_clusters
         models_list = list(self.multi_model_dict.values())
-        self.accuracy_global_data_1[t] = self.evaluate_max_accuracy_per_point(models = models_list, data_ = self.global_data, k=1, cluster_id=None)
+        self.accuracy_global_data_1[t] = self.evaluate_max_accuracy_per_point(models=models_list,
+                                                                              data_=self.global_data, k=1,
+                                                                              cluster_id=None)
         for cluster_id in range(num_clusters):
             if experiment_config.net_cluster_technique == NetClusterTechnique.multi_model:
                 selected_model = self.multi_model_dict[cluster_id]
@@ -1668,13 +1644,13 @@ class Server(LearningEntity):
                 selected_model = None
             if experiment_config.net_cluster_technique == NetClusterTechnique.multi_model:
                 cluster_id_to_examine = 0
-            else: cluster_id_to_examine = cluster_id
+            else:
+                cluster_id_to_examine = cluster_id
             self.accuracy_server_test_1[cluster_id][t] = self.evaluate_accuracy_single(self.test_global_data,
-                                                                                model=selected_model, k=1,
-                                                                                cluster_id=cluster_id_to_examine)
+                                                                                       model=selected_model, k=1,
+                                                                                       cluster_id=cluster_id_to_examine)
 
-
-            #self.accuracy_global_data_1[cluster_id][t] = self.evaluate_accuracy(self.global_data,
+            # self.accuracy_global_data_1[cluster_id][t] = self.evaluate_accuracy(self.global_data,
             #                                                                    model=selected_model, k=1,
             #                                                                    cluster_id=cluster_id_to_examine)
 
@@ -1682,32 +1658,32 @@ class Server(LearningEntity):
             test_data_per_clients = self.clients_test_data_dict[client_id]
             cluster_id_for_client = self.get_cluster_of_client(client_id, t)
             if experiment_config.net_cluster_technique == NetClusterTechnique.multi_model:
-                print("cluster_id_for_client",cluster_id_for_client)
-                print("len(self.multi_model_dict)",len(self.multi_model_dict))
+                print("cluster_id_for_client", cluster_id_for_client)
+                print("len(self.multi_model_dict)", len(self.multi_model_dict))
 
                 selected_model = self.multi_model_dict[cluster_id_for_client]
                 cluster_id_for_client = 0
 
             if experiment_config.net_cluster_technique == NetClusterTechnique.multi_head:
                 selected_model = None
-            print("client_id",client_id,"accuracy_per_client_1")
+            print("client_id", client_id, "accuracy_per_client_1")
             self.accuracy_per_client_1[client_id][t] = self.evaluate_accuracy_single(test_data_per_clients,
-                                                                              model=selected_model, k=1,
-                                                                              cluster_id=cluster_id_for_client)
-            #print("client_id",client_id,"accuracy_per_client_5")
-            #self.accuracy_per_client_5[client_id][t] = self.evaluate_accuracy(test_data_per_clients,
-             #                                                                 model=selected_model, k=5,
-             #                                                                 cluster_id=cluster_id_for_client)
+                                                                                     model=selected_model, k=1,
+                                                                                     cluster_id=cluster_id_for_client)
+            # print("client_id",client_id,"accuracy_per_client_5")
+            # self.accuracy_per_client_5[client_id][t] = self.evaluate_accuracy(test_data_per_clients,
+            #                                                                 model=selected_model, k=5,
+            #                                                                 cluster_id=cluster_id_for_client)
             l1 = []
             l2 = []
             l3 = []
             l4 = []
 
-
             for cluster_id in range(num_clusters):
                 if experiment_config.net_cluster_technique == NetClusterTechnique.multi_model:
-                    l1.append(self.evaluate_accuracy_single(self.clients_test_data_dict[client_id], model=self.multi_model_dict[cluster_id], k=1,
-                                                     cluster_id=0))
+                    l1.append(self.evaluate_accuracy_single(self.clients_test_data_dict[client_id],
+                                                            model=self.multi_model_dict[cluster_id], k=1,
+                                                            cluster_id=0))
                     l2.append(self.evaluate_accuracy(self.clients_test_data_dict[client_id],
                                                      model=self.multi_model_dict[cluster_id], k=10,
                                                      cluster_id=0))
@@ -1720,9 +1696,9 @@ class Server(LearningEntity):
 
                 else:
                     l1.append(self.evaluate_accuracy(self.clients_test_data_dict[client_id], model=selected_model, k=1,
-                                                    cluster_id=cluster_id))
+                                                     cluster_id=cluster_id))
 
-            print("client_id",client_id,"accuracy_per_client_1_max",max(l1))
+            print("client_id", client_id, "accuracy_per_client_1_max", max(l1))
 
             self.accuracy_per_client_1_max[client_id][t] = max(l1)
             self.accuracy_per_client_10_max[client_id][t] = max(l2)
@@ -1730,48 +1706,31 @@ class Server(LearningEntity):
 
             self.accuracy_per_client_5_max[client_id][t] = max(l4)
 
-    def iteration_context(self,t):
+    def iteration_context(self, t):
         self.current_iteration = t
-        pseudo_labels_per_cluster, self.clusters_client_id_dict_per_iter[t] = self.get_pseudo_labels_input_per_cluster(t)  # #
-        self.pseudo_label_before_net_L2[t]={}
-        for cluster_id, pl in pseudo_labels_per_cluster.items():
-            self.pseudo_label_before_net_L2[t][cluster_id] = self.get_pseudo_label_L2(pl)
+        pseudo_labels_per_cluster, self.clusters_client_id_dict_per_iter[t] = self.get_pseudo_labels_input_per_cluster(
+            t)  # #
+        self.pseudo_label_before_net_L2[t] = {}
+        if t > 0:
+            for cluster_id, pl in pseudo_labels_per_cluster.items():
+                self.pseudo_label_before_net_L2[t][cluster_id] = self.get_pseudo_label_L2(pl)
 
-        if experiment_config.net_cluster_technique == NetClusterTechnique.multi_head:
-            self.create_feed_back_to_clients_multihead(pseudo_labels_per_cluster,t)
-        if experiment_config.net_cluster_technique == NetClusterTechnique.multi_model:
-            pseudo_labels_for_cluster = self.create_feed_back_to_clients_multimodel(pseudo_labels_per_cluster,t)
+            if experiment_config.net_cluster_technique == NetClusterTechnique.multi_head:
+                self.create_feed_back_to_clients_multihead(pseudo_labels_per_cluster, t)
+            if experiment_config.net_cluster_technique == NetClusterTechnique.multi_model:
+                pseudo_labels_for_cluster = self.create_feed_back_to_clients_multimodel(pseudo_labels_per_cluster, t)
 
-        self.pseudo_label_after_net_L2[t] = {}
-        #for cluster_id, pseudo_labels_per_client in pseudo_labels_for_cluster.items():
-
-
-
+            self.pseudo_label_after_net_L2[t] = {}
 
 
-        loader = DataLoader(self.global_data, batch_size=len(self.global_data))
-        X_tensor, Y_tensor = next(iter(loader))  # Gets all data
-        # Convert to NumPy (if needed)
-        ground_truth = Y_tensor.numpy()
-        num_classes = 100
 
-        #gt_onehot = F.one_hot(torch.tensor(ground_truth), num_classes=num_classes).float().numpy()  # (N, C)
 
-        # Stack into a tensor of shape (K, N, C)
-        #pseudo_stack = np.stack(pseudo_labels_for_cluster.values())  # (K, N, C)
+            self.pseudo_label_after_net_L2[t] = 0  # np.mean(min_errors)
+            # print("PL after net",self.pseudo_label_after_net_L2[t])
+            # Return mean L2 error over all data points
+            # return np.mean(min_errors)
 
-        # Compute squared L2 distances to one-hot ground truth → shape: (K, N)
-        #l2_errors = np.linalg.norm(pseudo_stack - gt_onehot[None, :, :], axis=2) ** 2
-
-        # Take min L2 error for each data point → shape: (N,)
-        #min_errors = np.min(l2_errors, axis=0)
-
-        self.pseudo_label_after_net_L2[t] = 0#np.mean(min_errors)
-        #print("PL after net",self.pseudo_label_after_net_L2[t])
-        # Return mean L2 error over all data points
-        #return np.mean(min_errors)
-
-        self.evaluate_results(t)
+            self.evaluate_results(t)
         self.reset_clients_received_pl()
 
     def train_with_consistency(self, mean_pseudo_labels, cluster_num="0", selected_model=None):
@@ -1849,19 +1808,17 @@ class Server(LearningEntity):
             print(f"Epoch [{epoch + 1}/{experiment_config.epochs_num_train_server}], Loss: {avg_loss:.4f}")
 
         return avg_loss
-    def train(self, mean_pseudo_labels,  cluster_num="0",selected_model=None):
+
+    def train(self, mean_pseudo_labels, cluster_num="0", selected_model=None):
 
         print(f"Mean pseudo-labels shape: {mean_pseudo_labels.shape}")  # Should be (num_data_points, num_classes)
 
         print(f"*** {self.__str__()} train *** Cluster: {cluster_num} ***")
 
-        #experiment_config.batch_size
-        #self.local_batch = 32
-        server_loader = DataLoader(self.global_data , batch_size=experiment_config.batch_size, shuffle=False,
+        # experiment_config.batch_size
+        # self.local_batch = 32
+        server_loader = DataLoader(self.global_data, batch_size=experiment_config.batch_size, shuffle=False,
                                    num_workers=0, drop_last=True)
-
-
-
 
         if selected_model is None:
             selected_model_train = self.model
@@ -1923,12 +1880,9 @@ class Server(LearningEntity):
 
         return avg_loss
 
-
     def reset_clients_received_pl(self):
         for id_ in self.clients_ids:
             self.pseudo_label_received[id_] = None
-
-
 
     def k_means_grouping(self):
         """
@@ -1985,7 +1939,7 @@ class Server(LearningEntity):
 
         return clusters
 
-    def get_cluster_mean_pseudo_labels_dict(self,clusters_client_id_dict):
+    def get_cluster_mean_pseudo_labels_dict(self, clusters_client_id_dict):
         ans = {}
         for cluster_id, clients_ids in clusters_client_id_dict.items():
             ans[cluster_id] = []
@@ -1993,28 +1947,29 @@ class Server(LearningEntity):
                 ans[cluster_id].append(self.pseudo_label_received[client_id])
         return ans
 
-    def calc_L2(self,pair):
+    def calc_L2(self, pair):
         first_pl = self.pseudo_label_received[pair[0]]
         second_pl = self.pseudo_label_received[pair[1]]
 
+        return Server.calc_L2_given_pls(first_pl, second_pl)
 
-        return  Server.calc_L2_given_pls(first_pl,second_pl)
-    #def get_L2_of_all_clients(self):
+    # def get_L2_of_all_clients(self):
 
-        # Example list of client IDs
-        #pairs = list(combinations(self.clients_ids, 2))
-        #ans_dict = {}
-        #for pair in pairs:
-        #    ans_dict[pair] = self.calc_L2(pair).item()
-        #return ans_dict
+    # Example list of client IDs
+    # pairs = list(combinations(self.clients_ids, 2))
+    # ans_dict = {}
+    # for pair in pairs:
+    #    ans_dict[pair] = self.calc_L2(pair).item()
+    # return ans_dict
 
     @staticmethod
-    def calc_L2_given_pls(pl1,pl2):
+    def calc_L2_given_pls(pl1, pl2):
         difference = pl1 - pl2  # Element-wise difference
         squared_difference = difference ** 2  # Square the differences
         sum_squared = torch.sum(squared_difference)  # Sum of squared differences
         return torch.sqrt(sum_squared).item()  # Take the square root
-    def initiate_clusters_centers_dict(self,L2_of_all_clients):
+
+    def initiate_clusters_centers_dict(self, L2_of_all_clients):
         max_pair = max(L2_of_all_clients.items(), key=lambda item: item[1])
         max_pair_keys = max_pair[0]
         clusters_centers_dict = {max_pair_keys[0]: self.pseudo_label_received[max_pair_keys[0]],
@@ -2027,17 +1982,16 @@ class Server(LearningEntity):
             id1, id2 = pair
             if (id1 in clusters_centers_dict) ^ (id2 in clusters_centers_dict):
                 L2_temp[pair] = L2_of_all_clients[pair]
-            #if id1 in clusters_centers_dict:
+            # if id1 in clusters_centers_dict:
             #    if id2 not in clusters_centers_dict:
             #        L2_temp[pair] = L2_of_all_clients[pair]
-            #if id2 in clusters_centers_dict:
+            # if id2 in clusters_centers_dict:
             #    if id1 not in clusters_centers_dict:
             #        L2_temp[pair] = L2_of_all_clients[pair]
 
         return L2_temp
 
-
-    def get_l2_of_non_centers(self,L2_of_all_clients,clusters_centers_dict):
+    def get_l2_of_non_centers(self, L2_of_all_clients, clusters_centers_dict):
         all_vals = {}
         for pair, l2 in L2_of_all_clients.items():
             if pair[0] in clusters_centers_dict:
@@ -2049,30 +2003,31 @@ class Server(LearningEntity):
             all_vals[which_of_the_two].append(l2)
 
         sum_of_vals = {}
-        for k,v in all_vals.items():
-            sum_of_vals[k]=sum(v)
+        for k, v in all_vals.items():
+            sum_of_vals[k] = sum(v)
         max_key = max(sum_of_vals, key=sum_of_vals.get)
 
         return max_key
 
-    def complete_clusters_centers_and_L2_of_all_clients(self,clusters_centers_dict):
-        if isinstance(experiment_config.num_clusters,str):
+    def complete_clusters_centers_and_L2_of_all_clients(self, clusters_centers_dict):
+        if isinstance(experiment_config.num_clusters, str):
             cluster_counter = 3
         else:
-            cluster_counter =  experiment_config.num_clusters -2
+            cluster_counter = experiment_config.num_clusters - 2
 
         while cluster_counter > 0:
             distance_of_all_clients = self.get_distance_dict()
-            distance_of_all_clients = self.update_distance_of_all_clients(distance_of_all_clients, clusters_centers_dict)
-            new_center = self.get_l2_of_non_centers(distance_of_all_clients,clusters_centers_dict)
+            distance_of_all_clients = self.update_distance_of_all_clients(distance_of_all_clients,
+                                                                          clusters_centers_dict)
+            new_center = self.get_l2_of_non_centers(distance_of_all_clients, clusters_centers_dict)
             clusters_centers_dict[new_center] = self.pseudo_label_received[new_center]
-            cluster_counter = cluster_counter-1
+            cluster_counter = cluster_counter - 1
         distance_of_all_clients = self.get_distance_dict()
         distance_of_all_clients = self.update_distance_of_all_clients(distance_of_all_clients, clusters_centers_dict)
-        return distance_of_all_clients,clusters_centers_dict
+        return distance_of_all_clients, clusters_centers_dict
 
-    def get_l2_of_non_center_to_center(self,L2_from_center_clients,clusters_centers_dict):
-        ans ={}
+    def get_l2_of_non_center_to_center(self, L2_from_center_clients, clusters_centers_dict):
+        ans = {}
         for pair, l2 in L2_from_center_clients.items():
             if pair[0] in clusters_centers_dict:
                 not_center = pair[1]
@@ -2085,10 +2040,10 @@ class Server(LearningEntity):
             ans[not_center][center] = l2
         return ans
 
-    def get_non_center_to_which_center_dict(self,l2_of_non_center_to_center):
+    def get_non_center_to_which_center_dict(self, l2_of_non_center_to_center):
         one_to_one_dict = {}
-        for none_center,dict_ in l2_of_non_center_to_center.items():
-            one_to_one_dict[none_center] =  min(dict_, key=dict_.get)
+        for none_center, dict_ in l2_of_non_center_to_center.items():
+            one_to_one_dict[none_center] = min(dict_, key=dict_.get)
 
         dict_ = one_to_one_dict
         ans = {}
@@ -2100,8 +2055,7 @@ class Server(LearningEntity):
 
         return ans
 
-
-    def prep_clusters(self,input_):
+    def prep_clusters(self, input_):
         ans = {}
         counter = 0
         for k, list_of_other in input_.items():
@@ -2114,58 +2068,51 @@ class Server(LearningEntity):
     def get_clusters_centers_dict(self):
         L2_of_all_clients = self.get_distance_dict()
         clusters_centers_dict = self.initiate_clusters_centers_dict(L2_of_all_clients)
-        L2_from_center_clients,clusters_centers_dict = self.complete_clusters_centers_and_L2_of_all_clients(clusters_centers_dict)
-        L2_of_non_centers = self.get_l2_of_non_center_to_center(L2_from_center_clients,clusters_centers_dict)
+        L2_from_center_clients, clusters_centers_dict = self.complete_clusters_centers_and_L2_of_all_clients(
+            clusters_centers_dict)
+        L2_of_non_centers = self.get_l2_of_non_center_to_center(L2_from_center_clients, clusters_centers_dict)
 
         non_center_to_which_center_dict = self.get_non_center_to_which_center_dict(L2_of_non_centers)
         ans = self.prep_clusters(non_center_to_which_center_dict)
-        centers_to_add = self.get_centers_to_add(clusters_centers_dict,ans)
+        centers_to_add = self.get_centers_to_add(clusters_centers_dict, ans)
         temp_ans = {}
-        if len(centers_to_add)>0:
-            for cluster_id in range(max(ans.keys())+1,max(ans.keys())+1+len(centers_to_add)):
-                index = cluster_id-(max(ans.keys())+1)
-                temp_ans[cluster_id]=centers_to_add[index]
-        for k,v in temp_ans.items():
-            ans[k]=[v]
-
-
+        if len(centers_to_add) > 0:
+            for cluster_id in range(max(ans.keys()) + 1, max(ans.keys()) + 1 + len(centers_to_add)):
+                index = cluster_id - (max(ans.keys()) + 1)
+                temp_ans[cluster_id] = centers_to_add[index]
+        for k, v in temp_ans.items():
+            ans[k] = [v]
 
         return ans
-    def get_centers_to_add(self,clusters_centers_dict,ans):
-        centers_to_add =[]
+
+    def get_centers_to_add(self, clusters_centers_dict, ans):
+        centers_to_add = []
         for center_id in clusters_centers_dict.keys():
             center_to_add = self.center_id_not_in_ans(ans, center_id)
             if center_to_add is not None:
                 centers_to_add.append(center_to_add)
         return centers_to_add
-    def center_id_not_in_ans(self,ans,center_id):
+
+    def center_id_not_in_ans(self, ans, center_id):
         for list_of_id in ans.values():
             if center_id in list_of_id:
                 return
         return center_id
 
-
-
     def manual_grouping(self):
         clusters_client_id_dict = {}
-        if isinstance(experiment_config.num_clusters,int):
+        if isinstance(experiment_config.num_clusters, int):
             num_clusters = experiment_config.num_clusters
         else:
             num_clusters = experiment_config.number_of_optimal_clusters
 
         if num_clusters == 1:
-            clusters_client_id_dict[0]=self.clients_ids
+            clusters_client_id_dict[0] = self.clients_ids
         else:
-            clusters_client_id_dict =  self.get_clusters_centers_dict()
+            clusters_client_id_dict = self.get_clusters_centers_dict()
         return clusters_client_id_dict
 
-
-
-
-
-
-
-    def get_pseudo_labels_input_per_cluster(self,t):
+    def get_pseudo_labels_input_per_cluster(self, timestamp):
         # Stack the pseudo labels tensors into a single tensor
         mean_per_cluster = {}
 
@@ -2175,42 +2122,41 @@ class Server(LearningEntity):
             clusters_client_id_dict = experiment_config.known_clusters
             flag = True
         if experiment_config.num_clusters == 1:
-            clusters_client_id_dict={0:self.clients_ids}
-            #clusters_client_id_dict = experiment_config.known_clusters
+            clusters_client_id_dict = {0: self.clients_ids}
+            # clusters_client_id_dict = experiment_config.known_clusters
             flag = True
 
-
-        if (experiment_config.cluster_technique == ClusterTechnique.greedy_elimination_cross_entropy or experiment_config.cluster_technique == ClusterTechnique.greedy_elimination_L2) and not flag:
-            if t == 0:
+        if (
+                experiment_config.cluster_technique == ClusterTechnique.greedy_elimination_cross_entropy or experiment_config.cluster_technique == ClusterTechnique.greedy_elimination_L2) and not flag:
+            if timestamp == 0:
                 clusters_client_id_dict = self.greedy_elimination()
             else:
                 clusters_client_id_dict = self.clusters_client_id_dict_per_iter[0]
 
-
         if experiment_config.cluster_technique == ClusterTechnique.kmeans and not flag:
             clusters_client_id_dict = self.k_means_grouping()
 
-        if (experiment_config.cluster_technique == ClusterTechnique.manual_L2 or experiment_config.cluster_technique == ClusterTechnique.manual_cross_entropy) and not flag:
+        if (
+                experiment_config.cluster_technique == ClusterTechnique.manual_L2 or experiment_config.cluster_technique == ClusterTechnique.manual_cross_entropy) and not flag:
             clusters_client_id_dict = self.manual_grouping()
 
-        if experiment_config.cluster_technique == ClusterTechnique.manual_single_iter  and not flag:
-            if t == 0:
+        if experiment_config.cluster_technique == ClusterTechnique.manual_single_iter and not flag:
+            if timestamp == 0:
                 clusters_client_id_dict = self.manual_grouping()
             else:
                 clusters_client_id_dict = self.clusters_client_id_dict_per_iter[0]
 
-
         cluster_mean_pseudo_labels_dict = self.get_cluster_mean_pseudo_labels_dict(clusters_client_id_dict)
 
-        #if experiment_config.num_clusters>1:
+        # if experiment_config.num_clusters>1:
         for cluster_id, pseudo_labels in cluster_mean_pseudo_labels_dict.items():
             pseudo_labels_list = list(pseudo_labels)
-            if experiment_config.server_input_tech ==  ServerInputTech.mean:
+            if experiment_config.server_input_tech == ServerInputTech.mean:
                 stacked_labels = torch.stack(pseudo_labels_list)
                 # Average the pseudo labels across clients
                 average_pseudo_labels = torch.mean(stacked_labels, dim=0)
                 mean_per_cluster[cluster_id] = average_pseudo_labels
-            if experiment_config.server_input_tech ==  ServerInputTech.max:
+            if experiment_config.server_input_tech == ServerInputTech.max:
                 mean_per_cluster[cluster_id] = self.select_confident_pseudo_labels(pseudo_labels_list)
         return mean_per_cluster, clusters_client_id_dict
 
@@ -2269,7 +2215,7 @@ class Server(LearningEntity):
         else:
             return False
 
-    def get_cluster_of_client(self,client_id,t):
+    def get_cluster_of_client(self, client_id, t):
         if experiment_config.cluster_technique == ClusterTechnique.manual_single_iter:
             for cluster_id, clients_id_list in self.clusters_client_id_dict_per_iter[0].items():
                 if client_id in clients_id_list:
@@ -2289,7 +2235,7 @@ class Server(LearningEntity):
             self.multi_model_dict[cluster_id] = get_server_model()
             self.multi_model_dict[cluster_id].apply(self.initialize_weights)
 
-    def get_distance_per_client(self,distance_dict):
+    def get_distance_per_client(self, distance_dict):
         ans = {}
         for pair, dist in distance_dict.items():
             first_id = pair[0]
@@ -2303,25 +2249,22 @@ class Server(LearningEntity):
 
         return ans
 
-
-
-
     def greedy_elimination(self):
         distance_dict = self.get_distance_dict()
         distance_per_client = self.get_distance_per_client(distance_dict)
         epsilon_ = self.calc_epsilon(distance_per_client)
-        clusters_client_id_dict = self.greedy_elimination_t0(epsilon_,distance_per_client)
+        clusters_client_id_dict = self.greedy_elimination_t0(epsilon_, distance_per_client)
         experiment_config.num_clusters = len(clusters_client_id_dict)
         self.init_models_measures()
         return clusters_client_id_dict
-            #experiment_config.num_clusters, clusters_client_id_dict = self.greedy_elimination_t_larger(epsilon_=None,
-            #                                                                                           k=experiment_config.num_clusters)
+        # experiment_config.num_clusters, clusters_client_id_dict = self.greedy_elimination_t_larger(epsilon_=None,
+        #                                                                                           k=experiment_config.num_clusters)
 
     def get_distance_dict(self):
         pairs = list(combinations(self.clients_ids, 2))
         distance_dict = {}
         for pair in pairs:
-            if experiment_config.cluster_technique == ClusterTechnique.greedy_elimination_L2 or  experiment_config.cluster_technique == ClusterTechnique.manual_L2:
+            if experiment_config.cluster_technique == ClusterTechnique.greedy_elimination_L2 or experiment_config.cluster_technique == ClusterTechnique.manual_L2:
                 distance_dict[pair] = self.calc_L2(pair)
             if experiment_config.cluster_technique == ClusterTechnique.greedy_elimination_cross_entropy or experiment_config.cluster_technique == ClusterTechnique.manual_cross_entropy:
                 distance_dict[pair] = self.calc_cross_entropy(pair)
@@ -2330,18 +2273,16 @@ class Server(LearningEntity):
     def calc_cross_entropy(self, pair):
         first_pl = self.pseudo_label_received[pair[0]]
         second_pl = self.pseudo_label_received[pair[1]]
-        return Server.calc_cross_entropy_given_pl(first_pl,second_pl)
-
+        return Server.calc_cross_entropy_given_pl(first_pl, second_pl)
 
     @staticmethod
-    def calc_cross_entropy_given_pl(first_pl,second_pl):
+    def calc_cross_entropy_given_pl(first_pl, second_pl):
         loss1 = -(first_pl * torch.log(second_pl)).sum(dim=1).mean()
         loss2 = -(second_pl * torch.log(first_pl.clamp(min=1e-9))).sum(dim=1).mean()
         loss = 0.5 * (loss1 + loss2)
         return loss.item()
 
-
-    def get_pseudo_label_in_cluster(self,clusters_client_id_dict):
+    def get_pseudo_label_in_cluster(self, clusters_client_id_dict):
         pseudo_labels_in_cluster = {}
         for cluster_id, clients in clusters_client_id_dict.items():
             pseudo_labels_in_cluster[cluster_id] = []
@@ -2350,34 +2291,32 @@ class Server(LearningEntity):
                 pseudo_labels_in_cluster[cluster_id].append(pl)
         return pseudo_labels_in_cluster
 
-    def calc_epsilon(self,distance_per_client):
+    def calc_epsilon(self, distance_per_client):
         epsilon_ = 0.1
         while True:
-            amount_clusters = len(self.greedy_elimination_t0(epsilon_,copy.deepcopy(distance_per_client)))
-            if amount_clusters<=experiment_config.number_of_optimal_clusters+experiment_config.cluster_addition:
+            amount_clusters = len(self.greedy_elimination_t0(epsilon_, copy.deepcopy(distance_per_client)))
+            if amount_clusters <= experiment_config.number_of_optimal_clusters + experiment_config.cluster_addition:
                 break
             else:
-                epsilon_ = epsilon_+0.1
+                epsilon_ = epsilon_ + 0.1
         return epsilon_
 
-        #clusters_client_id_dict = experiment_config.known_clusters
-        #pseudo_labels_in_cluster = self.get_pseudo_label_in_cluster(clusters_client_id_dict)
+        # clusters_client_id_dict = experiment_config.known_clusters
+        # pseudo_labels_in_cluster = self.get_pseudo_label_in_cluster(clusters_client_id_dict)
 
-        #center_of_cluster = {}
-        #for cluster_id,list_of_pseudo_labels in pseudo_labels_in_cluster.items():
+        # center_of_cluster = {}
+        # for cluster_id,list_of_pseudo_labels in pseudo_labels_in_cluster.items():
         #    center_of_cluster[cluster_id] = torch.stack(list_of_pseudo_labels).mean(dim=0)
 
-        #if experiment_config.cluster_technique == ClusterTechnique.greedy_elimination_cross_entropy:
+        # if experiment_config.cluster_technique == ClusterTechnique.greedy_elimination_cross_entropy:
         #    distance_dict = self.compute_distances(center_of_cluster,Server.calc_cross_entropy_given_pl)
-        #else:
+        # else:
         #    distance_dict = self.compute_distances(center_of_cluster, Server.calc_L2_given_pls)
 
-        #min_distance = min(distance_dict.values())
-        #return min_distance*experiment_config.epsilon#(4.2/5)
+        # min_distance = min(distance_dict.values())
+        # return min_distance*experiment_config.epsilon#(4.2/5)
 
-
-
-    def compute_distances(self,id_label_dict, distance_function):
+    def compute_distances(self, id_label_dict, distance_function):
         """
         Given a dictionary of {id: pseudo_label}, compute the pairwise distances.
 
@@ -2399,7 +2338,7 @@ class Server(LearningEntity):
 
         return distance_dict
 
-    def filter_far_clients(self,distance_per_client,epsilon):
+    def filter_far_clients(self, distance_per_client, epsilon):
         for client, distance_dict in distance_per_client.items():
             far_clients = []
             for other_client, distance in distance_dict.items():
@@ -2409,24 +2348,23 @@ class Server(LearningEntity):
                 del distance_dict[other_client]
 
     def greedy_elimination_t0(self, epsilon_, distance_per_client):
-        self.filter_far_clients(distance_per_client,epsilon_)#what is the distance between 10 and 11
+        self.filter_far_clients(distance_per_client, epsilon_)  # what is the distance between 10 and 11
         clusters_client_id_dict = {}
         counter = -1
-        while len(distance_per_client)>0:
+        while len(distance_per_client) > 0:
             counter = counter + 1
 
             max_client = max(distance_per_client, key=lambda k: len(distance_per_client[k]))
             others_to_remove = list(distance_per_client[max_client].keys())
             lst = copy.deepcopy(others_to_remove)
             lst.append(max_client)
-            clusters_client_id_dict[counter] =lst
+            clusters_client_id_dict[counter] = lst
             for other in clusters_client_id_dict[counter]:
                 for other_in_distance_per_client in distance_per_client.values():
                     if other in other_in_distance_per_client:
                         del other_in_distance_per_client[other]
                 del distance_per_client[other]
         return clusters_client_id_dict
-
 
 
 class Server_pFedCK(Server):
@@ -2501,7 +2439,8 @@ class Server_PseudoLabelsClusters_with_division(Server):
         # Use the global validation data for the evaluation
         #
 
-        global_data_loader = DataLoader(self.global_data[self.current_iteration], batch_size=experiment_config.batch_size, shuffle=False)
+        global_data_loader = DataLoader(self.global_data[self.current_iteration],
+                                        batch_size=experiment_config.batch_size, shuffle=False)
 
         # List to store the probabilities for this cluster
         cluster_probs = []
@@ -2527,17 +2466,14 @@ class Server_PseudoLabelsClusters_with_division(Server):
 
         return cluster_probs
 
-
-    def train(self, mean_pseudo_labels,  cluster_num="0",selected_model=None):
+    def train(self, mean_pseudo_labels, cluster_num="0", selected_model=None):
 
         print(f"Mean pseudo-labels shape: {mean_pseudo_labels.shape}")  # Should be (num_data_points, num_classes)
 
         print(f"*** {self.__str__()} train *** Cluster: {cluster_num} ***")
-        server_loader = DataLoader(self.global_data[self.current_iteration] , batch_size=experiment_config.batch_size, shuffle=False,
+        server_loader = DataLoader(self.global_data[self.current_iteration], batch_size=experiment_config.batch_size,
+                                   shuffle=False,
                                    num_workers=0, drop_last=True)
-
-
-
 
         if selected_model is None:
             selected_model_train = self.model
@@ -2604,29 +2540,26 @@ class Server_PseudoLabelsNoServerModel(Server):
     def __init__(self, id_, global_data, test_data, clients_ids, clients_test_data_dict):
         Server.__init__(self, id_, global_data, test_data, clients_ids, clients_test_data_dict)
 
-    def iteration_context(self,t):
+    def iteration_context(self, t):
         self.current_iteration = t
-        mean_pseudo_labels_per_cluster_dict, self.clusters_client_id_dict_per_iter[t] = self.get_pseudo_labels_input_per_cluster(t)  # #
+        mean_pseudo_labels_per_cluster_dict, self.clusters_client_id_dict_per_iter[
+            t] = self.get_pseudo_labels_input_per_cluster(t)  # #
 
-
-        for cluster_id,pseudo_labels_for_cluster in mean_pseudo_labels_per_cluster_dict.items():
+        for cluster_id, pseudo_labels_for_cluster in mean_pseudo_labels_per_cluster_dict.items():
             for client_id in self.clusters_client_id_dict_per_iter[t][cluster_id]:
                 self.pseudo_label_to_send[client_id] = pseudo_labels_for_cluster
 
 
 class Server_Centralized(Server):
-    def __init__(self,id_, train_data, test_data,evaluate_every):
-        LearningEntity.__init__ (self,id_,None,None)
+    def __init__(self, id_, train_data, test_data, evaluate_every):
+        LearningEntity.__init__(self, id_, None, None)
 
-
-
-        self.train_data =self.break_the_dict_structure(train_data)
-        self.test_data  = self.break_the_dict_structure(test_data)
+        self.train_data = self.break_the_dict_structure(train_data)
+        self.test_data = self.break_the_dict_structure(test_data)
 
         self.evaluate_every = evaluate_every
 
         self.num = (1000) * 17
-
 
         if experiment_config.net_cluster_technique == NetClusterTechnique.multi_head:
             raise Exception("todo")
@@ -2641,15 +2574,11 @@ class Server_Centralized(Server):
                 self.multi_model_dict[cluster_id].apply(self.initialize_weights)
                 self.accuracy_per_cluster_model[cluster_id] = {}
 
+    def iteration_context(self, t):
+        for cluster_id, model in self.multi_model_dict.items():
+            self.fine_tune(model, cluster_id, self.train_data[cluster_id], self.test_data[cluster_id])
 
-
-
-    def iteration_context(self,t):
-        for cluster_id,model in self.multi_model_dict.items():
-            self.fine_tune(model,cluster_id,self.train_data[cluster_id],self.test_data[cluster_id])
-
-
-    def fine_tune(self,model,cluster_id,train,test):
+    def fine_tune(self, model, cluster_id, train, test):
         print("*** " + self.__str__() + " fine-tune ***")
 
         fine_tune_loader = DataLoader(train, batch_size=experiment_config.batch_size, shuffle=True)
@@ -2659,7 +2588,7 @@ class Server_Centralized(Server):
 
         criterion = nn.CrossEntropyLoss()
 
-        optimizer = torch.optim.Adam(model.parameters(), lr=0.0001)#experiment_config.learning_rate_train_s)
+        optimizer = torch.optim.Adam(model.parameters(), lr=0.0001)  # experiment_config.learning_rate_train_s)
 
         epochs = experiment_config.epochs_num_input_fine_tune_centralized_server
         for epoch in range(epochs):
@@ -2676,17 +2605,17 @@ class Server_Centralized(Server):
                 loss.backward()
                 optimizer.step()
                 epoch_loss += loss.item()
-            if   epoch % self.evaluate_every == 0 and epoch!=0:
-                self.accuracy_per_cluster_model[cluster_id][epoch] = self.evaluate_accuracy(test,model=model, k=1)
+            if epoch % self.evaluate_every == 0 and epoch != 0:
+                self.accuracy_per_cluster_model[cluster_id][epoch] = self.evaluate_accuracy(test, model=model, k=1)
 
             result_to_print = epoch_loss / len(fine_tune_loader)
             print(f"Epoch [{epoch + 1}/{epochs}], Loss: {result_to_print:.4f}")
-        #self.weights = self.model.state_dict()self.weights = self.model.state_dict()
+        # self.weights = self.model.state_dict()self.weights = self.model.state_dict()
 
-    def break_the_dict_structure(self,data_):
+    def break_the_dict_structure(self, data_):
         ans = {}
         if isinstance(experiment_config.num_clusters, int):
-            if experiment_config.num_clusters !=1:
+            if experiment_config.num_clusters != 1:
                 raise Exception("program only 1 cluster case")
 
             images = []
@@ -2708,46 +2637,43 @@ class Server_Centralized(Server):
 
         return ans
 
+
 class ServerFedAvg(Server):
     def __init__(self, id_, global_data, test_data, clients_ids, clients_test_data_dict):
         Server.__init__(self, id_, global_data, test_data, clients_ids, clients_test_data_dict)
         self.received_weights = {}
         self.weights_to_send = {}
 
-    def iteration_context(self,t):
+    def iteration_context(self, t):
         self.current_iteration = t
         weights_per_cluster, self.clusters_client_id_dict_per_iter[t] = self.get_weights_per_cluster(
             t)  # #
         for cluster_id, clients_ids_list in self.clusters_client_id_dict_per_iter[t].items():
             for client_id in clients_ids_list:
-                self.weights_to_send[client_id] =weights_per_cluster[cluster_id]
+                self.weights_to_send[client_id] = weights_per_cluster[cluster_id]
 
-
-
-    def get_weights_per_cluster(self,t):
+    def get_weights_per_cluster(self, t):
         mean_per_cluster = {}
 
         if experiment_config.num_clusters == "Optimal":
             clusters_client_id_dict = experiment_config.known_clusters
 
         elif experiment_config.num_clusters == 1:
-            clusters_client_id_dict={0:[]}
+            clusters_client_id_dict = {0: []}
             for client_id in self.clients_ids:
                 clusters_client_id_dict[0].append(client_id)
 
         else:
             raise Exception("implemented 1 and optimal only")
 
-
-
         cluster_weights_dict = self.get_cluster_weights_dict(clusters_client_id_dict)
 
-        #if experiment_config.num_clusters>1:
+        # if experiment_config.num_clusters>1:
         for cluster_id, weights in cluster_weights_dict.items():
             mean_per_cluster[cluster_id] = self.average_weights(weights)
         return mean_per_cluster, clusters_client_id_dict
 
-    def average_weights(self,weights_list):
+    def average_weights(self, weights_list):
         """
         Averages a list of state_dicts (model weights) using Federated Averaging (FedAvg).
 
@@ -2767,7 +2693,7 @@ class ServerFedAvg(Server):
 
         return avg_weights
 
-    def get_cluster_weights_dict(self,clusters_client_id_dict):
+    def get_cluster_weights_dict(self, clusters_client_id_dict):
         ans = {}
         for cluster_id, clients_ids in clusters_client_id_dict.items():
             ans[cluster_id] = []

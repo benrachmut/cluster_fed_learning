@@ -295,7 +295,7 @@ def create_1x4_algo_grid(all_data_dict, x_label, y_label_dict, y_lim_dict=None, 
                 mean = np.mean(accs)
                 stderr = stats.sem(accs)
                 n = len(accs)
-                h = stderr * stats.t.ppf((1 + confidence) / 2., n - 1)
+                h = stderr * stats.norm.ppf((1 + confidence) / 2.)
 
                 means.append(mean)
                 lower_bounds.append(mean - h)
@@ -350,7 +350,10 @@ def create_1x4_algo_grid(all_data_dict, x_label, y_label_dict, y_lim_dict=None, 
     # Create the legend with the manually ordered lines and labels
     fig.legend(global_lines, global_labels, loc='upper center', ncol=len(global_labels), fontsize=20, frameon=False)
 
-    plt.tight_layout(rect=[0, 0, 1, 0.93])  # Adjusted for wider layout
+    # Adjust layout to create more space for the legend
+    plt.tight_layout(rect=[0, 0, 1, 0.85])  # Increase the bottom margin
+    fig.subplots_adjust(top=0.8)  # Increase space between the plots and the legend
+
     fig.savefig("figures/all_algos_alpha_" + str(dich) + ".pdf", format="pdf")
     plt.show()
     return fig
@@ -384,7 +387,7 @@ def create_2x2_algo_grid(all_data_dict, x_label, y_label_dict, y_lim_dict=None, 
                 mean = np.mean(accs)
                 stderr = stats.sem(accs)
                 n = len(accs)
-                h = stderr * stats.t.ppf((1 + confidence) / 2., n - 1)
+                h = stderr * stats.norm.ppf((1 + confidence) / 2.)
 
                 means.append(mean)
                 lower_bounds.append(mean - h)
@@ -539,7 +542,7 @@ def plot_model_server_client_grid(data_dict, x_label="Iterations", y_label="Top-
                     mean = np.mean(vals)
                     stderr = stats.sem(vals)
                     n = len(vals)
-                    h = stderr * stats.t.ppf((1 + confidence) / 2., n - 1)
+                    h = stderr * stats.norm.ppf((1 + confidence) / 2.)
 
                     means.append(mean)
                     lower_bounds.append(mean - h)
