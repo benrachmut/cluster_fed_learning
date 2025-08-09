@@ -173,7 +173,7 @@ def iterate_fl_clusters(clients,server,net_type,net_cluster_technique,server_inp
                 pik_name = data_set.name + "_" + str(num_clients) + "_" + str(
                     num_opt_clusters) + "_" + str(int(10 * (
                     server_amount_data))) + "_" + algorithm_selection.name + "_" + net_type.name + "_" + net_cluster_technique.name + "_" + cluster_technique.name + "_" + str(
-                    num_cluster) +"_"+ str(experiment_config.alpha_dich)+"_"+ str(epsilon)+"_"+str(int(server_amount_data*100))#+input_consistency.name+"_"+weights_for_ps.name+"_"+"seed_"+str(experiment_config.seed_num)
+                    num_cluster) +"_"+ str(experiment_config.alpha_dich)+"_"+ str(epsilon)+"_"+str(int(server_amount_data*100))+"seed_"+str(experiment_config.seed_num)
 
 
             pickle_file_path = pik_name + ".pkl"
@@ -507,14 +507,14 @@ def run_exp_by_algo():
 
 if __name__ == '__main__':
     print(device)
-    seed_num_list = [1,2,3]#[2,4,5]#10:[2,4,5,6,9]#100:[1,2,3,5,7]#[1,2,3,4,5,6,7,8,9]
+    seed_num_list = [1]#[2,4,5]#10:[2,4,5,6,9]#100:[1,2,3,5,7]#[1,2,3,4,5,6,7,8,9]
     data_sets_list = [DataSet.CIFAR100]
     num_clients_list = [25]#[25]
     num_opt_clusters_list =[5] #[5]
     mix_percentage = 0.1
     server_amount_data_list = [1]#[0,0.25,0.5,0.75,1]
     alpha_dichts =[1] #[3,2,100,10,5,1] #[3,2,1,]
-    cluster_additions = [2,3]#[-4,-3,-2,-1,0,1,2,3,4] #  # 0.96,0.5,0.75,1,1.25,1.5,1.75,2]
+    cluster_additions = [-4]#[-4,-3,-2,-1,0,1,2,3,4] #  # 0.96,0.5,0.75,1,1.25,1.5,1.75,2]
     print("epsilons:", cluster_additions)
     print(("alpha_dichts", alpha_dichts))
     algorithm_selection_list =[AlgorithmSelected.PseudoLabelsClusters]
