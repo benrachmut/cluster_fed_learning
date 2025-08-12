@@ -76,6 +76,7 @@ class NetType(Enum):
     VGG = "VGG"
     ResNet = "ResNet"
     DenseNetServer= "DenseNetServer"
+    MobileNetV2 = "MobileNetV2"
 
 class DataSet(Enum):
     CIFAR100 = "CIFAR100"
@@ -95,7 +96,8 @@ class NetsType(Enum):
     C_alex_S_alex = 2
     C_alex_S_ResNet = 6
     C_alex_S_DenseNet = 7
-
+    C_MobileNet_S_vgg = 10
+    C_MobileNet_S_alex = 11
     C_rnd_S_vgg = 9
     C_alex = 3
     S_alex = 4
@@ -253,14 +255,23 @@ class ExperimentConfig:
 
             self.learning_rate_fine_tune_c = 0.001
             self.learning_rate_train_s = 0.001
+
         if net_type == NetsType.C_rnd_S_vgg:
             self.client_net_type = NetType.rnd_net
             self.server_net_type = NetType.VGG
+        if net_type == NetsType.C_MobileNet_S_vgg:
+            self.client_net_type = NetType.MobileNetV2
+            self.server_net_type = NetType.VGG
+            self.learning_rate_train_c = 0.0001
+            self.learning_rate_fine_tune_c = 0.001
+            self.learning_rate_train_s = 0.0001
 
-
-
-
-
+        if net_type == NetsType.C_MobileNet_S_alex:
+            self.client_net_type = NetType.MobileNetV2
+            self.server_net_type = NetType.ALEXNET
+            self.learning_rate_train_c = 0.0001
+            self.learning_rate_fine_tune_c = 0.001
+            self.learning_rate_train_s = 0.0001
 
         if net_type == NetsType.C_alex_S_vgg or net_type == NetsType.S_vgg :
             self.client_net_type = NetType.ALEXNET
@@ -281,6 +292,8 @@ class ExperimentConfig:
             self.learning_rate_train_c = 0.0001
             self.learning_rate_fine_tune_c = 0.001
             self.learning_rate_train_s = 0.0001
+
+
 
 
 

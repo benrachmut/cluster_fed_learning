@@ -223,6 +223,9 @@ def get_client_model(rnd:Random = None):
         return AlexNet(num_classes=experiment_config.num_classes).to(device)
     if experiment_config.client_net_type == NetType.VGG:
         return VGGServer(num_classes=experiment_config.num_classes).to(device)
+    if experiment_config.client_net_type == NetType.MobileNetV2:
+        return MobileNetV2Server(num_classes=experiment_config.num_classes).to(device)
+
     if experiment_config.client_net_type == NetType.rnd_net:
         p = rnd.random()
         if p<=0.25:
