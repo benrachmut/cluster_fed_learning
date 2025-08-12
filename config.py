@@ -71,6 +71,7 @@ class ServerInputTech(Enum):
     mean = 1
     max = 2
 class NetType(Enum):
+    rnd_net = "Random Net"
     ALEXNET = "AlexNet"
     VGG = "VGG"
     ResNet = "ResNet"
@@ -95,6 +96,7 @@ class NetsType(Enum):
     C_alex_S_ResNet = 6
     C_alex_S_DenseNet = 7
 
+    C_rnd_S_vgg = 9
     C_alex = 3
     S_alex = 4
     S_vgg = 5
@@ -251,7 +253,9 @@ class ExperimentConfig:
 
             self.learning_rate_fine_tune_c = 0.001
             self.learning_rate_train_s = 0.001
-
+        if net_type == NetsType.C_rnd_S_vgg:
+            self.client_net_type = NetType.rnd_net
+            self.server_net_type = NetType.VGG
 
 
 
@@ -271,7 +275,12 @@ class ExperimentConfig:
             self.learning_rate_fine_tune_c = 0.001
             self.learning_rate_train_s = 0.0001
 
-
+        if net_type == NetsType.C_rnd_S_vgg:
+            self.client_net_type = NetType.rnd_net
+            self.server_net_type = NetType.VGG
+            self.learning_rate_train_c = 0.0001
+            self.learning_rate_fine_tune_c = 0.001
+            self.learning_rate_train_s = 0.0001
 
 
 
