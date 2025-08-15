@@ -512,7 +512,7 @@ if __name__ == '__main__':
     num_clients_list = [25]#[25]
     num_opt_clusters_list =[5] #[5]
     mix_percentage = 0.1
-    server_amount_data_list = [0]#[0,0.25,0.5,0.75,1]
+    server_amount_data_list = [1]#[0,0.25,0.5,0.75,1]
     alpha_dichts =[1] #[3,2,100,10,5,1] #[3,2,1,]
     cluster_additions = [3]#[-4,-3,-2,-1,0,1,2,3,4] #  # 0.96,0.5,0.75,1,1.25,1.5,1.75,2]
     print("epsilons:", cluster_additions)
