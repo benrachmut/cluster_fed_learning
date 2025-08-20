@@ -2330,6 +2330,12 @@ class Server(LearningEntity):
                 break
             else:
                 epsilon_ = epsilon_ + 0.1
+        with open("results.txt", "a") as f:
+            f.write(
+                f"BETA for {experiment_config.cluster_addition} "
+                f"for seed {experiment_config.seed_num} "
+                f"is {epsilon_}\n"
+            )
         return epsilon_
 
         # clusters_client_id_dict = experiment_config.known_clusters
