@@ -507,14 +507,14 @@ def run_exp_by_algo():
 
 if __name__ == '__main__':
     print(device)
-    seed_num_list = [3]#[2,4,5]#10:[2,4,5,6,9]#100:[1,2,3,5,7]#[1,2,3,4,5,6,7,8,9]
+    seed_num_list = [2]#[2,4,5]#10:[2,4,5,6,9]#100:[1,2,3,5,7]#[1,2,3,4,5,6,7,8,9]
     data_sets_list = [DataSet.CIFAR100]
     num_clients_list = [25]#[25]
     num_opt_clusters_list =[5] #[5]
     mix_percentage = 0.1
     server_amount_data_list = [1]
     alpha_dichts =[5] #[3,2,100,10,5,1] #[3,2,1,]
-    cluster_additions = [1]#[-4,-3,-2,-1,0,1,2,3,4] #  # 0.96,0.5,0.75,1,1.25,1.5,1.75,2]
+    cluster_additions = [2]#[-4,-3,-2,-1,0,1,2,3,4] #  # 0.96,0.5,0.75,1,1.25,1.5,1.75,2]
     print("epsilons:", cluster_additions)
     print(("alpha_dichts", alpha_dichts))
     algorithm_selection_list =[AlgorithmSelected.PseudoLabelsClusters]
