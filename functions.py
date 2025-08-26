@@ -1,4 +1,3 @@
-import copy
 import os
 import shutil
 import tarfile
@@ -7,9 +6,7 @@ import zipfile
 from urllib.request import urlretrieve
 
 import pandas as pd
-from scipy.stats import ansari
-from sympy.core.random import shuffle
-from sympy.physics.units import percent
+
 from torch.utils.data import TensorDataset, random_split, Subset, Dataset
 from torchvision.datasets import ImageFolder, EMNIST
 from torchvision.transforms import transforms
@@ -18,6 +15,7 @@ from entities import *
 from collections import defaultdict
 import random as rnd
 
+from typing import Dict, List, Tuple, Optional
 
 
 #### ----------------- IMPORT DATA ----------------- ####
@@ -593,6 +591,116 @@ def reorganize_tiny_imagenet_val(val_dir, root_dir):
     shutil.rmtree(val_images_dir)
     os.remove(val_annotations_file)
 
+import random
+from typing import Dict, List, Tuple, Optional
+import torch
+from torch.utils.data import TensorDataset
+from torchvision import transforms
+
+def default_augmentation_pipeline(img_size: Optional[Tuple[int, int]] = None):
+    return transforms.Compose([
+        transforms.ConvertImageDtype(torch.float32),
+        transforms.RandomHorizontalFlip(p=0.5),
+        transforms.RandomAffine(degrees=15, translate=(0.1, 0.1), scale=(0.9, 1.1)),
+        transforms.ColorJitter(brightness=0.15, contrast=0.15, saturation=0.15, hue=0.02),
+    ])
+
+def _gather_tensors_from_donors(datasets: List[TensorDataset], exclude_idx: int):
+    donor_xs, donor_ys = [], []
+    for j, ds in enumerate(datasets):
+        if j == exclude_idx:
+            continue
+        xj, yj = ds.tensors
+        donor_xs.append(xj)
+        donor_ys.append(yj)
+    if donor_xs:
+        return torch.cat(donor_xs, dim=0), torch.cat(donor_ys, dim=0)
+    return torch.empty((0,), dtype=torch.float32), torch.empty((0,), dtype=torch.long)
+
+@torch.no_grad()
+def _augment_from_base(base_x, base_y, n_needed, aug, gen: torch.Generator):
+    if base_x.numel() == 0 or n_needed <= 0:
+        return torch.empty((0,), dtype=torch.float32), torch.empty((0,), dtype=base_y.dtype)
+
+    C, H, W = base_x.shape[1:]
+    out_x = torch.empty((n_needed, C, H, W), dtype=torch.float32)
+    out_y = torch.empty((n_needed,), dtype=base_y.dtype)
+
+    idxs = torch.randint(0, base_x.shape[0], (n_needed,), generator=gen)
+    for i, idx in enumerate(idxs):
+        xi = aug(base_x[int(idx)])
+        out_x[i] = xi
+        out_y[i] = base_y[int(idx)]
+    return out_x, out_y
+
+def ensure_min_k_per_client(
+    clients_data_dict: Dict[str, List[TensorDataset]],
+    k: int,
+    augmentation: Optional[transforms.Compose] = None,
+    seed: Optional[int] = None
+) -> Dict[str, List[TensorDataset]]:
+
+    if augmentation is None:
+        augmentation = default_augmentation_pipeline()
+
+    # Local RNGs
+    py_rng = random.Random(seed) if seed is not None else random.Random()
+    gen = torch.Generator()
+    if seed is not None:
+        gen.manual_seed(int(seed))
+
+    balanced = {}
+
+    for group_key, datasets in clients_data_dict.items():
+        new_list = []
+        for i, ds in enumerate(datasets):
+            xi, yi = ds.tensors
+            xi, yi = xi.clone(), yi.clone()
+
+            n = int(xi.shape[0])
+            target_k = int(k)
+
+            if n >= target_k:
+                if n > target_k:
+                    keep = torch.randperm(n, generator=gen)[:target_k]
+                    xi, yi = xi[keep], yi[keep]
+                new_list.append(TensorDataset(xi, yi))
+                continue
+
+            needed = int(target_k - n)
+            donor_x, donor_y = _gather_tensors_from_donors(datasets, i)
+            donor_n = int(donor_x.shape[0])
+
+            # Borrow from donors
+            if needed > 0 and donor_n > 0:
+                take = int(min(needed, donor_n))
+                donor_idxs = list(range(donor_n))
+                py_rng.shuffle(donor_idxs)
+                pick = donor_idxs[:take]                 # <- take is a plain int now
+                xi = torch.cat([xi, donor_x[pick]], dim=0)
+                yi = torch.cat([yi, donor_y[pick]], dim=0)
+                needed -= take
+
+            # Augmentation if still needed
+            if needed > 0:
+                base_x, base_y = ds.tensors
+                X_aug, Y_aug = _augment_from_base(base_x, base_y, int(needed), augmentation, gen)
+                xi = torch.cat([xi, X_aug], dim=0)
+                yi = torch.cat([yi, Y_aug], dim=0)
+                needed = 0
+
+            # Final truncate to exactly k
+            cur_n = int(xi.shape[0])
+            if cur_n > target_k:
+                keep = torch.randperm(cur_n, generator=gen)[:target_k]
+                xi, yi = xi[keep], yi[keep]
+
+            new_list.append(TensorDataset(xi, yi))
+
+        balanced[group_key] = new_list
+
+    return balanced
+
 
 def download_and_extract_caltech256(destination_path='./data'):
     dataset_url = 'http://www.vision.caltech.edu/Image_Datasets/Caltech256/256_ObjectCategories.tar'
@@ -658,8 +766,11 @@ def get_data_set(is_train ):
         ])
 
     if experiment_config.data_set_selected == DataSet.CIFAR100:
-        train_set = torchvision.datasets.CIFAR100(root='./data', train=is_train, download=True, transform=transform)
-
+        train_set = torchvision.datasets.CIFAR100(
+            root='./data/cifar100',  # dedicated subdir
+            train=is_train, download=True, transform=transform
+        )
+        experiment_config.target_k = 40000/25
     if experiment_config.data_set_selected == DataSet.IMAGENET:
         imagenet_dir = '/mnt/myssd/Ben/imagenet/train' if is_train else '/mnt/myssd/Ben/imagenet/val'
         train_set = torchvision.datasets.ImageFolder(root=imagenet_dir, transform=transform)
@@ -707,6 +818,17 @@ def get_data_set(is_train ):
         data_by_classification_dict = get_data_by_classification(train_set)
         selected_classes_list = sorted(data_by_classification_dict.keys())[:experiment_config.num_classes]
         clients_data_dict, server_data = split_clients_server_data_Non_IID(data_by_classification_dict, selected_classes_list)
+
+
+
+    if experiment_config.num_clients > 25:
+        balanced = ensure_min_k_per_client(
+            clients_data_dict,
+            k= (40000/25),
+            seed=experiment_config.seed_num  # reproducible donor sampling & augmentation
+
+        )
+        clients_data_dict = balanced
 
     return selected_classes_list, clients_data_dict, server_data
 
