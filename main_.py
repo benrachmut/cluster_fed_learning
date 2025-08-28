@@ -161,7 +161,7 @@ def iterate_fl_clusters(clients,server,net_type,net_cluster_technique,server_inp
                 pik_name = data_set.name + "_" + str(num_clients) + "_" + str(
                     num_opt_clusters) + "_" + str(int(10 * (
                     server_amount_data))) + "_" + algorithm_selection.name + "_" + net_type.name + "_" + net_cluster_technique.name + "_" + cluster_technique.name + "_" + str(
-                    num_cluster) + "_" + str(experiment_config.alpha_dich)+"_"+"seed_"+str(experiment_config.seed_num)+str(int(server_amount_data*100))
+                    num_cluster) + "_" + str(experiment_config.alpha_dich)+"_"+"seed_"+str(experiment_config.seed_num)+str(int(server_amount_data*100))+"aaaa"
             else:
                 data_to_pickle[data_set.name][num_clients][num_opt_clusters][server_amount_data][
                     alpha_dicht][experiment_config.seed_num][algorithm_selection.name][net_type.name][
@@ -173,7 +173,7 @@ def iterate_fl_clusters(clients,server,net_type,net_cluster_technique,server_inp
                 pik_name = data_set.name + "_" + str(num_clients) + "_" + str(
                     num_opt_clusters) + "_" + str(int(10 * (
                     server_amount_data))) + "_" + algorithm_selection.name + "_" + net_type.name + "_" + net_cluster_technique.name + "_" + cluster_technique.name + "_" + str(
-                    num_cluster) +"_"+ str(experiment_config.alpha_dich)+"_"+ str(epsilon)+"_"+str(int(server_amount_data*100))+"seed_"+str(experiment_config.seed_num)
+                    num_cluster) +"_"+ str(experiment_config.alpha_dich)+"_"+ str(epsilon)+"_"+str(int(server_amount_data*100))+"seed_"+str(experiment_config.seed_num)+"aaaa"
 
 
             pickle_file_path = pik_name + ".pkl"
@@ -512,7 +512,7 @@ if __name__ == '__main__':
     num_clients_list = [25]#[25]
     num_opt_clusters_list =[5] #[5]
     mix_percentage = 0.1
-    server_amount_data_list = [0.25]
+    server_amount_data_list = [1]
     alpha_dichts =[5]
     cluster_additions = [0]
     print("epsilons:", cluster_additions)
@@ -523,7 +523,7 @@ if __name__ == '__main__':
     #AlgorithmSelected.COMET,AlgorithmSelected.PseudoLabelsNoServerModel
 
     # parameters for PseudoLabelsClusters
-    nets_types_list_PseudoLabelsClusters  = [NetsType.C_MobileNet_S_vgg]#[NetsType.C_rnd_S_vgg,NetsType.C_alex_S_alex,NetsType.C_MobileNet_S_alex,NetsType.C_MobileNet_S_vgg,NetsType.C_alex_S_vgg]#,NetsType.C_alex_S_vgg,NetsType.C_alex_S_alex]#,NetsType.C_alex_S_vgg]# ,NetsType.C_alex_S_vgg]#,NetsType.C_alex_S_vgg]#,NetsType.C_alex_S_vgg]
+    nets_types_list_PseudoLabelsClusters  = [NetsType.C_alex_S_alex]#[NetsType.C_rnd_S_vgg,NetsType.C_alex_S_alex,NetsType.C_MobileNet_S_alex,NetsType.C_MobileNet_S_vgg,NetsType.C_alex_S_vgg]#,NetsType.C_alex_S_vgg,NetsType.C_alex_S_alex]#,NetsType.C_alex_S_vgg]# ,NetsType.C_alex_S_vgg]#,NetsType.C_alex_S_vgg]#,NetsType.C_alex_S_vgg]
     net_cluster_technique_list = [NetClusterTechnique.multi_model]#,NetClusterTechnique.multi_head]
     server_input_tech_list = [ServerInputTech.max]
     cluster_technique_list = [ClusterTechnique.greedy_elimination_L2]#[ClusterTechnique.greedy_elimination_cross_entropy]#[ClusterTechnique.manual_single_iter,ClusterTechnique.manual,ClusterTechnique.kmeans]

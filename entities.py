@@ -597,6 +597,7 @@ class Client(LearningEntity):
 
                 start_idx = batch_idx * experiment_config.batch_size
                 end_idx = start_idx + inputs.size(0)
+                # ...
                 pseudo_targets = pseudo_targets_all[start_idx:end_idx].to(device)
 
                 if pseudo_targets.size(0) != inputs.size(0):
@@ -606,7 +607,10 @@ class Client(LearningEntity):
                     print(f"NaN/Inf in pseudo targets at batch {batch_idx}")
                     continue
 
-                pseudo_targets = F.softmax(pseudo_targets, dim=1)
+                # REPLACED softmax -> clamp (targets are already probs)
+                eps = 1e-8
+                pseudo_targets = pseudo_targets.clamp(min=eps, max=1 - eps)
+                # ...
 
                 # Compute weights based on global label distribution
                 weights = torch.tensor(
@@ -1810,7 +1814,9 @@ class Server(LearningEntity):
                         f"Skipping batch {batch_idx}: Expected pseudo target size {inputs.size(0)}, got {pseudo_targets.size(0)}")
                     continue
 
-                pseudo_targets = F.softmax(pseudo_targets, dim=1)
+                # REPLACED
+                eps = 1e-8
+                pseudo_targets = pseudo_targets.clamp(min=eps, max=1 - eps)
 
                 loss_kl = criterion_kl(outputs_prob, pseudo_targets)
 
@@ -1880,17 +1886,15 @@ class Server(LearningEntity):
                 end_idx = start_idx + inputs.size(0)
                 pseudo_targets = pseudo_targets_all[start_idx:end_idx].to(device)
 
-                # Check if pseudo_targets size matches the input batch size
                 if pseudo_targets.size(0) != inputs.size(0):
                     print(
-                        f"Skipping batch {batch_idx}: Expected pseudo target size {inputs.size(0)}, got {pseudo_targets.size(0)}"
-                    )
+                        f"Skipping batch {batch_idx}: Expected pseudo target size {inputs.size(0)}, got {pseudo_targets.size(0)}")
                     continue
 
-                # Normalize pseudo targets to sum to 1
-                pseudo_targets = F.softmax(pseudo_targets, dim=1)
+                # REPLACED
+                eps = 1e-8
+                pseudo_targets = pseudo_targets.clamp(min=eps, max=1 - eps)
 
-                # Calculate the loss
                 loss = criterion(outputs_prob, pseudo_targets)
 
                 # Skip batch if the loss is NaN or Inf
