@@ -513,7 +513,7 @@ if __name__ == '__main__':
     num_opt_clusters_list =[5] #[5]
     mix_percentage = 0.1
     server_amount_data_list = [1]
-    alpha_dichts =[1]
+    alpha_dichts =[5]
     cluster_additions = [0]
     print("epsilons:", cluster_additions)
     print(("alpha_dichts", alpha_dichts))
