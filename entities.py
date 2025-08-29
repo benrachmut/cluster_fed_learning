@@ -324,8 +324,12 @@ class LearningEntity(ABC):
         return np.mean(np.linalg.norm(pseudo_labels - gt_onehot, axis=1) ** 2)
 
     def iterate(self, t):
-        torch.manual_seed(self.id_ + t * 17)
-        torch.cuda.manual_seed(self.id_ + t * 17)
+        if isinstance(self.id_,str):
+            torch.manual_seed( t * 17)
+            torch.cuda.manual_seed( t * 17)
+        else:
+            torch.manual_seed(self.id_ + t * 17)
+            torch.cuda.manual_seed(self.id_ + t * 17)
 
         if experiment_config.is_with_memory_load and self.id_ != "server":
             if t == 0:
