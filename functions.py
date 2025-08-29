@@ -1050,6 +1050,9 @@ def create_clients(client_data_dict,server_data,test_set,server_test_data):
             if experiment_config.algorithm_selection == AlgorithmSelected.pFedCK:
                 c = Client_pFedCK(id_=id_, client_data=data_, global_data=server_data, global_test_data=server_test_data,
                            local_test_data=test_set[group_name][data_index])
+            if experiment_config.algorithm_selection == AlgorithmSelected.SCAFFOLD:
+                c = Client_SCAFFOLD(id_=id_, client_data=data_, global_data=server_data, global_test_data=server_test_data,
+                           local_test_data=test_set[group_name][data_index])
 
             ans.append(c)
             clients_test_by_id_dict[id_] = test_set[group_name][data_index]
