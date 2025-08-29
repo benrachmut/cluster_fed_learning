@@ -1,5 +1,6 @@
 import os
 import pickle
+from pickle import FALSE
 
 from config import *
 import numpy as np
@@ -16,13 +17,16 @@ algo_names={AlgorithmSelected.PseudoLabelsClusters.name:"MAPL"
 
             }
 #1,2,3,5,7
+from typing import Dict, List, Iterable, Tuple, Union, Any
+from collections import defaultdict
 
 change_dict_name_server_client = {"MAPL,AlexNet":"AlexNet","MAPL,VGG":"VGG"}
 net_name = {"C_alex_S_alex": "S_AlexNet", "C_alex_S_vgg": "S_VGG-16"}#
 seeds_dict = {100:{DataSet.CIFAR100.name:[1,2,3],DataSet.CIFAR10.name:[2,4,5],DataSet.EMNIST_balanced.name:[1,2,3],DataSet.TinyImageNet.name:[1,2,3]}
 
 #5:{DataSet.CIFAR100.name:[1,2,3,5,7],DataSet.CIFAR10.name:[2,4,5,6,9]
-,5:{DataSet.CIFAR100.name:[1,2,3],DataSet.CIFAR10.name:[2,4,5],DataSet.EMNIST_balanced.name:[1,2,3],DataSet.TinyImageNet.name:[1,2,3]}}
+,5:{DataSet.CIFAR100.name:[1,2,3],DataSet.CIFAR10.name:[2,4,5],DataSet.EMNIST_balanced.name:[1,2,3],DataSet.TinyImageNet.name:[1,2,3]}
+,1:{DataSet.CIFAR100.name:[1,2,3],DataSet.CIFAR10.name:[2,4,5],DataSet.EMNIST_balanced.name:[1,2,3],DataSet.TinyImageNet.name:[1,2,3]}}
 colors = {"MAPL,VGG": "blue",
 "COMET":"Orange",
           "MAPL,AlexNet": "red",
@@ -31,6 +35,7 @@ colors = {"MAPL,VGG": "blue",
           "FedAvg": "brown",
           "pFedCK": "purple"
           }
+Run = Dict[Any, Dict[Union[int, str], float]]  # {client_id: {iteration: accuracy}}
 
 def read_all_pkls(folder_path):
     # Path to the folder containing pickle files
@@ -117,9 +122,13 @@ def update_data(data, data_type):
         new_xy[0.0] = start_point[data_type]             # add new point at x = 0
         data[algo] = dict(sorted(new_xy.items()))        # optional: sort by x if desired
 
-def update_data_v2(data, data_type):
+def update_data_v2(data, data_type, flag = False):
     #for algo, xy_dict in data.items():
-    new_xy = {x + 1: y for x, y in data.items()}  # shift x keys by +1
+    if not flag:
+        new_xy = {x + 1: y for x, y in data.items()}  # shift x keys by +1
+    else:
+        new_xy = {x : y for x, y in data.items()}  # shift x keys by +1
+
     new_xy[0.0] = []
     for _ in range(0,len(new_xy[1])):
         new_xy[0.0].append(start_point[data_type])             # add new point at x = 0
@@ -448,57 +457,6 @@ def create_2x2_algo_grid(all_data_dict, x_label, y_label_dict, y_lim_dict=None, 
     return fig
 
 
-def create_single_avg_plot(data_dict, x_label="X", y_label="Y", confidence=0.95, output_path="figures/number_of_clusters.pdf"):
-    """
-    Plots a blue average curve with confidence intervals from a dictionary.
-
-    Parameters:
-        data_dict (dict): Keys are x-values, values are lists of y-values.
-        x_label (str): Label for the x-axis.
-        y_label (str): Label for the y-axis.
-        confidence (float): Confidence level for shading (default is 0.95).
-        output_path (str): Path to save the figure as a PDF.
-    """
-    # Sort the data by x-values
-    sorted_items = sorted(data_dict.items())
-    x_vals = np.array([x for x, _ in sorted_items])
-    means = []
-    lower_bounds = []
-    upper_bounds = []
-
-    for _, values in sorted_items:
-        values = np.array(values)
-        mean = np.mean(values)
-        stderr = stats.sem(values)
-        n = len(values)
-        h = stderr * stats.t.ppf((1 + confidence) / 2., n - 1) if n > 1 else 0
-
-        means.append(mean)
-        lower_bounds.append(mean - h)
-        upper_bounds.append(mean + h)
-
-    means = np.array(means)
-    lower_bounds = np.array(lower_bounds)
-    upper_bounds = np.array(upper_bounds)
-
-    fig, ax = plt.subplots(figsize=(6, 4))
-    line, = ax.plot(x_vals, means, color='blue', marker='o', linewidth=2, markersize=4, label="MAPL,VGG")
-    ax.fill_between(x_vals, lower_bounds, upper_bounds, color='blue', alpha=0.2)
-
-    ax.set_xlabel(x_label, fontsize=axes_titles_font)
-    ax.set_ylabel(y_label, fontsize=axes_titles_font)
-    ax.tick_params(axis='both', labelsize=tick_font_size)
-
-    # Legend above the plot, centered
-    ax.legend(loc='lower center', bbox_to_anchor=(0.5, 1.05), ncol=1, fontsize=legend_font_size, frameon=False)
-
-    # Adjust layout to make space for legend
-    plt.tight_layout(rect=[0, 0, 1, 0.93])
-
-    if output_path:
-        fig.savefig(output_path, format="pdf", bbox_inches="tight")
-
-    plt.show()
 def plot_model_server_client_grid(data_dict, x_label="Iterations", y_label="Top-1 Accuracy (%)", confidence=0.95):
     assert len(data_dict) == 2, "Expected exactly 2 alphas for a 1x2 plot."
 
@@ -575,14 +533,90 @@ def plot_model_server_client_grid(data_dict, x_label="Iterations", y_label="Top-
     plt.show()
     return fig
 
+
+
+def plot_model_server_client(data_dict, x_label="Iterations", y_label="Top-1 Accuracy (%)", confidence=0.95):
+    assert len(data_dict) == 1, "Expected exactly 1 alpha for this plot."
+
+    line_styles = {"Server": "solid", "Clients": "dashed"}
+
+    fig, ax = plt.subplots(figsize=(6, 5))
+
+    global_lines = []
+    global_labels = []
+    seen_labels = set()
+
+    # Compute global ymin and ymax
+    all_vals = []
+    for model_data in data_dict.values():
+        for role_data in model_data.values():
+            for iter_data in role_data.values():
+                for vals in iter_data.values():
+                    all_vals.extend(vals)
+
+    ymin = 20
+    ymax = 36
+
+    # Plot each model-role curve
+    for alpha_name, model_data in data_dict.items():
+        for model_name, role_data in model_data.items():
+            for role, iter_data in role_data.items():
+                linestyle = line_styles.get(role, "solid")
+                x_values = sorted(iter_data.keys())
+                means, lower_bounds, upper_bounds = [], [], []
+
+                for it in x_values:
+                    vals = np.array(iter_data[it])
+                    mean = np.mean(vals)
+                    stderr = stats.sem(vals)
+                    h = stderr * stats.norm.ppf((1 + confidence) / 2.)
+                    means.append(mean)
+                    lower_bounds.append(mean - h)
+                    upper_bounds.append(mean + h)
+
+                x_values = np.array(x_values)
+                means = np.array(means)
+                lower_bounds = np.array(lower_bounds)
+                upper_bounds = np.array(upper_bounds)
+
+                label = f"{model_name}-{role}"
+                line, = ax.plot(x_values, means, label=label, linestyle=linestyle)
+                ax.fill_between(x_values, lower_bounds, upper_bounds, alpha=0.2)
+
+                if label not in seen_labels:
+                    global_lines.append(line)
+                    global_labels.append(label)
+                    seen_labels.add(label)
+
+        ax.set_title(f"$\\alpha = {alpha_name}$", fontsize=axes_number_font)
+        ax.set_xlabel(x_label, fontsize=axes_titles_font)
+        ax.set_ylabel(y_label, fontsize=axes_titles_font)
+        ax.tick_params(axis='both', labelsize=tick_font_size)
+        #ax.set_ylim(ymin, ymax)
+
+    fig.legend(global_lines, global_labels, loc='upper center', ncol=len(global_labels),
+               fontsize=legend_font_size, frameon=False)
+    plt.tight_layout(rect=[0, 0, 1, 0.92])
+    fig.savefig("figures/client_server_alpha.pdf", format="pdf")
+
+    plt.show()
+    return fig
+
 def get_PseudoLabelsClusters_name(algo,dict_):
     ans = []
     for net_type in dict_.keys():
-        algo_name = algo_names[algo] + ","
         if net_type == NetsType.C_alex_S_vgg.name:
-            algo_name = algo_name + "VGG"
+            algo_name = "C=AlexNet,S=VGG"
         if net_type == NetsType.C_alex_S_alex.name:
-            algo_name = algo_name + "AlexNet"
+            algo_name = "C=AlexNet,S=alexNet"
+        if net_type == NetsType.C_MobileNet_S_vgg.name:
+            algo_name = "C=MobileNet,S=VGG"
+        if net_type == NetsType.C_rnd_S_vgg.name:
+            algo_name = "C=Random,S=VGG"
+        if net_type == NetsType.C_MobileNet_S_alex.name:
+            algo_name = "C=random,S=VGG"
+
+
         ans.append(algo_name)
     return ans
 
@@ -675,10 +709,20 @@ def extract_rd_PseudoLabelsClusters(algo,dict_):
     names = get_PseudoLabelsClusters_name(algo, dict_)
 
     for name in names:
-        if name == algo_names[algo]+",AlexNet":
-            dict_1 = dict_[NetsType.C_alex_S_alex.name]
-        if name == algo_names[algo]+",VGG":
+
+
+
+
+        if name == "C=AlexNet,S=VGG":
             dict_1 = dict_[NetsType.C_alex_S_vgg.name]
+        if name == "C=AlexNet,S=alexNet":
+            dict_1 = dict_[NetsType.C_alex_S_alex.name]
+        if name == "C=MobileNet,S=VGG":
+            dict_1 = dict_[NetsType.C_MobileNet_S_vgg.name]
+        if name == "C=Random,S=VGG":
+            dict_1 = dict_[NetsType.C_rnd_S_vgg.name]
+        if name == "C=random,S=VGG":
+            dict_1 = dict_[NetsType.C_rnd_S_vgg.name]
 
         try:
             rd = dict_1["multi_model"]["max"][ClusterTechnique.greedy_elimination_L2.name]["similar_to_cluster"][0][
@@ -735,7 +779,7 @@ def collect_data_per_server_client_iteration(merged_dict,top_what,data_type):
                     data_per_iteration_server[iter_].append(v)
 
         data_per_iteration_client = update_data_v2(data_per_iteration_client, data_type)
-        data_per_iteration_server = update_data_v2(data_per_iteration_server, data_type)
+        data_per_iteration_server = update_data_v2(data_per_iteration_server, data_type, flag=True)
 
         #ans[algo] = data_per_iteration_client
         ans[algo]={"Clients":data_per_iteration_client}
@@ -920,3 +964,43 @@ def get_avg_of_entity(data_):
     for i, lst in lst_per_iter.items():
         ans[i] = sum(lst) / len(lst)
     return ans
+
+
+def aggregate_all_clients_seeds(
+    runs: List[Run],
+    add_start_point: bool = True
+) -> Tuple[List[int], np.ndarray, np.ndarray, np.ndarray]:
+    """
+    Aggregate across ALL clients and ALL seeds.
+    Optionally force a synthetic start point (iter=0, acc=1.0).
+    """
+    bag = defaultdict(list)  # iter -> [acc values]
+
+    for run in runs:
+        if not isinstance(run, dict):
+            continue
+        for client, iter_to_acc in run.items():
+            if not isinstance(iter_to_acc, dict):
+                continue
+            for it, acc in iter_to_acc.items():
+                try:
+                    it_i = int(it)
+                    val = float(acc)
+                except Exception:
+                    continue
+                if np.isfinite(val):
+                    bag[it_i].append(val)
+
+    # Force the start point to be exactly 1.0 (as in your code)
+    if add_start_point:
+        bag[0] = [1.0]   # replaces any existing iter=0 values
+
+    if not bag:
+        return [], np.array([]), np.array([]), np.array([])
+
+    iterations = sorted(bag.keys())
+    means  = np.array([np.mean(bag[it]) for it in iterations], dtype=float)
+    stds   = np.array([np.std(bag[it], ddof=1) if len(bag[it]) > 1 else 0.0 for it in iterations], dtype=float)
+    counts = np.array([len(bag[it]) for it in iterations], dtype=int)
+    return iterations, means, stds, counts
+
