@@ -2196,48 +2196,41 @@ class Server(LearningEntity):
         return mean_per_cluster, clusters_client_id_dict
 
     def evaluate_for_cluster(self, cluster_id, model=None):
-        """
-        Evaluate the model using the specified cluster head on the validation data.
-
-        Args:
-            cluster_id (int): The ID of the cluster head to evaluate.
-            model (nn.Module, optional): The model to evaluate. Defaults to `self.model`.
-
-        Returns:
-            torch.Tensor: The concatenated probabilities for the specified cluster head.
-        """
         if model is None:
             model = self.model
 
         print(f"*** Evaluating Cluster {cluster_id} Head ***")
-        model.eval()  # Set the model to evaluation mode
+        model.eval()
 
-        # Use the global validation data for the evaluation
-        # experiment_config.batch_size
         global_data_loader = DataLoader(self.global_data, batch_size=experiment_config.batch_size, shuffle=False)
 
-        # List to store the probabilities for this cluster
         cluster_probs = []
+        Tteach = getattr(experiment_config, "teacher_out_temperature", 2.0)  # NEW: soften teacher (try 1.5–3.0)
 
-        with torch.no_grad():  # Disable gradient computation
+        with torch.no_grad():
             for inputs, _ in global_data_loader:
                 inputs = inputs.to(device)
 
-                # Evaluate the model using the specified cluster head
                 if experiment_config.net_cluster_technique == NetClusterTechnique.multi_head:
                     outputs = model(inputs, cluster_id=cluster_id)
                 if experiment_config.net_cluster_technique == NetClusterTechnique.multi_model:
                     outputs = model(inputs, cluster_id=0)
 
-                # Apply softmax to get class probabilities
-                probs = F.softmax(outputs, dim=1)
+                # FIX: temperature-softmax, not plain softmax
+                probs = F.softmax(outputs / Tteach, dim=1)  # NEW
 
-                # Store probabilities for this cluster head
                 cluster_probs.append(probs.cpu())
 
-        # Concatenate all probabilities into a single tensor
         cluster_probs = torch.cat(cluster_probs, dim=0)
 
+
+        with torch.no_grad():
+            prev = getattr(self, "_prev_pl", {}).get(cluster_id)
+            if prev is not None:
+                delta = (cluster_probs - prev).abs().mean().item()
+                print(f"[server] cluster {cluster_id} mean|ΔPL|={delta:.6f}")  # NEW
+            self._prev_pl = getattr(self, "_prev_pl", {})
+            self._prev_pl[cluster_id] = cluster_probs.clone()
         return cluster_probs
 
     def __str__(self):
