@@ -312,17 +312,14 @@ class LearningEntity(ABC):
     # else:
     #    self.model.apply(self.weights)
 
-    def get_pseudo_label_L2(self, pseudo_labels):
+    def get_pseudo_label_L2(self, pseudo_labels: torch.Tensor):
         loader = DataLoader(self.global_data, batch_size=len(self.global_data))
-        X_tensor, Y_tensor = next(iter(loader))  # Gets all data
-        # Convert to NumPy (if needed)
-        ground_truth = Y_tensor.numpy()
-
-        num_classes = pseudo_labels.shape[1]
-        ground_truth_onehot = F.one_hot(torch.tensor(ground_truth), num_classes=num_classes).float().numpy()
-
-        return np.mean(np.linalg.norm(pseudo_labels - ground_truth_onehot, axis=1) ** 2)
-
+        _, y = next(iter(loader))  # CPU tensors
+        pl = pseudo_labels.detach().to("cpu")  # [N,C]
+        num_classes = pl.shape[1]
+        gt_onehot = F.one_hot(y, num_classes=num_classes).float()
+        diff = pl - gt_onehot
+        return diff.pow(2).sum(dim=1).mean().item()
     def iterate(self, t):
         # self.set_weights()
         torch.manual_seed(self.num + t * 17)

@@ -143,41 +143,51 @@ def iterate_fl_clusters(clients,server,net_type,net_cluster_technique,server_inp
                         num_cluster,weights_for_ps=None,input_consistency=None,epsilon =None):
     for t in range(experiment_config.iterations):
         print("----------------------------iter number:" + str(t))
-        for c in clients: c.iterate(t)
 
+        # 1) clients produce pseudo-labels for this round
         for c in clients:
-            what_to_send = c.pseudo_label_to_send
+            c.iterate(t)
 
-            server.receive_single_pseudo_label(c.id_, what_to_send)
+        # 2) server ingests clients' PLs
+        for c in clients:
+            server.receive_single_pseudo_label(c.id_, c.pseudo_label_to_send)
+
+        # 3) server trains/aggregates and produces feedback PLs
         server.iterate(t)
-        if t>0:
-            for c in clients: c.pseudo_label_received = server.pseudo_label_to_send[c.id_]
+
+        # 4) deliver feedback PLs to clients for NEXT round  (NO if t>0!)
+        for c in clients:
+            pl = server.pseudo_label_to_send.get(c.id_)
+            if pl is None:
+                raise RuntimeError(f"Server did not produce pseudo-labels for client {c.id_} at round {t}.")
+            c.pseudo_label_received = pl
+
+        # 5) (optional) logging/pickling — keep your guard here if you only want t>0
+        if t > 0:
             rd = RecordData(clients, server)
             if epsilon is None:
-                data_to_pickle[data_set.name][num_clients][num_opt_clusters][server_amount_data][alpha_dicht][experiment_config.seed_num][
+                data_to_pickle[data_set.name][num_clients][num_opt_clusters][server_amount_data][alpha_dicht][
+                    experiment_config.seed_num][
                     algorithm_selection.name][net_type.name][net_cluster_technique.name][
-                    server_input_tech.name][cluster_technique.name][server_feedback_technique.name][
-                    num_cluster] = rd
-                pik_name = data_set.name + "_" + str(num_clients) + "_" + str(
-                    num_opt_clusters) + "_" + str(int(10 * (
-                    server_amount_data))) + "_" + algorithm_selection.name + "_" + net_type.name + "_" + net_cluster_technique.name + "_" + cluster_technique.name + "_" + str(
-                    num_cluster) + "_" + str(experiment_config.alpha_dich)+"_"+"seed_"+str(experiment_config.seed_num)+str(int(server_amount_data*100))+"aaaa"
+                    server_input_tech.name][cluster_technique.name][server_feedback_technique.name][num_cluster] = rd
+                pik_name = (data_set.name + "_" + str(num_clients) + "_" + str(num_opt_clusters) + "_" +
+                            str(int(10 * server_amount_data)) + "_" + algorithm_selection.name + "_" + net_type.name +
+                            "_" + net_cluster_technique.name + "_" + cluster_technique.name + "_" + str(num_cluster) +
+                            "_" + str(experiment_config.alpha_dich) + "_" + "seed_" + str(experiment_config.seed_num) +
+                            str(int(server_amount_data * 100)) + "aaaa")
             else:
-                data_to_pickle[data_set.name][num_clients][num_opt_clusters][server_amount_data][
-                    alpha_dicht][experiment_config.seed_num][algorithm_selection.name][net_type.name][
-                    net_cluster_technique.name][
+                data_to_pickle[data_set.name][num_clients][num_opt_clusters][server_amount_data][alpha_dicht][
+                    experiment_config.seed_num][
+                    algorithm_selection.name][net_type.name][net_cluster_technique.name][
                     server_input_tech.name][cluster_technique.name][server_feedback_technique.name][epsilon][
                     weights_for_ps.name][input_consistency.name] = rd
-
-
-                pik_name = data_set.name + "_" + str(num_clients) + "_" + str(
-                    num_opt_clusters) + "_" + str(int(10 * (
-                    server_amount_data))) + "_" + algorithm_selection.name + "_" + net_type.name + "_" + net_cluster_technique.name + "_" + cluster_technique.name + "_" + str(
-                    num_cluster) +"_"+ str(experiment_config.alpha_dich)+"_"+ str(epsilon)+"_"+str(int(server_amount_data*100))+"seed_"+str(experiment_config.seed_num)+"aaaa"
-
+                pik_name = (data_set.name + "_" + str(num_clients) + "_" + str(num_opt_clusters) + "_" +
+                            str(int(10 * server_amount_data)) + "_" + algorithm_selection.name + "_" + net_type.name +
+                            "_" + net_cluster_technique.name + "_" + cluster_technique.name + "_" + str(num_cluster) +
+                            "_" + str(experiment_config.alpha_dich) + "_" + str(epsilon) + "_" +
+                            str(int(server_amount_data * 100)) + "seed_" + str(experiment_config.seed_num) + "aaaa")
 
             pickle_file_path = pik_name + ".pkl"
-
             with open(pickle_file_path, "wb") as file:
                 pickle.dump(data_to_pickle, file)
 
