@@ -533,7 +533,6 @@ class LearningEntity(ABC):
 
         return avg_loss  # Return the average loss
 
-
 class Client(LearningEntity):
     def __init__(self, id_, client_data, global_data, global_test_data, local_test_data):
         LearningEntity.__init__(self, id_, global_data, global_test_data)
@@ -564,29 +563,28 @@ class Client(LearningEntity):
         print(f"Mean pseudo-labels shape: {pseudo_label_received.shape}")
         print(f"*** {self.__str__()} train ***")
 
-        server_loader = DataLoader(self.global_data,
-                                   batch_size=experiment_config.batch_size,
-                                   shuffle=False, num_workers=0, drop_last=True)
+        server_loader = DataLoader(
+            self.global_data,
+            batch_size=experiment_config.batch_size,
+            shuffle=False,
+            num_workers=0,
+            drop_last=True
+        )
 
         self.model.train()
-        lambda_consistency = getattr(experiment_config, "lambda_consistency", 0.0)
+        lambda_consistency = experiment_config.lambda_consistency  # Can tune this
         criterion_consistency = nn.MSELoss()
-        optimizer = torch.optim.Adam(self.model.parameters(),
-                                     lr=experiment_config.learning_rate_train_c)
+        optimizer = torch.optim.Adam(self.model.parameters(), lr=experiment_config.learning_rate_train_c)
         pseudo_targets_all = pseudo_label_received.to(device)
 
-        T = getattr(experiment_config, "kd_temperature", 2.0)
-        tau = getattr(experiment_config, "pl_conf_thresh_client", 0.55)
-        eps = 1e-8
-
+        # Simple perturbation function (add Gaussian noise)
         def add_noise(inputs, std=0.05):
             noise = torch.randn_like(inputs) * std
             return torch.clamp(inputs + noise, 0., 1.)
 
         for epoch in range(experiment_config.epochs_num_train_client):
             self.epoch_count += 1
-            epoch_loss = 0.0
-            used_batches = 0
+            epoch_loss = 0
 
             for batch_idx, (inputs, true_labels) in enumerate(server_loader):
                 inputs = inputs.to(device)
@@ -594,10 +592,11 @@ class Client(LearningEntity):
                 optimizer.zero_grad()
 
                 outputs = self.model(inputs)
-                outputs_log_prob = F.log_softmax(outputs / T, dim=1)
+                outputs_log_prob = F.log_softmax(outputs, dim=1)
 
                 start_idx = batch_idx * experiment_config.batch_size
                 end_idx = start_idx + inputs.size(0)
+                # ...
                 pseudo_targets = pseudo_targets_all[start_idx:end_idx].to(device)
 
                 if pseudo_targets.size(0) != inputs.size(0):
@@ -607,34 +606,32 @@ class Client(LearningEntity):
                     print(f"NaN/Inf in pseudo targets at batch {batch_idx}")
                     continue
 
+                # REPLACED softmax -> clamp (targets are already probs)
+                eps = 1e-8
                 pseudo_targets = pseudo_targets.clamp(min=eps, max=1 - eps)
+                # ...
 
-                conf, _ = pseudo_targets.max(dim=1)
-                mask = conf >= tau
-                if mask.sum() == 0:
-                    continue
-
-                # weights by label frequency
+                # Compute weights based on global label distribution
                 weights = torch.tensor(
-                    [self.get_global_label_distribution(lbl.item()) / len(self.global_data) for lbl in true_labels],
+                    [self.get_global_label_distribution(label.item()) / len(self.global_data) for label in true_labels],
                     dtype=torch.float32, device=device
-                ).unsqueeze(1)
-                weights = weights[mask]
+                ).unsqueeze(1)  # (batch_size, 1)
 
-                # KD (per-sample, weighted)
-                kd_per_sample = F.kl_div(outputs_log_prob[mask], pseudo_targets[mask],
-                                         reduction='none').sum(dim=1)
-                kd_loss = (kd_per_sample * weights.squeeze()).mean() * (T * T)
+                # KL divergence per sample
+                loss_kl_per_sample = F.kl_div(outputs_log_prob, pseudo_targets, reduction='none').sum(dim=1)
+                loss_kl = (loss_kl_per_sample * weights.squeeze()).mean()
 
-                # Consistency on masked subset
+                # Input consistency regularization
                 inputs_aug = add_noise(inputs)
                 with torch.no_grad():
                     outputs_aug = self.model(inputs_aug)
-                probs = F.softmax(outputs, dim=1)[mask]
-                probs_aug = F.softmax(outputs_aug, dim=1)[mask]
-                cons_loss = criterion_consistency(probs, probs_aug)
+                    probs = F.softmax(outputs, dim=1)
+                    probs_aug = F.softmax(outputs_aug, dim=1)
 
-                loss = kd_loss + lambda_consistency * cons_loss
+                loss_consistency = criterion_consistency(probs, probs_aug)
+
+                # Total loss
+                loss = loss_kl + lambda_consistency * loss_consistency
 
                 if torch.isnan(loss) or torch.isinf(loss):
                     print(f"NaN/Inf loss at batch {batch_idx}: {loss}")
@@ -643,11 +640,9 @@ class Client(LearningEntity):
                 loss.backward()
                 torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
                 optimizer.step()
-
                 epoch_loss += loss.item()
-                used_batches += 1
 
-            avg_loss = epoch_loss / max(1, used_batches)
+            avg_loss = epoch_loss / len(server_loader)
             print(f"Epoch [{epoch + 1}/{experiment_config.epochs_num_train_client}], Loss: {avg_loss:.4f}")
 
         return avg_loss
@@ -785,39 +780,34 @@ class Client(LearningEntity):
         print(f"Mean pseudo-labels shape: {mean_pseudo_labels.shape}")
         print(f"*** {self.__str__()} train ***")
 
-        server_loader = DataLoader(self.global_data,
-                                   batch_size=experiment_config.batch_size,
-                                   shuffle=False, num_workers=0, drop_last=True)
+        server_loader = DataLoader(self.global_data, batch_size=experiment_config.batch_size, shuffle=False,
+                                   num_workers=0, drop_last=True)
         self.model.train()
 
         criterion_kl = nn.KLDivLoss(reduction='batchmean')
+        lambda_consistency = experiment_config.lambda_consistency  # You can tune this
         criterion_consistency = nn.MSELoss()
-        lambda_consistency = getattr(experiment_config, "lambda_consistency", 0.0)
 
-        optimizer = torch.optim.Adam(self.model.parameters(),
-                                     lr=experiment_config.learning_rate_train_c)
+        optimizer = torch.optim.Adam(self.model.parameters(), lr=experiment_config.learning_rate_train_c)
         pseudo_targets_all = mean_pseudo_labels.to(device)
 
-        T = getattr(experiment_config, "kd_temperature", 2.0)
-        tau = getattr(experiment_config, "pl_conf_thresh_client", 0.55)
-        eps = 1e-8
-
+        # Simple perturbation function (add Gaussian noise)
         def add_noise(inputs, std=0.05):
             noise = torch.randn_like(inputs) * std
             return torch.clamp(inputs + noise, 0., 1.)
 
         for epoch in range(experiment_config.epochs_num_train_client):
             self.epoch_count += 1
-            epoch_loss = 0.0
-            used_batches = 0
+            epoch_loss = 0
 
             for batch_idx, (inputs, _) in enumerate(server_loader):
                 inputs = inputs.to(device)
                 optimizer.zero_grad()
 
                 outputs = self.model(inputs)
-                outputs_log_prob = F.log_softmax(outputs / T, dim=1)
+                outputs_log_prob = F.log_softmax(outputs, dim=1)
 
+                # Index pseudo targets
                 start_idx = batch_idx * experiment_config.batch_size
                 end_idx = start_idx + inputs.size(0)
                 pseudo_targets = pseudo_targets_all[start_idx:end_idx].to(device)
@@ -829,25 +819,19 @@ class Client(LearningEntity):
                     print(f"NaN/Inf in pseudo targets at batch {batch_idx}")
                     continue
 
-                pseudo_targets = pseudo_targets.clamp(min=eps, max=1 - eps)
+                pseudo_targets = F.softmax(pseudo_targets, dim=1)
+                loss_kl = criterion_kl(outputs_log_prob, pseudo_targets)
 
-                conf, _ = pseudo_targets.max(dim=1)
-                mask = conf >= tau
-                if mask.sum() == 0:
-                    continue
-
-                # KD loss (masked)
-                kd_loss = criterion_kl(outputs_log_prob[mask], pseudo_targets[mask]) * (T * T)
-
-                # Consistency: compute on same masked subset
+                # Input consistency regularization
                 inputs_aug = add_noise(inputs)
                 with torch.no_grad():
                     outputs_aug = self.model(inputs_aug)
-                probs = F.softmax(outputs, dim=1)[mask]
-                probs_aug = F.softmax(outputs_aug, dim=1)[mask]
-                cons_loss = criterion_consistency(probs, probs_aug)
+                    probs = F.softmax(outputs, dim=1)
+                    probs_aug = F.softmax(outputs_aug, dim=1)
+                loss_consistency = criterion_consistency(probs, probs_aug)
 
-                loss = kd_loss + lambda_consistency * cons_loss
+                # Total loss
+                loss = loss_kl + lambda_consistency * loss_consistency
 
                 if torch.isnan(loss) or torch.isinf(loss):
                     print(f"NaN/Inf loss at batch {batch_idx}: {loss}")
@@ -856,11 +840,9 @@ class Client(LearningEntity):
                 loss.backward()
                 torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
                 optimizer.step()
-
                 epoch_loss += loss.item()
-                used_batches += 1
 
-            avg_loss = epoch_loss / max(1, used_batches)
+            avg_loss = epoch_loss / len(server_loader)
             print(f"Epoch [{epoch + 1}/{experiment_config.epochs_num_train_client}], Loss: {avg_loss:.4f}")
 
         return avg_loss
@@ -872,23 +854,21 @@ class Client(LearningEntity):
         print(f"Mean pseudo-labels shape: {mean_pseudo_labels.shape}")
         print(f"*** {self.__str__()} train ***")
 
-        server_loader = DataLoader(self.global_data,
-                                   batch_size=experiment_config.batch_size,
-                                   shuffle=False, num_workers=0, drop_last=True)
+        server_loader = DataLoader(
+            self.global_data,
+            batch_size=experiment_config.batch_size,
+            shuffle=False,
+            num_workers=0,
+            drop_last=True
+        )
+
         self.model.train()
-        optimizer = torch.optim.Adam(self.model.parameters(),
-                                     lr=experiment_config.learning_rate_train_c)
-
+        optimizer = torch.optim.Adam(self.model.parameters(), lr=experiment_config.learning_rate_train_c)
         pseudo_targets_all = mean_pseudo_labels.to(device)
-
-        T = getattr(experiment_config, "kd_temperature", 2.0)
-        tau = getattr(experiment_config, "pl_conf_thresh_client", 0.55)
-        eps = 1e-8
 
         for epoch in range(experiment_config.epochs_num_train_client):
             self.epoch_count += 1
-            epoch_loss = 0.0
-            used_batches = 0
+            epoch_loss = 0
 
             for batch_idx, (inputs, true_labels) in enumerate(server_loader):
                 inputs = inputs.to(device)
@@ -896,133 +876,126 @@ class Client(LearningEntity):
                 optimizer.zero_grad()
 
                 outputs = self.model(inputs)
-                outputs_log_prob = F.log_softmax(outputs / T, dim=1)
+                outputs_prob = F.log_softmax(outputs, dim=1)
 
                 start_idx = batch_idx * experiment_config.batch_size
                 end_idx = start_idx + inputs.size(0)
                 pseudo_targets = pseudo_targets_all[start_idx:end_idx].to(device)
 
                 if pseudo_targets.size(0) != inputs.size(0):
-                    print(f"Skipping batch {batch_idx}: Expected {inputs.size(0)}, got {pseudo_targets.size(0)}")
+                    print(
+                        f"Skipping batch {batch_idx}: Expected pseudo target size {inputs.size(0)}, got {pseudo_targets.size(0)}")
                     continue
+
                 if torch.isnan(pseudo_targets).any() or torch.isinf(pseudo_targets).any():
-                    print(f"NaN/Inf in pseudo targets at batch {batch_idx}")
+                    print(f"NaN or Inf found in pseudo targets at batch {batch_idx}: {pseudo_targets}")
                     continue
 
-                pseudo_targets = pseudo_targets.clamp(min=eps, max=1 - eps)
+                pseudo_targets = F.softmax(pseudo_targets, dim=1)
 
-                conf, _ = pseudo_targets.max(dim=1)
-                mask = conf >= tau
-                if mask.sum() == 0:
-                    continue
-
-                # sample weights by true label freq (your original logic)
+                # Get weights based on true labels
                 weights = torch.tensor(
-                    [self.get_global_label_distribution(lbl.item()) / len(self.global_data) for lbl in true_labels],
+                    [self.get_global_label_distribution(label.item()) / len(self.global_data) for label in true_labels],
                     dtype=torch.float32, device=device
-                ).unsqueeze(1)
-                weights = weights[mask]
+                ).unsqueeze(1)  # (batch_size, 1)
 
-                # per-sample KL
-                loss_per_sample = F.kl_div(outputs_log_prob[mask], pseudo_targets[mask],
-                                           reduction='none').sum(dim=1)
+                # KL divergence per sample
+                loss_per_sample = F.kl_div(outputs_prob, pseudo_targets, reduction='none').sum(dim=1)
                 weighted_loss = (loss_per_sample * weights.squeeze()).mean()
+                loss = weighted_loss
 
-                loss = weighted_loss * (T * T)
+                # print("Type of loss:", type(loss))
+                # print("Loss value:", loss)
 
                 if torch.isnan(loss) or torch.isinf(loss):
-                    print(f"NaN/Inf loss at batch {batch_idx}: {loss}")
+                    print(f"NaN or Inf loss encountered at batch {batch_idx}: {loss}")
                     continue
 
                 loss.backward()
                 torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
                 optimizer.step()
-
                 epoch_loss += loss.item()
-                used_batches += 1
 
-            avg_loss = epoch_loss / max(1, used_batches)
+            avg_loss = epoch_loss / len(server_loader)
             print(f"Epoch [{epoch + 1}/{experiment_config.epochs_num_train_client}], Loss: {avg_loss:.4f}")
 
         return avg_loss
 
     def train(self, mean_pseudo_labels):
-        print(f"Mean pseudo-labels shape: {mean_pseudo_labels.shape}")
+
+        print(f"Mean pseudo-labels shape: {mean_pseudo_labels.shape}")  # Should be (num_data_points, num_classes)
+
         print(f"*** {self.__str__()} train ***")
-
-        server_loader = DataLoader(self.global_data,
-                                   batch_size=experiment_config.batch_size,
-                                   shuffle=False, num_workers=0, drop_last=True)
-
+        server_loader = DataLoader(self.global_data, batch_size=experiment_config.batch_size, shuffle=False,
+                                   num_workers=0,
+                                   drop_last=True)
+        # server_loader = DataLoader(self.global_data, batch_size=experiment_config.batch_size, shuffle=False,
+        #                           num_workers=0)
+        # print(1)
         self.model.train()
         criterion = nn.KLDivLoss(reduction='batchmean')
-        optimizer = torch.optim.Adam(self.model.parameters(),
-                                     lr=experiment_config.learning_rate_train_c)
+        optimizer = torch.optim.Adam(self.model.parameters(), lr=experiment_config.learning_rate_train_c)
+        # optimizer = torch.optim.Adam(self.model.parameters(), lr=experiment_config.learning_rate_train_c,
+        #                             weight_decay=1e-4)
 
         pseudo_targets_all = mean_pseudo_labels.to(device)
 
-        T = getattr(experiment_config, "kd_temperature", 2.0)
-        tau = getattr(experiment_config, "pl_conf_thresh_client", 0.55)
-        eps = 1e-8
-
         for epoch in range(experiment_config.epochs_num_train_client):
+            # print(2)
+
             self.epoch_count += 1
-            epoch_loss = 0.0
-            used_batches = 0
+            epoch_loss = 0
 
             for batch_idx, (inputs, _) in enumerate(server_loader):
+                # print(batch_idx)
+
                 inputs = inputs.to(device)
                 optimizer.zero_grad()
 
                 outputs = self.model(inputs)
-                outputs_log_prob = F.log_softmax(outputs / T, dim=1)
+                # Check for NaN or Inf in outputs
 
+                # Convert model outputs to log probabilities
+                outputs_prob = F.log_softmax(outputs, dim=1)
+                # Slice pseudo_targets to match the input batch size
                 start_idx = batch_idx * experiment_config.batch_size
                 end_idx = start_idx + inputs.size(0)
                 pseudo_targets = pseudo_targets_all[start_idx:end_idx].to(device)
 
+                # Check if pseudo_targets size matches the input batch size
                 if pseudo_targets.size(0) != inputs.size(0):
-                    print(f"Skipping batch {batch_idx}: Pseudo target size mismatch.")
-                    continue
+                    print(
+                        f"Skipping batch {batch_idx}: Expected pseudo target size {inputs.size(0)}, got {pseudo_targets.size(0)}")
+                    continue  # Skip the rest of the loop for this batch
+
+                # Check for NaN or Inf in pseudo targets
                 if torch.isnan(pseudo_targets).any() or torch.isinf(pseudo_targets).any():
-                    print(f"NaN/Inf in pseudo targets at batch {batch_idx}")
+                    print(f"NaN or Inf found in pseudo targets at batch {batch_idx}: {pseudo_targets}")
                     continue
 
-                # targets already probs
-                pseudo_targets = pseudo_targets.clamp(min=eps, max=1 - eps)
+                # Normalize pseudo targets to sum to 1
+                pseudo_targets = F.softmax(pseudo_targets, dim=1)
 
-                # confidence mask
-                conf, _ = pseudo_targets.max(dim=1)
-                mask = conf >= tau
-                if mask.sum() == 0:
-                    continue
+                # Calculate the loss
+                loss = criterion(outputs_prob, pseudo_targets)
 
-                outputs_log_prob_m = outputs_log_prob[mask]
-                pseudo_targets_m = pseudo_targets[mask]
-
-                # one-time debug
-                if not hasattr(self, "_printed_kd_stats"):
-                    kept = mask.float().mean().item() * 100.0
-                    ent = -(pseudo_targets_m * pseudo_targets_m.clamp_min(1e-8).log()).sum(1).mean().item()
-                    print(f"[client {self.id_}] KD: keep={kept:.1f}%, target_entropy={ent:.3f}, T={T}")
-                    self._printed_kd_stats = True
-
-                loss = criterion(outputs_log_prob_m, pseudo_targets_m) * (T * T)
-
+                # Check if the loss is NaN or Inf
                 if torch.isnan(loss) or torch.isinf(loss):
-                    print(f"NaN/Inf loss at batch {batch_idx}: {loss}")
+                    print(f"NaN or Inf loss encountered at batch {batch_idx}: {loss}")
                     continue
 
                 loss.backward()
+
+                # Clip gradients
                 torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
+
                 optimizer.step()
-
                 epoch_loss += loss.item()
-                used_batches += 1
 
-            avg_loss = epoch_loss / max(1, used_batches)
+            avg_loss = epoch_loss / len(server_loader)
             print(f"Epoch [{epoch + 1}/{experiment_config.epochs_num_train_client}], Loss: {avg_loss:.4f}")
 
+        # self.weights =self.model.state_dict()
         return avg_loss
 
     def __str__(self):
@@ -1137,358 +1110,6 @@ class Client(LearningEntity):
         print(f"Total gradient elements: {total_grad_elements}")
         print(f"Total gradient size: {total_grad_bytes / 1024 / 1024:.4f} MB")
         print()
-
-
-class Client_pFedCK(Client):
-    def __init__(self, id_, client_data, global_data, global_test_data, local_test_data):
-        super().__init__(id_, client_data, global_data, global_test_data, local_test_data)
-        self.personalized_model = AlexNet(num_classes=experiment_config.num_classes).to(device)
-        self.interactive_model = AlexNet(num_classes=experiment_config.num_classes).to(device)
-        self.initial_state = None  # To store interactive model's state before training
-
-    def set_models(self, personalized_state, interactive_state):
-        self.personalized_model.load_state_dict(personalized_state)
-        self.interactive_model.load_state_dict(interactive_state)
-
-    def train(self, t):
-        self.current_iteration = t
-
-        # Save initial interactive model state for variation calculation
-        self.initial_state = copy.deepcopy(self.interactive_model.state_dict())
-
-        self.personalized_model.train()
-        self.interactive_model.train()
-
-        optimizer_personalized = torch.optim.Adam(self.personalized_model.parameters(), lr=1e-4)
-        optimizer_interaction = torch.optim.Adam(self.interactive_model.parameters(), lr=1e-4)
-        criterion = nn.CrossEntropyLoss()
-        train_loader = DataLoader(
-            self.local_data,
-            batch_size=experiment_config.batch_size,
-            shuffle=False,
-            num_workers=0,
-            drop_last=True
-        )
-
-        print(f"\nClient {self.id_} begins training\n")
-
-        for epoch in range(5):  # or experiment_config.epochs_num_train_client
-            total_loss_personalized, total_loss_interactive = 0.0, 0.0
-            batch_count = 0
-
-            for x, y in train_loader:
-                x, y = x.to(device), y.to(device)
-                batch_count += 1
-
-                # Train personalized model
-                optimizer_personalized.zero_grad()
-                loss_personalized = criterion(self.personalized_model(x), y)
-                loss_personalized.backward()
-                optimizer_personalized.step()
-                total_loss_personalized += loss_personalized.item()
-
-                # Train interactive model
-                optimizer_interaction.zero_grad()
-                loss_interactive = criterion(self.interactive_model(x), y)
-                loss_interactive.backward()
-                optimizer_interaction.step()
-                total_loss_interactive += loss_interactive.item()
-
-                # Sync personalized model with updated interactive model
-                self.personalized_model.load_state_dict(self.interactive_model.state_dict())
-
-            print(f"Epoch {epoch + 1}/5 | Personalized Loss: {total_loss_personalized / batch_count:.4f} "
-                  f"| Interactive Loss: {total_loss_interactive / batch_count:.4f}")
-
-        self.accuracy_per_client_1[t] = self.evaluate_accuracy_single(data_=self.local_test_set,
-                                                                      model=self.personalized_model, k=1)
-        self.accuracy_per_client_5[t] = self.evaluate_accuracy(data_=self.local_test_set, model=self.personalized_model,
-                                                               k=5)
-        self.accuracy_per_client_10[t] = self.evaluate_accuracy(data_=self.local_test_set,
-                                                                model=self.personalized_model, k=10)
-        self.accuracy_per_client_100[t] = self.evaluate_accuracy(data_=self.local_test_set,
-                                                                 model=self.personalized_model, k=100)
-
-        print("accuracy_per_client_1", self.accuracy_per_client_1[t])
-        return self.calculate_param_variation()
-
-    def calculate_param_variation(self):
-        if self.initial_state is None:
-            raise ValueError("Initial state not set. Did you call train()?")
-
-        param_variations = {
-            key: self.interactive_model.state_dict()[key] - self.initial_state[key]
-            for key in self.initial_state
-        }
-        return param_variations
-
-    def update_interactive_model(self, avg_param_variations):
-        updated_state = self.interactive_model.state_dict()
-        for key, variation in avg_param_variations.items():
-            if key in updated_state:
-                updated_state[key] += variation
-        self.interactive_model.load_state_dict(updated_state)
-        print(f"Client {self.id_}: Updated interactive model with average parameter variations.")
-
-
-class Client_FedAvg(Client):
-    def __init__(self, id_, client_data, global_data, global_test_data, local_test_data):
-        Client.__init__(self, id_, client_data, global_data, global_test_data, local_test_data)
-        self.weights_received = None
-        self.weights_to_send = None
-
-    def iteration_context(self, t):
-
-        self.current_iteration = t
-        flag = False
-        for _ in range(1000):
-            if t == 0:
-                # self.model.apply(self.initialize_weights)
-                # self.model.apply(self.initialize_weights)
-
-                self.model.apply(self.initialize_weights)
-
-            if t > 0:
-                if flag:
-                    self.model.apply(self.initialize_weights)
-                else:
-                    # self.model.apply(self.initialize_weights)
-
-                    self.model.load_state_dict(self.weights_received)
-
-            self.weights_to_send = self.fine_tune()
-
-            total_size = 0
-            for param in self.weights_to_send.values():
-                total_size += param.numel() * param.element_size()
-            self.size_sent[t] = total_size / (1024 * 1024)
-            acc = self.evaluate_accuracy_single(self.local_test_set)
-
-            acc_test = self.evaluate_accuracy_single(self.test_global_data)
-            if experiment_config.data_set_selected == DataSet.CIFAR100:
-                if acc_test != 1:
-                    break
-                else:
-                    flag = True
-
-            if experiment_config.data_set_selected == DataSet.CIFAR10 or experiment_config.data_set_selected == DataSet.SVHN:
-                if acc != 10 and acc_test != 10:
-                    break
-                else:
-                    flag = True
-                    # self.model.apply(self.initialize_weights)
-            if experiment_config.data_set_selected == DataSet.TinyImageNet:
-                if acc != 0.5 and acc_test != 0.5:
-                    break
-                else:
-                    flag = True
-            if experiment_config.data_set_selected == DataSet.EMNIST_balanced:
-                if acc > 2.14 and acc_test > 2.14:
-                    break
-                else:
-                    flag = True
-
-        self.accuracy_per_client_1[t] = self.evaluate_accuracy_single(self.local_test_set, k=1)
-        self.accuracy_per_client_5[t] = self.evaluate_accuracy(self.local_test_set, k=5)
-        self.accuracy_per_client_10[t] = self.evaluate_accuracy(self.local_test_set, k=10)
-        self.accuracy_per_client_100[t] = self.evaluate_accuracy(self.local_test_set, k=100)
-
-    def fine_tune(self):
-        print("*** " + self.__str__() + " fine-tune ***")
-
-        # Load the weights into the model
-        # if self.weights is  None:
-        #    self.model.apply(self.initialize_weights)
-        # else:
-        #    self.model.load_state_dict(self.weights)
-
-        # Create a DataLoader for the local data
-        fine_tune_loader = DataLoader(self.local_data, batch_size=experiment_config.batch_size, shuffle=True)
-        self.model.train()  # Set the model to training mode
-
-        # Define loss function and optimizer
-
-        criterion = nn.CrossEntropyLoss()
-
-        optimizer = torch.optim.Adam(self.model.parameters(), lr=experiment_config.learning_rate_fine_tune_c)
-
-        epochs = experiment_config.epochs_num_input_fine_tune_clients
-        for epoch in range(epochs):
-            self.epoch_count += 1
-            epoch_loss = 0
-            for inputs, targets in fine_tune_loader:
-                inputs, targets = inputs.to(device), targets.to(device)
-                optimizer.zero_grad()
-                outputs = self.model(inputs)
-
-                loss = criterion(outputs, targets)
-
-                # Backward pass and optimization
-                loss.backward()
-                optimizer.step()
-                epoch_loss += loss.item()
-
-            result_to_print = epoch_loss / len(fine_tune_loader)
-            print(f"Epoch [{epoch + 1}/{epochs}], Loss: {result_to_print:.4f}")
-        ans = self.model.state_dict()
-
-        return ans
-
-
-class Client_NoFederatedLearning(Client):
-    def __init__(self, id_, client_data, global_data, global_test_data, local_test_data, evaluate_every):
-        Client.__init__(self, id_, client_data, global_data, global_test_data, local_test_data)
-        self.evaluate_every = evaluate_every
-
-    def fine_tune(self):
-        print("*** " + self.__str__() + " fine-tune ***")
-
-        fine_tune_loader = DataLoader(self.local_data, batch_size=experiment_config.batch_size, shuffle=True)
-        self.model.train()  # Set the model to training mode
-
-        # Define loss function and optimizer
-
-        criterion = nn.CrossEntropyLoss()
-
-        optimizer = torch.optim.Adam(self.model.parameters(), lr=experiment_config.learning_rate_fine_tune_c)
-
-        epochs = experiment_config.epochs_num_input_fine_tune_clients_no_fl
-        for epoch in range(epochs):
-            self.epoch_count += 1
-            epoch_loss = 0
-            for inputs, targets in fine_tune_loader:
-                inputs, targets = inputs.to(device), targets.to(device)
-                optimizer.zero_grad()
-                outputs = self.model(inputs)
-
-                loss = criterion(outputs, targets)
-
-                # Backward pass and optimization
-                loss.backward()
-                optimizer.step()
-                epoch_loss += loss.item()
-            if epoch % self.evaluate_every == 0 and epoch != 0:
-                self.accuracy_per_client_1[epoch] = self.evaluate_accuracy_single(self.local_test_set, k=1)
-                self.accuracy_per_client_5[epoch] = self.evaluate_accuracy(self.local_test_set, k=5)
-                self.accuracy_per_client_10[epoch] = self.evaluate_accuracy(self.local_test_set, k=10)
-                self.accuracy_per_client_100[epoch] = self.evaluate_accuracy(self.local_test_set, k=100)
-
-            result_to_print = epoch_loss / len(fine_tune_loader)
-            print(f"Epoch [{epoch + 1}/{epochs}], Loss: {result_to_print:.4f}")
-        # self.weights = self.model.state_dict()self.weights = self.model.state_dict()
-
-        return result_to_print
-
-
-class Client_PseudoLabelsClusters_with_division(Client):
-    def __init__(self, id_, client_data, global_data, global_test_data, local_test_data):
-        Client.__init__(self, id_, client_data, global_data, global_test_data, local_test_data)
-
-    def train(self, mean_pseudo_labels):
-
-        print(f"Mean pseudo-labels shape: {mean_pseudo_labels.shape}")  # Should be (num_data_points, num_classes)
-
-        print(f"*** {self.__str__()} train ***")
-        server_loader = DataLoader(self.global_data[self.current_iteration - 1],
-                                   batch_size=experiment_config.batch_size, shuffle=False, num_workers=0,
-                                   drop_last=True)
-        # server_loader = DataLoader(self.global_data, batch_size=experiment_config.batch_size, shuffle=False,
-        #                           num_workers=0)
-        # print(1)
-        self.model.train()
-        criterion = nn.KLDivLoss(reduction='batchmean')
-        optimizer = torch.optim.Adam(self.model.parameters(), lr=experiment_config.learning_rate_train_c)
-        # optimizer = torch.optim.Adam(self.model.parameters(), lr=experiment_config.learning_rate_train_c,
-        #                             weight_decay=1e-4)
-
-        pseudo_targets_all = mean_pseudo_labels.to(device)
-
-        for epoch in range(experiment_config.epochs_num_train_client):
-            # print(2)
-
-            self.epoch_count += 1
-            epoch_loss = 0
-
-            for batch_idx, (inputs, _) in enumerate(server_loader):
-                # print(batch_idx)
-
-                inputs = inputs.to(device)
-                optimizer.zero_grad()
-
-                outputs = self.model(inputs)
-                # Check for NaN or Inf in outputs
-
-                # Convert model outputs to log probabilities
-                outputs_prob = F.log_softmax(outputs, dim=1)
-                # Slice pseudo_targets to match the input batch size
-                start_idx = batch_idx * experiment_config.batch_size
-                end_idx = start_idx + inputs.size(0)
-                pseudo_targets = pseudo_targets_all[start_idx:end_idx].to(device)
-
-                # Check if pseudo_targets size matches the input batch size
-                if pseudo_targets.size(0) != inputs.size(0):
-                    print(
-                        f"Skipping batch {batch_idx}: Expected pseudo target size {inputs.size(0)}, got {pseudo_targets.size(0)}")
-                    continue  # Skip the rest of the loop for this batch
-
-                # Check for NaN or Inf in pseudo targets
-                if torch.isnan(pseudo_targets).any() or torch.isinf(pseudo_targets).any():
-                    print(f"NaN or Inf found in pseudo targets at batch {batch_idx}: {pseudo_targets}")
-                    continue
-
-                # Normalize pseudo targets to sum to 1
-                pseudo_targets = F.softmax(pseudo_targets, dim=1)
-
-                # Calculate the loss
-                loss = criterion(outputs_prob, pseudo_targets)
-
-                # Check if the loss is NaN or Inf
-                if torch.isnan(loss) or torch.isinf(loss):
-                    print(f"NaN or Inf loss encountered at batch {batch_idx}: {loss}")
-                    continue
-
-                loss.backward()
-
-                # Clip gradients
-                torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
-
-                optimizer.step()
-                epoch_loss += loss.item()
-
-            avg_loss = epoch_loss / len(server_loader)
-            print(f"Epoch [{epoch + 1}/{experiment_config.epochs_num_train_client}], Loss: {avg_loss:.4f}")
-
-        # self.weights =self.model.state_dict()
-        return avg_loss
-
-    def evaluate(self, model=None):
-        if model is None:
-            model = self.model
-        #    print("*** Generating Pseudo-Labels with Probabilities ***")
-
-        # Create a DataLoader for the global data
-        global_data_loader = DataLoader(self.global_data[self.current_iteration],
-                                        batch_size=experiment_config.batch_size, shuffle=False)
-
-        model.eval()  # Set the model to evaluation mode
-
-        all_probs = []  # List to store the softmax probabilities
-        with torch.no_grad():  # Disable gradient computation
-            for inputs, _ in global_data_loader:
-                inputs = inputs.to(device)
-                outputs = model(inputs)  # Forward pass
-
-                # Apply softmax to get the class probabilities
-                probs = F.softmax(outputs, dim=1)  # Apply softmax along the class dimension
-
-                all_probs.append(probs.cpu())  # Store the probabilities on CPU
-
-        # Concatenate all probabilities into a single tensor (2D matrix)
-        all_probs = torch.cat(all_probs, dim=0)
-
-        # print(f"Shape of the 2D pseudo-label matrix: {all_probs.shape}")
-        return all_probs
-
 
 class Server(LearningEntity):
     def __init__(self, id_, global_data, test_data, clients_ids, clients_test_data_dict):
@@ -2229,9 +1850,9 @@ class Server(LearningEntity):
         model.eval()
 
         global_data_loader = DataLoader(self.global_data, batch_size=experiment_config.batch_size, shuffle=False)
-        cluster_probs = []
 
-        Tteach = getattr(experiment_config, "teacher_out_temperature", 2.0)
+        cluster_probs = []
+        Tteach = getattr(experiment_config, "teacher_out_temperature", 2.0)  # NEW: soften teacher (try 1.5–3.0)
 
         with torch.no_grad():
             for inputs, _ in global_data_loader:
@@ -2242,24 +1863,17 @@ class Server(LearningEntity):
                 if experiment_config.net_cluster_technique == NetClusterTechnique.multi_model:
                     outputs = model(inputs, cluster_id=0)
 
-                probs = F.softmax(outputs / Tteach, dim=1)  # softened teacher
+                # FIX: temperature-softmax, not plain softmax
+                probs = F.softmax(outputs / Tteach, dim=1)  # NEW
+
                 cluster_probs.append(probs.cpu())
 
         cluster_probs = torch.cat(cluster_probs, dim=0)
 
-        # Optional richer diagnostics
+        # Optional, but very helpful to debug sharpness:
         with torch.no_grad():
-            prev = getattr(self, "_prev_pl", {}).get(cluster_id)
-            if prev is not None:
-                per_entry = (cluster_probs - prev).abs().mean().item()
-                l1 = (cluster_probs - prev).abs().sum(dim=1).mean().item()
-                tv = 0.5 * l1
-                flips = (cluster_probs.argmax(1) != prev.argmax(1)).float().mean().item() * 100
-                ent = -(cluster_probs * cluster_probs.clamp_min(1e-8).log()).sum(1).mean().item()
-                print(f"[server] k={cluster_id} Δ/entry={per_entry:.5f} L1={l1:.3f} TV={tv:.3f} "
-                      f"argmaxΔ={flips:.1f}% entropy={ent:.3f} (T={Tteach})")
-            self._prev_pl = getattr(self, "_prev_pl", {})
-            self._prev_pl[cluster_id] = cluster_probs.clone()
+            ent = -(cluster_probs * (cluster_probs.clamp_min(1e-8).log())).sum(dim=1).mean().item()
+            print(f"[server] cluster {cluster_id} mean entropy={ent:.3f} (T={Tteach})")  # NEW
 
         return cluster_probs
 
@@ -2429,6 +2043,359 @@ class Server(LearningEntity):
                         del other_in_distance_per_client[other]
                 del distance_per_client[other]
         return clusters_client_id_dict
+
+
+class Client_pFedCK(Client):
+    def __init__(self, id_, client_data, global_data, global_test_data, local_test_data):
+        super().__init__(id_, client_data, global_data, global_test_data, local_test_data)
+        self.personalized_model = AlexNet(num_classes=experiment_config.num_classes).to(device)
+        self.interactive_model = AlexNet(num_classes=experiment_config.num_classes).to(device)
+        self.initial_state = None  # To store interactive model's state before training
+
+    def set_models(self, personalized_state, interactive_state):
+        self.personalized_model.load_state_dict(personalized_state)
+        self.interactive_model.load_state_dict(interactive_state)
+
+    def train(self, t):
+        self.current_iteration = t
+
+        # Save initial interactive model state for variation calculation
+        self.initial_state = copy.deepcopy(self.interactive_model.state_dict())
+
+        self.personalized_model.train()
+        self.interactive_model.train()
+
+        optimizer_personalized = torch.optim.Adam(self.personalized_model.parameters(), lr=1e-4)
+        optimizer_interaction = torch.optim.Adam(self.interactive_model.parameters(), lr=1e-4)
+        criterion = nn.CrossEntropyLoss()
+        train_loader = DataLoader(
+            self.local_data,
+            batch_size=experiment_config.batch_size,
+            shuffle=False,
+            num_workers=0,
+            drop_last=True
+        )
+
+        print(f"\nClient {self.id_} begins training\n")
+
+        for epoch in range(5):  # or experiment_config.epochs_num_train_client
+            total_loss_personalized, total_loss_interactive = 0.0, 0.0
+            batch_count = 0
+
+            for x, y in train_loader:
+                x, y = x.to(device), y.to(device)
+                batch_count += 1
+
+                # Train personalized model
+                optimizer_personalized.zero_grad()
+                loss_personalized = criterion(self.personalized_model(x), y)
+                loss_personalized.backward()
+                optimizer_personalized.step()
+                total_loss_personalized += loss_personalized.item()
+
+                # Train interactive model
+                optimizer_interaction.zero_grad()
+                loss_interactive = criterion(self.interactive_model(x), y)
+                loss_interactive.backward()
+                optimizer_interaction.step()
+                total_loss_interactive += loss_interactive.item()
+
+                # Sync personalized model with updated interactive model
+                self.personalized_model.load_state_dict(self.interactive_model.state_dict())
+
+            print(f"Epoch {epoch + 1}/5 | Personalized Loss: {total_loss_personalized / batch_count:.4f} "
+                  f"| Interactive Loss: {total_loss_interactive / batch_count:.4f}")
+
+        self.accuracy_per_client_1[t] = self.evaluate_accuracy_single(data_=self.local_test_set,
+                                                                      model=self.personalized_model, k=1)
+        self.accuracy_per_client_5[t] = self.evaluate_accuracy(data_=self.local_test_set, model=self.personalized_model,
+                                                               k=5)
+        self.accuracy_per_client_10[t] = self.evaluate_accuracy(data_=self.local_test_set,
+                                                                model=self.personalized_model, k=10)
+        self.accuracy_per_client_100[t] = self.evaluate_accuracy(data_=self.local_test_set,
+                                                                 model=self.personalized_model, k=100)
+
+        print("accuracy_per_client_1", self.accuracy_per_client_1[t])
+        return self.calculate_param_variation()
+
+    def calculate_param_variation(self):
+        if self.initial_state is None:
+            raise ValueError("Initial state not set. Did you call train()?")
+
+        param_variations = {
+            key: self.interactive_model.state_dict()[key] - self.initial_state[key]
+            for key in self.initial_state
+        }
+        return param_variations
+
+    def update_interactive_model(self, avg_param_variations):
+        updated_state = self.interactive_model.state_dict()
+        for key, variation in avg_param_variations.items():
+            if key in updated_state:
+                updated_state[key] += variation
+        self.interactive_model.load_state_dict(updated_state)
+        print(f"Client {self.id_}: Updated interactive model with average parameter variations.")
+
+
+class Client_FedAvg(Client):
+    def __init__(self, id_, client_data, global_data, global_test_data, local_test_data):
+        Client.__init__(self, id_, client_data, global_data, global_test_data, local_test_data)
+        self.weights_received = None
+        self.weights_to_send = None
+
+    def iteration_context(self, t):
+
+        self.current_iteration = t
+        flag = False
+        for _ in range(1000):
+            if t == 0:
+                # self.model.apply(self.initialize_weights)
+                # self.model.apply(self.initialize_weights)
+
+                self.model.apply(self.initialize_weights)
+
+            if t > 0:
+                if flag:
+                    self.model.apply(self.initialize_weights)
+                else:
+                    # self.model.apply(self.initialize_weights)
+
+                    self.model.load_state_dict(self.weights_received)
+
+            self.weights_to_send = self.fine_tune()
+
+            total_size = 0
+            for param in self.weights_to_send.values():
+                total_size += param.numel() * param.element_size()
+            self.size_sent[t] = total_size / (1024 * 1024)
+            acc = self.evaluate_accuracy_single(self.local_test_set)
+
+            acc_test = self.evaluate_accuracy_single(self.test_global_data)
+            if experiment_config.data_set_selected == DataSet.CIFAR100:
+                if acc_test != 1:
+                    break
+                else:
+                    flag = True
+
+            if experiment_config.data_set_selected == DataSet.CIFAR10 or experiment_config.data_set_selected == DataSet.SVHN:
+                if acc != 10 and acc_test != 10:
+                    break
+                else:
+                    flag = True
+                    # self.model.apply(self.initialize_weights)
+            if experiment_config.data_set_selected == DataSet.TinyImageNet:
+                if acc != 0.5 and acc_test != 0.5:
+                    break
+                else:
+                    flag = True
+            if experiment_config.data_set_selected == DataSet.EMNIST_balanced:
+                if acc > 2.14 and acc_test > 2.14:
+                    break
+                else:
+                    flag = True
+
+        self.accuracy_per_client_1[t] = self.evaluate_accuracy_single(self.local_test_set, k=1)
+        self.accuracy_per_client_5[t] = self.evaluate_accuracy(self.local_test_set, k=5)
+        self.accuracy_per_client_10[t] = self.evaluate_accuracy(self.local_test_set, k=10)
+        self.accuracy_per_client_100[t] = self.evaluate_accuracy(self.local_test_set, k=100)
+
+    def fine_tune(self):
+        print("*** " + self.__str__() + " fine-tune ***")
+
+        # Load the weights into the model
+        # if self.weights is  None:
+        #    self.model.apply(self.initialize_weights)
+        # else:
+        #    self.model.load_state_dict(self.weights)
+
+        # Create a DataLoader for the local data
+        fine_tune_loader = DataLoader(self.local_data, batch_size=experiment_config.batch_size, shuffle=True)
+        self.model.train()  # Set the model to training mode
+
+        # Define loss function and optimizer
+
+        criterion = nn.CrossEntropyLoss()
+
+        optimizer = torch.optim.Adam(self.model.parameters(), lr=experiment_config.learning_rate_fine_tune_c)
+
+        epochs = experiment_config.epochs_num_input_fine_tune_clients
+        for epoch in range(epochs):
+            self.epoch_count += 1
+            epoch_loss = 0
+            for inputs, targets in fine_tune_loader:
+                inputs, targets = inputs.to(device), targets.to(device)
+                optimizer.zero_grad()
+                outputs = self.model(inputs)
+
+                loss = criterion(outputs, targets)
+
+                # Backward pass and optimization
+                loss.backward()
+                optimizer.step()
+                epoch_loss += loss.item()
+
+            result_to_print = epoch_loss / len(fine_tune_loader)
+            print(f"Epoch [{epoch + 1}/{epochs}], Loss: {result_to_print:.4f}")
+        ans = self.model.state_dict()
+
+        return ans
+
+
+class Client_NoFederatedLearning(Client):
+    def __init__(self, id_, client_data, global_data, global_test_data, local_test_data, evaluate_every):
+        Client.__init__(self, id_, client_data, global_data, global_test_data, local_test_data)
+        self.evaluate_every = evaluate_every
+
+    def fine_tune(self):
+        print("*** " + self.__str__() + " fine-tune ***")
+
+        fine_tune_loader = DataLoader(self.local_data, batch_size=experiment_config.batch_size, shuffle=True)
+        self.model.train()  # Set the model to training mode
+
+        # Define loss function and optimizer
+
+        criterion = nn.CrossEntropyLoss()
+
+        optimizer = torch.optim.Adam(self.model.parameters(), lr=experiment_config.learning_rate_fine_tune_c)
+
+        epochs = experiment_config.epochs_num_input_fine_tune_clients_no_fl
+        for epoch in range(epochs):
+            self.epoch_count += 1
+            epoch_loss = 0
+            for inputs, targets in fine_tune_loader:
+                inputs, targets = inputs.to(device), targets.to(device)
+                optimizer.zero_grad()
+                outputs = self.model(inputs)
+
+                loss = criterion(outputs, targets)
+
+                # Backward pass and optimization
+                loss.backward()
+                optimizer.step()
+                epoch_loss += loss.item()
+            if epoch % self.evaluate_every == 0 and epoch != 0:
+                self.accuracy_per_client_1[epoch] = self.evaluate_accuracy_single(self.local_test_set, k=1)
+                self.accuracy_per_client_5[epoch] = self.evaluate_accuracy(self.local_test_set, k=5)
+                self.accuracy_per_client_10[epoch] = self.evaluate_accuracy(self.local_test_set, k=10)
+                self.accuracy_per_client_100[epoch] = self.evaluate_accuracy(self.local_test_set, k=100)
+
+            result_to_print = epoch_loss / len(fine_tune_loader)
+            print(f"Epoch [{epoch + 1}/{epochs}], Loss: {result_to_print:.4f}")
+        # self.weights = self.model.state_dict()self.weights = self.model.state_dict()
+
+        return result_to_print
+
+
+class Client_PseudoLabelsClusters_with_division(Client):
+    def __init__(self, id_, client_data, global_data, global_test_data, local_test_data):
+        Client.__init__(self, id_, client_data, global_data, global_test_data, local_test_data)
+
+    def train(self, mean_pseudo_labels):
+
+        print(f"Mean pseudo-labels shape: {mean_pseudo_labels.shape}")  # Should be (num_data_points, num_classes)
+
+        print(f"*** {self.__str__()} train ***")
+        server_loader = DataLoader(self.global_data[self.current_iteration - 1],
+                                   batch_size=experiment_config.batch_size, shuffle=False, num_workers=0,
+                                   drop_last=True)
+        # server_loader = DataLoader(self.global_data, batch_size=experiment_config.batch_size, shuffle=False,
+        #                           num_workers=0)
+        # print(1)
+        self.model.train()
+        criterion = nn.KLDivLoss(reduction='batchmean')
+        optimizer = torch.optim.Adam(self.model.parameters(), lr=experiment_config.learning_rate_train_c)
+        # optimizer = torch.optim.Adam(self.model.parameters(), lr=experiment_config.learning_rate_train_c,
+        #                             weight_decay=1e-4)
+
+        pseudo_targets_all = mean_pseudo_labels.to(device)
+
+        for epoch in range(experiment_config.epochs_num_train_client):
+            # print(2)
+
+            self.epoch_count += 1
+            epoch_loss = 0
+
+            for batch_idx, (inputs, _) in enumerate(server_loader):
+                # print(batch_idx)
+
+                inputs = inputs.to(device)
+                optimizer.zero_grad()
+
+                outputs = self.model(inputs)
+                # Check for NaN or Inf in outputs
+
+                # Convert model outputs to log probabilities
+                outputs_prob = F.log_softmax(outputs, dim=1)
+                # Slice pseudo_targets to match the input batch size
+                start_idx = batch_idx * experiment_config.batch_size
+                end_idx = start_idx + inputs.size(0)
+                pseudo_targets = pseudo_targets_all[start_idx:end_idx].to(device)
+
+                # Check if pseudo_targets size matches the input batch size
+                if pseudo_targets.size(0) != inputs.size(0):
+                    print(
+                        f"Skipping batch {batch_idx}: Expected pseudo target size {inputs.size(0)}, got {pseudo_targets.size(0)}")
+                    continue  # Skip the rest of the loop for this batch
+
+                # Check for NaN or Inf in pseudo targets
+                if torch.isnan(pseudo_targets).any() or torch.isinf(pseudo_targets).any():
+                    print(f"NaN or Inf found in pseudo targets at batch {batch_idx}: {pseudo_targets}")
+                    continue
+
+                # Normalize pseudo targets to sum to 1
+                pseudo_targets = F.softmax(pseudo_targets, dim=1)
+
+                # Calculate the loss
+                loss = criterion(outputs_prob, pseudo_targets)
+
+                # Check if the loss is NaN or Inf
+                if torch.isnan(loss) or torch.isinf(loss):
+                    print(f"NaN or Inf loss encountered at batch {batch_idx}: {loss}")
+                    continue
+
+                loss.backward()
+
+                # Clip gradients
+                torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
+
+                optimizer.step()
+                epoch_loss += loss.item()
+
+            avg_loss = epoch_loss / len(server_loader)
+            print(f"Epoch [{epoch + 1}/{experiment_config.epochs_num_train_client}], Loss: {avg_loss:.4f}")
+
+        # self.weights =self.model.state_dict()
+        return avg_loss
+
+    def evaluate(self, model=None):
+        if model is None:
+            model = self.model
+        #    print("*** Generating Pseudo-Labels with Probabilities ***")
+
+        # Create a DataLoader for the global data
+        global_data_loader = DataLoader(self.global_data[self.current_iteration],
+                                        batch_size=experiment_config.batch_size, shuffle=False)
+
+        model.eval()  # Set the model to evaluation mode
+
+        all_probs = []  # List to store the softmax probabilities
+        with torch.no_grad():  # Disable gradient computation
+            for inputs, _ in global_data_loader:
+                inputs = inputs.to(device)
+                outputs = model(inputs)  # Forward pass
+
+                # Apply softmax to get the class probabilities
+                probs = F.softmax(outputs, dim=1)  # Apply softmax along the class dimension
+
+                all_probs.append(probs.cpu())  # Store the probabilities on CPU
+
+        # Concatenate all probabilities into a single tensor (2D matrix)
+        all_probs = torch.cat(all_probs, dim=0)
+
+        # print(f"Shape of the 2D pseudo-label matrix: {all_probs.shape}")
+        return all_probs
+
+
 
 
 class Server_pFedCK(Server):
