@@ -662,9 +662,8 @@ class Client(LearningEntity):
     def iteration_context(self, t):
         self.current_iteration = t
         for _ in range(10):
-            if t >= 1:
-                if t == 1:
-                    self.model.apply(self.initialize_weights)
+            if t > 1:
+
 
                 if experiment_config.input_consistency == InputConsistency.withInputConsistency:
                     if experiment_config.weights_for_ps:
@@ -681,6 +680,8 @@ class Client(LearningEntity):
             if t == 0:
                 train_loss = self.fine_tune(50)
             else:
+                if t == 1:
+                    self.model.apply(self.initialize_weights)
                 train_loss = self.fine_tune()
 
             self.pseudo_label_to_send = self.evaluate()
