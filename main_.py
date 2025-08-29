@@ -142,25 +142,22 @@ def run_FedAvg():
 def iterate_fl_clusters(clients,server,net_type,net_cluster_technique,server_input_tech,cluster_technique,server_feedback_technique,
                         num_cluster,weights_for_ps=None,input_consistency=None,epsilon =None):
     for t in range(experiment_config.iterations):
-        print("----------------------------iter number:" + str(t))
+        print(f"----------------------------iter number:{t}")
 
-        # 1) clients produce pseudo-labels for this round
+        # 1) Give clients last round's teacher BEFORE they train this round
+        if t > 0:
+            for c in clients:
+                c.pseudo_label_received = server.pseudo_label_to_send[c.id_]
+
+        # 2) Clients train (KD + local CE)
         for c in clients:
             c.iterate(t)
 
-        # 2) server ingests clients' PLs
+        # 3) Server collects and updates teacher for next round
         for c in clients:
             server.receive_single_pseudo_label(c.id_, c.pseudo_label_to_send)
-
-        # 3) server trains/aggregates and produces feedback PLs
         server.iterate(t)
 
-        # 4) deliver feedback PLs to clients for NEXT round  (NO if t>0!)
-        for c in clients:
-            pl = server.pseudo_label_to_send.get(c.id_)
-            if pl is None:
-                raise RuntimeError(f"Server did not produce pseudo-labels for client {c.id_} at round {t}.")
-            c.pseudo_label_received = pl
 
         # 5) (optional) logging/pickling — keep your guard here if you only want t>0
         if t > 0:
