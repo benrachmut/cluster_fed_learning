@@ -324,14 +324,17 @@ class LearningEntity(ABC):
     # else:
     #    self.model.apply(self.weights)
 
-    def get_pseudo_label_L2(self, pseudo_labels: torch.Tensor):
+    def get_pseudo_label_L2(self, pseudo_labels):
         loader = DataLoader(self.global_data, batch_size=len(self.global_data))
-        _, y = next(iter(loader))  # CPU tensors
-        pl = pseudo_labels.detach().to("cpu")  # [N,C]
-        num_classes = pl.shape[1]
-        gt_onehot = F.one_hot(y, num_classes=num_classes).float()
-        diff = pl - gt_onehot
-        return diff.pow(2).sum(dim=1).mean().item()
+        X_tensor, Y_tensor = next(iter(loader))  # Gets all data
+        # Convert to NumPy (if needed)
+        ground_truth = Y_tensor.numpy()
+
+        num_classes = pseudo_labels.shape[1]
+        ground_truth_onehot = F.one_hot(torch.tensor(ground_truth), num_classes=num_classes).float().numpy()
+
+        return np.mean(np.linalg.norm(pseudo_labels - ground_truth_onehot, axis=1) ** 2)
+
     def iterate(self, t):
         # self.set_weights()
         torch.manual_seed(self.num + t * 17)
@@ -543,412 +546,586 @@ class LearningEntity(ABC):
 
         return avg_loss  # Return the average loss
 
+
 class Client(LearningEntity):
     def __init__(self, id_, client_data, global_data, global_test_data, local_test_data):
-        super().__init__(id_, global_data, global_test_data)
-        # KD knobs (override from experiment_config if present)
-        self.kd_T_s = getattr(experiment_config, "student_temperature", 1.0)
-        self.kd_T_t = getattr(experiment_config, "teacher_temperature", 0.9)  # keep <=1 to stay sharp
-        self.kd_conf_thr = getattr(experiment_config, "pl_conf_thresh_client", 0.60)
-        self.kd_eps = 1e-8
-
+        LearningEntity.__init__(self, id_, global_data, global_test_data)
         self.num = (self.id_ + 1) * 17
         self.local_test_set = local_test_data
-        self.rnd_net = Random((self.seed + 1) * 17 + 13 + (id_ + 1) * 17)
+        self.rnd_net = Random((self.seed+1)*17+13+(id_+1)*17 )
 
         self.local_data = client_data
         self.epoch_count = 0
         self.model = get_client_model(self.rnd_net)
         self.model.apply(self.initialize_weights)
+        # self.train_learning_rate = experiment_config.learning_rate_train_c
+        # self.weights = None
+        self.global_data = global_data
         self.server = None
         self.pseudo_label_L2 = {}
         self.global_label_distribution = self.get_label_distribution()
 
-    # ---------------- core utilities ----------------
-
-    # put this inside class Client (or in LearningEntity if you want it shared)
-    def set_pseudo_labels(self, server_tensor: torch.Tensor, *, enforce_len: bool = True):
-        """
-        Ingest server pseudo-labels [N,C] as probabilities.
-        - clamps & re-normalizes rows
-        - keeps them on CPU (moved to device during train)
-        - optional length check vs global_data
-        """
-        if server_tensor is None:
-            raise ValueError(f"No pseudo-labels provided for client {self.id_}")
-
-        if server_tensor.dim() != 2:
-            raise ValueError(f"Expected [N,C] tensor, got shape {tuple(server_tensor.shape)}")
-
-        if enforce_len:
-            n_expected = len(self.global_data)
-            n_actual = server_tensor.size(0)
-            if n_actual != n_expected:
-                # hard fail (safer than silently misaligning)
-                raise ValueError(f"PL length mismatch for client {self.id_}: expected {n_expected}, got {n_actual}")
-
-        pl = server_tensor.detach().float().cpu()
-        eps = 1e-8
-        pl = pl.clamp_min(eps)
-        pl = pl / pl.sum(dim=1, keepdim=True)  # row-wise probs
-
-        # (optional) quick diagnostics you can keep or remove
-        with torch.no_grad():
-            conf = pl.max(dim=1).values.mean().item()
-            ent = -(pl * pl.clamp_min(eps).log()).sum(dim=1).mean().item()
-            print(f"[client {self.id_}] received PL: mean_conf={conf:.3f}, entropy={ent:.3f}")
-
-        self.pseudo_label_received = pl
-
     def get_label_distribution(self):
         label_counts = defaultdict(int)
+
         for _, label in self.local_data:
             label_counts[label.item() if hasattr(label, 'item') else int(label)] += 1
+
         return dict(label_counts)
 
-    # inside class Client(LearningEntity):
-    def fine_tune(self, num_of_epochs=None):
-        print(f"*** {self.__str__()} fine-tune ***")
-        if num_of_epochs is None:
-            num_of_epochs = experiment_config.epochs_num_input_fine_tune_clients
+    def train_with_consistency_and_weights(self, pseudo_label_received):
+        print(f"Mean pseudo-labels shape: {pseudo_label_received.shape}")
+        print(f"*** {self.__str__()} train ***")
 
-        loader = DataLoader(self.local_data,
-                            batch_size=experiment_config.batch_size,
-                            shuffle=True)
+        server_loader = DataLoader(
+            self.global_data,
+            batch_size=experiment_config.batch_size,
+            shuffle=False,
+            num_workers=0,
+            drop_last=True
+        )
+
         self.model.train()
-        criterion = nn.CrossEntropyLoss()
-        optimizer = torch.optim.Adam(self.model.parameters(),
-                                     lr=experiment_config.learning_rate_fine_tune_c)
+        lambda_consistency = experiment_config.lambda_consistency  # Can tune this
+        criterion_consistency = nn.MSELoss()
+        optimizer = torch.optim.Adam(self.model.parameters(), lr=experiment_config.learning_rate_train_c)
+        pseudo_targets_all = pseudo_label_received.to(device)
 
-        epoch_loss = 0.0
-        for epoch in range(num_of_epochs):
+        # Simple perturbation function (add Gaussian noise)
+        def add_noise(inputs, std=0.05):
+            noise = torch.randn_like(inputs) * std
+            return torch.clamp(inputs + noise, 0., 1.)
+
+        for epoch in range(experiment_config.epochs_num_train_client):
             self.epoch_count += 1
-            running = 0.0
-            for inputs, targets in loader:
-                inputs, targets = inputs.to(device), targets.to(device)
-                optimizer.zero_grad()
-                outputs = self.model(inputs)
-                loss = criterion(outputs, targets)
-                loss.backward()
-                optimizer.step()
-                running += loss.item()
-            epoch_loss = running / len(loader)
-            print(f"Epoch [{epoch + 1}/{num_of_epochs}], Loss: {epoch_loss:.4f}")
-        return epoch_loss
+            epoch_loss = 0
 
+            for batch_idx, (inputs, true_labels) in enumerate(server_loader):
+                inputs = inputs.to(device)
+                true_labels = true_labels.to(device)
+                optimizer.zero_grad()
+
+                outputs = self.model(inputs)
+                outputs_log_prob = F.log_softmax(outputs, dim=1)
+
+                start_idx = batch_idx * experiment_config.batch_size
+                end_idx = start_idx + inputs.size(0)
+                pseudo_targets = pseudo_targets_all[start_idx:end_idx].to(device)
+
+                if pseudo_targets.size(0) != inputs.size(0):
+                    print(f"Skipping batch {batch_idx}: Pseudo target size mismatch.")
+                    continue
+                if torch.isnan(pseudo_targets).any() or torch.isinf(pseudo_targets).any():
+                    print(f"NaN/Inf in pseudo targets at batch {batch_idx}")
+                    continue
+
+                pseudo_targets = F.softmax(pseudo_targets, dim=1)
+
+                # Compute weights based on global label distribution
+                weights = torch.tensor(
+                    [self.get_global_label_distribution(label.item()) / len(self.global_data) for label in true_labels],
+                    dtype=torch.float32, device=device
+                ).unsqueeze(1)  # (batch_size, 1)
+
+                # KL divergence per sample
+                loss_kl_per_sample = F.kl_div(outputs_log_prob, pseudo_targets, reduction='none').sum(dim=1)
+                loss_kl = (loss_kl_per_sample * weights.squeeze()).mean()
+
+                # Input consistency regularization
+                inputs_aug = add_noise(inputs)
+                with torch.no_grad():
+                    outputs_aug = self.model(inputs_aug)
+                    probs = F.softmax(outputs, dim=1)
+                    probs_aug = F.softmax(outputs_aug, dim=1)
+
+                loss_consistency = criterion_consistency(probs, probs_aug)
+
+                # Total loss
+                loss = loss_kl + lambda_consistency * loss_consistency
+
+                if torch.isnan(loss) or torch.isinf(loss):
+                    print(f"NaN/Inf loss at batch {batch_idx}: {loss}")
+                    continue
+
+                loss.backward()
+                torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
+                optimizer.step()
+                epoch_loss += loss.item()
+
+            avg_loss = epoch_loss / len(server_loader)
+            print(f"Epoch [{epoch + 1}/{experiment_config.epochs_num_train_client}], Loss: {avg_loss:.4f}")
+
+        return avg_loss
+
+    def iteration_context(self, t):
+        self.current_iteration = t
+        for _ in range(10):
+            if t > 1:
+                if t == 1:
+                    self.model.apply(self.initialize_weights)
+
+                if experiment_config.input_consistency == InputConsistency.withInputConsistency:
+                    if experiment_config.weights_for_ps:
+                        train_loss = self.train_with_consistency_and_weights(self.pseudo_label_received)
+                    else:
+                        train_loss = self.train_with_consistency(self.pseudo_label_received)
+                else:
+                    if experiment_config.weights_for_ps:
+                        train_loss = self.train_with_weights(self.pseudo_label_received)
+
+                    else:
+                        train_loss = self.train(self.pseudo_label_received)
+
+            if t == 0:
+                train_loss = self.fine_tune(50)
+            else:
+                train_loss = self.fine_tune()
+
+            self.pseudo_label_to_send = self.evaluate()
+            what_to_send = self.pseudo_label_to_send
+
+            self.size_sent[t] = (what_to_send.numel() * what_to_send.element_size()) / (1024 * 1024)
+            self.pseudo_label_L2[t] = self.get_pseudo_label_L2(what_to_send)
+            acc = self.evaluate_accuracy_single(self.local_test_set)
+
+            acc_test = self.evaluate_accuracy_single(self.test_global_data)
+            if experiment_config.data_set_selected == DataSet.CIFAR100:
+                if acc != 1 and acc_test != 1:
+                    break
+                else:
+                    self.model.apply(self.initialize_weights)
+            if experiment_config.data_set_selected == DataSet.CIFAR10 or experiment_config.data_set_selected == DataSet.SVHN:
+                if acc != 10 and acc_test != 10:
+                    break
+                else:
+                    self.model.apply(self.initialize_weights)
+            if experiment_config.data_set_selected == DataSet.TinyImageNet:
+                if acc != 0.5 and acc_test != 0.5:
+                    break
+                else:
+                    self.model.apply(self.initialize_weights)
+
+            if experiment_config.data_set_selected == DataSet.EMNIST_balanced:
+                if acc > 2.14 and acc_test > 2.14:
+                    break
+                else:
+                    self.model.apply(self.initialize_weights)
+        print("hi")
+
+        # self.print_grad_size()
+
+        self.accuracy_per_client_1[t] = self.evaluate_accuracy_single(self.local_test_set, k=1)
+        self.accuracy_per_client_10[t] = self.evaluate_accuracy(self.local_test_set, k=10)
+        self.accuracy_per_client_100[t] = self.evaluate_accuracy(self.local_test_set, k=100)
+
+        self.accuracy_per_client_5[t] = self.evaluate_accuracy(self.local_test_set, k=5)
+
+    def train__(self, mean_pseudo_labels, data_):
+
+        print(f"*** {self.__str__()} train ***")
+        server_loader = DataLoader(data_, batch_size=experiment_config.batch_size, shuffle=False, num_workers=0,
+                                   drop_last=True)
+
+        self.model.train()
+        criterion = nn.KLDivLoss(reduction='batchmean')
+        optimizer = torch.optim.Adam(self.model.parameters(), lr=experiment_config.learning_rate_train_c)
+
+        pseudo_targets_all = mean_pseudo_labels.to(device)
+
+        for epoch in range(experiment_config.epochs_num_train_client):
+            self.epoch_count += 1
+            epoch_loss = 0
+
+            for batch_idx, (inputs, _) in enumerate(server_loader):
+                inputs = inputs.to(device)
+                optimizer.zero_grad()
+
+                outputs = self.model(inputs)
+                # Check for NaN or Inf in outputs
+
+                # Convert model outputs to log probabilities
+                outputs_prob = F.log_softmax(outputs, dim=1)
+                # Slice pseudo_targets to match the input batch size
+                start_idx = batch_idx * experiment_config.batch_size
+                end_idx = start_idx + inputs.size(0)
+                pseudo_targets = pseudo_targets_all[start_idx:end_idx].to(device)
+
+                # Check if pseudo_targets size matches the input batch size
+                if pseudo_targets.size(0) != inputs.size(0):
+                    print(
+                        f"Skipping batch {batch_idx}: Expected pseudo target size {inputs.size(0)}, got {pseudo_targets.size(0)}")
+                    continue  # Skip the rest of the loop for this batch
+
+                # Check for NaN or Inf in pseudo targets
+                if torch.isnan(pseudo_targets).any() or torch.isinf(pseudo_targets).any():
+                    print(f"NaN or Inf found in pseudo targets at batch {batch_idx}: {pseudo_targets}")
+                    continue
+
+                # Normalize pseudo targets to sum to 1
+                pseudo_targets = F.softmax(pseudo_targets, dim=1)
+
+                # Calculate the loss
+                loss = criterion(outputs_prob, pseudo_targets)
+
+                # Check if the loss is NaN or Inf
+                if torch.isnan(loss) or torch.isinf(loss):
+                    print(f"NaN or Inf loss encountered at batch {batch_idx}: {loss}")
+                    continue
+
+                loss.backward()
+
+                # Clip gradients
+                torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
+
+                optimizer.step()
+                epoch_loss += loss.item()
+
+            avg_loss = epoch_loss / len(server_loader)
+            print(f"Epoch [{epoch + 1}/{experiment_config.epochs_num_train_client}], Loss: {avg_loss:.4f}")
+
+        self.weights = self.model.state_dict()
+        return avg_loss
+
+    def train_with_consistency(self, mean_pseudo_labels):
+        print(f"Mean pseudo-labels shape: {mean_pseudo_labels.shape}")
+        print(f"*** {self.__str__()} train ***")
+
+        server_loader = DataLoader(self.global_data, batch_size=experiment_config.batch_size, shuffle=False,
+                                   num_workers=0, drop_last=True)
+        self.model.train()
+
+        criterion_kl = nn.KLDivLoss(reduction='batchmean')
+        lambda_consistency = experiment_config.lambda_consistency  # You can tune this
+        criterion_consistency = nn.MSELoss()
+
+        optimizer = torch.optim.Adam(self.model.parameters(), lr=experiment_config.learning_rate_train_c)
+        pseudo_targets_all = mean_pseudo_labels.to(device)
+
+        # Simple perturbation function (add Gaussian noise)
+        def add_noise(inputs, std=0.05):
+            noise = torch.randn_like(inputs) * std
+            return torch.clamp(inputs + noise, 0., 1.)
+
+        for epoch in range(experiment_config.epochs_num_train_client):
+            self.epoch_count += 1
+            epoch_loss = 0
+
+            for batch_idx, (inputs, _) in enumerate(server_loader):
+                inputs = inputs.to(device)
+                optimizer.zero_grad()
+
+                outputs = self.model(inputs)
+                outputs_log_prob = F.log_softmax(outputs, dim=1)
+
+                # Index pseudo targets
+                start_idx = batch_idx * experiment_config.batch_size
+                end_idx = start_idx + inputs.size(0)
+                pseudo_targets = pseudo_targets_all[start_idx:end_idx].to(device)
+
+                if pseudo_targets.size(0) != inputs.size(0):
+                    print(f"Skipping batch {batch_idx}: Pseudo target size mismatch.")
+                    continue
+                if torch.isnan(pseudo_targets).any() or torch.isinf(pseudo_targets).any():
+                    print(f"NaN/Inf in pseudo targets at batch {batch_idx}")
+                    continue
+
+                pseudo_targets = F.softmax(pseudo_targets, dim=1)
+                loss_kl = criterion_kl(outputs_log_prob, pseudo_targets)
+
+                # Input consistency regularization
+                inputs_aug = add_noise(inputs)
+                with torch.no_grad():
+                    outputs_aug = self.model(inputs_aug)
+                    probs = F.softmax(outputs, dim=1)
+                    probs_aug = F.softmax(outputs_aug, dim=1)
+                loss_consistency = criterion_consistency(probs, probs_aug)
+
+                # Total loss
+                loss = loss_kl + lambda_consistency * loss_consistency
+
+                if torch.isnan(loss) or torch.isinf(loss):
+                    print(f"NaN/Inf loss at batch {batch_idx}: {loss}")
+                    continue
+
+                loss.backward()
+                torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
+                optimizer.step()
+                epoch_loss += loss.item()
+
+            avg_loss = epoch_loss / len(server_loader)
+            print(f"Epoch [{epoch + 1}/{experiment_config.epochs_num_train_client}], Loss: {avg_loss:.4f}")
+
+        return avg_loss
 
     def get_global_label_distribution(self, k):
         return self.global_label_distribution.get(k, 0)
 
-    # ---------------- training (KD, with adaptive masking) ----------------
-    def _kd_target_postprocess_and_mask(self, teacher_probs):
-        """
-        teacher_probs: [B,C] probs at T=1 (already clamped+renormed by setter)
-        Returns: probs (renormed), conf[B], mask[B]
-        """
-        eps = self.kd_eps
-        probs = teacher_probs.clamp(min=eps, max=1.0).contiguous()
-        probs = probs / probs.sum(dim=1, keepdim=True)
-
-        # dynamic warmup on confidence gate
-        base_tau = self.kd_conf_thr
-        warmup_T = getattr(experiment_config, "pl_conf_warmup_rounds", 3)
-        tau = max(0.40, base_tau - 0.05 * min(getattr(self, "current_iteration", 0), warmup_T))
-
-        conf = probs.max(dim=1).values
-        mask = conf >= tau
-
-        # fallback: keep top-k% by confidence if nothing passes
-        keep_ratio = getattr(experiment_config, "pl_keep_ratio_min", 0.25)
-        if mask.sum() == 0:
-            k = max(1, int(keep_ratio * conf.numel()))
-            topk = torch.topk(conf, k, largest=True, sorted=False).indices
-            mask = torch.zeros_like(conf, dtype=torch.bool)
-            mask[topk] = True
-
-        return probs, conf, mask
-
-    def train(self, mean_pseudo_labels):
+    def train_with_weights(self, mean_pseudo_labels):
         print(f"Mean pseudo-labels shape: {mean_pseudo_labels.shape}")
         print(f"*** {self.__str__()} train ***")
 
-        # map by dataset indices, not by start/end slicing
-        kd_set = WithIndex(self.global_data)
-        loader = DataLoader(kd_set, batch_size=experiment_config.batch_size,
-                            shuffle=True, num_workers=0, drop_last=False, pin_memory=True)
+        server_loader = DataLoader(
+            self.global_data,
+            batch_size=experiment_config.batch_size,
+            shuffle=False,
+            num_workers=0,
+            drop_last=True
+        )
 
         self.model.train()
-        opt = torch.optim.Adam(self.model.parameters(), lr=experiment_config.learning_rate_train_c)
-        teacher_all = mean_pseudo_labels.to("cpu")  # [N,C] at T=1
-        eps, Ts, Tt = self.kd_eps, self.kd_T_s, self.kd_T_t
+        optimizer = torch.optim.Adam(self.model.parameters(), lr=experiment_config.learning_rate_train_c)
+        pseudo_targets_all = mean_pseudo_labels.to(device)
 
         for epoch in range(experiment_config.epochs_num_train_client):
             self.epoch_count += 1
-            running = 0.0
+            epoch_loss = 0
 
-            for batch in loader:
-                (x, _y, idx) = batch
-                x = x.to(device, non_blocking=True)
-                idx = idx.long()
+            for batch_idx, (inputs, true_labels) in enumerate(server_loader):
+                inputs = inputs.to(device)
+                true_labels = true_labels.to(device)
+                optimizer.zero_grad()
 
-                with torch.no_grad():
-                    teacher_probs = teacher_all[idx].to(device, non_blocking=True)  # [B,C] probs (T=1)
-                    teacher_probs, conf, mask = self._kd_target_postprocess_and_mask(teacher_probs)
+                outputs = self.model(inputs)
+                outputs_prob = F.log_softmax(outputs, dim=1)
 
-                if mask.sum() == 0:
-                    continue  # nothing confident this batch
+                start_idx = batch_idx * experiment_config.batch_size
+                end_idx = start_idx + inputs.size(0)
+                pseudo_targets = pseudo_targets_all[start_idx:end_idx].to(device)
 
-                opt.zero_grad()
-                logits = self.model(x)  # [B,C]
-                s_logp = F.log_softmax(logits[mask] / Ts, dim=1)
-                t_p = F.softmax(torch.log(teacher_probs[mask] + eps) / Tt, dim=1)
-
-                kd_per = F.kl_div(s_logp, t_p, reduction='none').sum(dim=1)  # [M]
-                w = conf[mask]  # confidence weights
-                kd_loss = (kd_per * w).sum() / (w.sum() + eps)
-                kd_loss.backward()
-                torch.nn.utils.clip_grad_norm_(self.model.parameters(), 1.0)
-                opt.step()
-                running += kd_loss.item()
-
-            print(f"Epoch [{epoch + 1}/{experiment_config.epochs_num_train_client}], Loss: {running / len(loader):.4f}")
-        return running / len(loader)
-
-    def train_with_consistency(self, mean_pseudo_labels):
-        print(f"Mean pseudo-labels shape: {mean_pseudo_labels.shape}")
-        print(f"*** {self.__str__()} train (consistency) ***")
-
-        kd_set = WithIndex(self.global_data)
-        loader = DataLoader(kd_set, batch_size=experiment_config.batch_size,
-                            shuffle=True, num_workers=0, drop_last=False, pin_memory=True)
-
-        self.model.train()
-        opt = torch.optim.Adam(self.model.parameters(), lr=experiment_config.learning_rate_train_c)
-        teacher_all = mean_pseudo_labels.to("cpu")
-        lam = getattr(experiment_config, "lambda_consistency", 0.0)
-        eps, Ts, Tt = self.kd_eps, self.kd_T_s, self.kd_T_t
-        mse = nn.MSELoss()
-
-        def add_noise(u, std=0.05):
-            return torch.clamp(u + torch.randn_like(u) * std, 0., 1.)
-
-        for epoch in range(experiment_config.epochs_num_train_client):
-            self.epoch_count += 1
-            running = 0.0
-            for batch in loader:
-                (x, _y, idx) = batch
-                x = x.to(device, non_blocking=True)
-                idx = idx.long()
-
-                with torch.no_grad():
-                    t_probs = teacher_all[idx].to(device, non_blocking=True)
-                    t_probs, conf, mask = self._kd_target_postprocess_and_mask(t_probs)
-                if mask.sum() == 0:
+                if pseudo_targets.size(0) != inputs.size(0):
+                    print(
+                        f"Skipping batch {batch_idx}: Expected pseudo target size {inputs.size(0)}, got {pseudo_targets.size(0)}")
                     continue
 
-                opt.zero_grad()
-                logits = self.model(x)
-                s_logp = F.log_softmax(logits[mask] / Ts, dim=1)
-                t_p = F.softmax(torch.log(t_probs[mask] + eps) / Tt, dim=1)
-                kd_per = F.kl_div(s_logp, t_p, reduction='none').sum(dim=1)
-                w = conf[mask]
-                kd_loss = (kd_per * w).sum() / (w.sum() + eps)
-
-                # consistency on probabilities
-                x_aug = add_noise(x)
-                with torch.no_grad():
-                    p = F.softmax(logits, dim=1)
-                    p2 = F.softmax(self.model(x_aug), dim=1)
-                cons = mse(p, p2)
-
-                loss = kd_loss + lam * cons
-                loss.backward()
-                torch.nn.utils.clip_grad_norm_(self.model.parameters(), 1.0)
-                opt.step()
-                running += loss.item()
-
-            print(f"Epoch [{epoch + 1}/{experiment_config.epochs_num_train_client}], Loss: {running / len(loader):.4f}")
-        return running / len(loader)
-
-    def train_with_weights(self, mean_pseudo_labels):
-        print(f"Mean pseudo-labels shape: {mean_pseudo_labels.shape}")
-        print(f"*** {self.__str__()} train (weights) ***")
-
-        kd_set = WithIndex(self.global_data)
-        loader = DataLoader(kd_set, batch_size=experiment_config.batch_size,
-                            shuffle=True, num_workers=0, drop_last=False, pin_memory=True)
-
-        self.model.train()
-        opt = torch.optim.Adam(self.model.parameters(), lr=experiment_config.learning_rate_train_c)
-        teacher_all = mean_pseudo_labels.to("cpu")
-        eps, Ts, Tt = self.kd_eps, self.kd_T_s, self.kd_T_t
-
-        for epoch in range(experiment_config.epochs_num_train_client):
-            self.epoch_count += 1
-            running = 0.0
-            for (x, y, idx) in loader:
-                x = x.to(device, non_blocking=True)
-                y = y.to(device, non_blocking=True)
-                idx = idx.long()
-
-                with torch.no_grad():
-                    t_probs = teacher_all[idx].to(device, non_blocking=True)
-                    t_probs, conf, mask = self._kd_target_postprocess_and_mask(t_probs)
-                if mask.sum() == 0:
+                if torch.isnan(pseudo_targets).any() or torch.isinf(pseudo_targets).any():
+                    print(f"NaN or Inf found in pseudo targets at batch {batch_idx}: {pseudo_targets}")
                     continue
 
-                opt.zero_grad()
-                logits = self.model(x)
-                s_logp = F.log_softmax(logits[mask] / Ts, dim=1)
-                t_p = F.softmax(torch.log(t_probs[mask] + eps) / Tt, dim=1)
-                kd_per = F.kl_div(s_logp, t_p, reduction='none').sum(dim=1)
+                pseudo_targets = F.softmax(pseudo_targets, dim=1)
 
-                # your label-distribution weights (optionally combined with confidence)
-                lbls = y[mask]
-                freq = torch.tensor(
-                    [self.get_global_label_distribution(lbl.item()) for lbl in lbls],
+                # Get weights based on true labels
+                weights = torch.tensor(
+                    [self.get_global_label_distribution(label.item()) / len(self.global_data) for label in true_labels],
                     dtype=torch.float32, device=device
-                ).clamp_min(1.0)
-                freq = freq / float(max(1, len(self.global_data)))  # ~class prior
-                w = conf[mask] * freq
-                loss = (kd_per * w).sum() / (w.sum() + eps)
+                ).unsqueeze(1)  # (batch_size, 1)
 
-                loss.backward()
-                torch.nn.utils.clip_grad_norm_(self.model.parameters(), 1.0)
-                opt.step()
-                running += loss.item()
+                # KL divergence per sample
+                loss_per_sample = F.kl_div(outputs_prob, pseudo_targets, reduction='none').sum(dim=1)
+                weighted_loss = (loss_per_sample * weights.squeeze()).mean()
+                loss = weighted_loss
 
-            print(f"Epoch [{epoch + 1}/{experiment_config.epochs_num_train_client}], Loss: {running / len(loader):.4f}")
-        return running / len(loader)
+                # print("Type of loss:", type(loss))
+                # print("Loss value:", loss)
 
-    def train_with_consistency_and_weights(self, pseudo_label_received):
-        print(f"Mean pseudo-labels shape: {pseudo_label_received.shape}")
-        print(f"*** {self.__str__()} train (consistency+weights) ***")
-
-        kd_set = WithIndex(self.global_data)
-        loader = DataLoader(kd_set, batch_size=experiment_config.batch_size,
-                            shuffle=True, num_workers=0, drop_last=False, pin_memory=True)
-
-        self.model.train()
-        opt = torch.optim.Adam(self.model.parameters(), lr=experiment_config.learning_rate_train_c)
-        teacher_all = pseudo_label_received.to("cpu")
-        lam = getattr(experiment_config, "lambda_consistency", 0.0)
-        eps, Ts, Tt = self.kd_eps, self.kd_T_s, self.kd_T_t
-        mse = nn.MSELoss()
-
-        def add_noise(u, std=0.05):
-            return torch.clamp(u + torch.randn_like(u) * std, 0., 1.)
-
-        for epoch in range(experiment_config.epochs_num_train_client):
-            self.epoch_count += 1
-            running = 0.0
-            for (x, y, idx) in loader:
-                x = x.to(device, non_blocking=True)
-                y = y.to(device, non_blocking=True)
-                idx = idx.long()
-
-                with torch.no_grad():
-                    t_probs = teacher_all[idx].to(device, non_blocking=True)
-                    t_probs, conf, mask = self._kd_target_postprocess_and_mask(t_probs)
-                if mask.sum() == 0:
+                if torch.isnan(loss) or torch.isinf(loss):
+                    print(f"NaN or Inf loss encountered at batch {batch_idx}: {loss}")
                     continue
 
-                opt.zero_grad()
-                logits = self.model(x)
-                s_logp = F.log_softmax(logits[mask] / Ts, dim=1)
-                t_p = F.softmax(torch.log(t_probs[mask] + eps) / Tt, dim=1)
-                kd_per = F.kl_div(s_logp, t_p, reduction='none').sum(dim=1)
-
-                # class prior * confidence
-                lbls = y[mask]
-                freq = torch.tensor(
-                    [self.get_global_label_distribution(lbl.item()) for lbl in lbls],
-                    dtype=torch.float32, device=device
-                ).clamp_min(1.0)
-                freq = freq / float(max(1, len(self.global_data)))
-                w = conf[mask] * freq
-
-                kd_loss = (kd_per * w).sum() / (w.sum() + eps)
-
-                # consistency
-                x_aug = add_noise(x)
-                with torch.no_grad():
-                    p = F.softmax(logits, dim=1)
-                    p2 = F.softmax(self.model(x_aug), dim=1)
-                cons = mse(p, p2)
-
-                loss = kd_loss + lam * cons
                 loss.backward()
-                torch.nn.utils.clip_grad_norm_(self.model.parameters(), 1.0)
-                opt.step()
-                running += loss.item()
+                torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
+                optimizer.step()
+                epoch_loss += loss.item()
 
-            print(f"Epoch [{epoch + 1}/{experiment_config.epochs_num_train_client}], Loss: {running / len(loader):.4f}")
-        return running / len(loader)
+            avg_loss = epoch_loss / len(server_loader)
+            print(f"Epoch [{epoch + 1}/{experiment_config.epochs_num_train_client}], Loss: {avg_loss:.4f}")
 
-    # ---------------- outer loop for one round ----------------
-    def iteration_context(self, t):
-        self.current_iteration = t
+        return avg_loss
 
-        # ----- ROUND 0: local warmup to make good pseudo-labels -----
-        if t == 0:
-            # fresh init for warmup
-            self.model = get_client_model(self.rnd_net)
-            self.model.apply(self.initialize_weights)
+    def train(self, mean_pseudo_labels):
 
-            # long local training for good PL (50 epochs)
-            self.fine_tune(num_of_epochs=50)
+        print(f"Mean pseudo-labels shape: {mean_pseudo_labels.shape}")  # Should be (num_data_points, num_classes)
 
-            # produce PL on GLOBAL data for the server to cluster on
-            self.pseudo_label_to_send = self.evaluate()
-            self.size_sent[t] = (self.pseudo_label_to_send.numel() *
-                                 self.pseudo_label_to_send.element_size()) / (1024 * 1024)
-            self.pseudo_label_L2[t] = self.get_pseudo_label_L2(self.pseudo_label_to_send)
+        print(f"*** {self.__str__()} train ***")
+        server_loader = DataLoader(self.global_data, batch_size=experiment_config.batch_size, shuffle=False,
+                                   num_workers=0,
+                                   drop_last=True)
+        # server_loader = DataLoader(self.global_data, batch_size=experiment_config.batch_size, shuffle=False,
+        #                           num_workers=0)
+        # print(1)
+        self.model.train()
+        criterion = nn.KLDivLoss(reduction='batchmean')
+        optimizer = torch.optim.Adam(self.model.parameters(), lr=experiment_config.learning_rate_train_c)
+        # optimizer = torch.optim.Adam(self.model.parameters(), lr=experiment_config.learning_rate_train_c,
+        #                             weight_decay=1e-4)
 
-            # (optional diagnostics)
-            _ = self.evaluate_accuracy_single(self.local_test_set, k=1)
-            _ = self.evaluate_accuracy_single(self.test_global_data, k=1)
-            return
+        pseudo_targets_all = mean_pseudo_labels.to(device)
 
-        # ----- ROUNDS t >= 1: reset once, then KD + short local FT -----
-        if t == 1:
-            # reset after bootstrap so FL stage starts “clean”
-            self.model = get_client_model(self.rnd_net)
-            self.model.apply(self.initialize_weights)
+        for epoch in range(experiment_config.epochs_num_train_client):
+            # print(2)
 
-        # 1) Knowledge distillation on GLOBAL data using server PL
-        if experiment_config.input_consistency == InputConsistency.withInputConsistency:
-            if experiment_config.weights_for_ps:
-                self.train_with_consistency_and_weights(self.pseudo_label_received)
-            else:
-                _ = self.train_with_consistency(self.pseudo_label_received)
-        else:
-            if experiment_config.weights_for_ps:
-                _ = self.train_with_weights(self.pseudo_label_received)
-            else:
-                _ = self.train(self.pseudo_label_received)
+            self.epoch_count += 1
+            epoch_loss = 0
 
-        # 2) Short local fine-tune on own labels (use default epochs)
-        _ = self.fine_tune()
+            for batch_idx, (inputs, _) in enumerate(server_loader):
+                # print(batch_idx)
 
-        # 3) Produce new PL for next server round (on GLOBAL data)
-        self.pseudo_label_to_send = self.evaluate()
-        self.size_sent[t] = (self.pseudo_label_to_send.numel() *
-                             self.pseudo_label_to_send.element_size()) / (1024 * 1024)
-        self.pseudo_label_L2[t] = self.get_pseudo_label_L2(self.pseudo_label_to_send)
+                inputs = inputs.to(device)
+                optimizer.zero_grad()
 
-        # 4) Track client accuracies for monitoring
-        self.accuracy_per_client_1[t] = self.evaluate_accuracy_single(self.local_test_set, k=1)
-        self.accuracy_per_client_5[t] = self.evaluate_accuracy(self.local_test_set, k=5)
-        self.accuracy_per_client_10[t] = self.evaluate_accuracy(self.local_test_set, k=10)
-        self.accuracy_per_client_100[t] = self.evaluate_accuracy(self.local_test_set, k=100)
+                outputs = self.model(inputs)
+                # Check for NaN or Inf in outputs
+
+                # Convert model outputs to log probabilities
+                outputs_prob = F.log_softmax(outputs, dim=1)
+                # Slice pseudo_targets to match the input batch size
+                start_idx = batch_idx * experiment_config.batch_size
+                end_idx = start_idx + inputs.size(0)
+                pseudo_targets = pseudo_targets_all[start_idx:end_idx].to(device)
+
+                # Check if pseudo_targets size matches the input batch size
+                if pseudo_targets.size(0) != inputs.size(0):
+                    print(
+                        f"Skipping batch {batch_idx}: Expected pseudo target size {inputs.size(0)}, got {pseudo_targets.size(0)}")
+                    continue  # Skip the rest of the loop for this batch
+
+                # Check for NaN or Inf in pseudo targets
+                if torch.isnan(pseudo_targets).any() or torch.isinf(pseudo_targets).any():
+                    print(f"NaN or Inf found in pseudo targets at batch {batch_idx}: {pseudo_targets}")
+                    continue
+
+                # Normalize pseudo targets to sum to 1
+                pseudo_targets = F.softmax(pseudo_targets, dim=1)
+
+                # Calculate the loss
+                loss = criterion(outputs_prob, pseudo_targets)
+
+                # Check if the loss is NaN or Inf
+                if torch.isnan(loss) or torch.isinf(loss):
+                    print(f"NaN or Inf loss encountered at batch {batch_idx}: {loss}")
+                    continue
+
+                loss.backward()
+
+                # Clip gradients
+                torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
+
+                optimizer.step()
+                epoch_loss += loss.item()
+
+            avg_loss = epoch_loss / len(server_loader)
+            print(f"Epoch [{epoch + 1}/{experiment_config.epochs_num_train_client}], Loss: {avg_loss:.4f}")
+
+        # self.weights =self.model.state_dict()
+        return avg_loss
 
     def __str__(self):
         return "Client " + str(self.id_)
 
+    def fine_tune(self, num_of_epochs =experiment_config.epochs_num_input_fine_tune_clients):
+        print("*** " + self.__str__() + " fine-tune ***")
+
+        # Load the weights into the model
+        # if self.weights is  None:
+        #    self.model.apply(self.initialize_weights)
+        # else:
+        #    self.model.load_state_dict(self.weights)
+
+        # Create a DataLoader for the local data
+        fine_tune_loader = DataLoader(self.local_data, batch_size=experiment_config.batch_size, shuffle=True)
+        self.model.train()  # Set the model to training mode
+
+        # Define loss function and optimizer
+
+        criterion = nn.CrossEntropyLoss()
+
+        optimizer = torch.optim.Adam(self.model.parameters(), lr=experiment_config.learning_rate_fine_tune_c)
+
+        epochs = num_of_epochs
+        for epoch in range(epochs):
+            self.epoch_count += 1
+            epoch_loss = 0
+            for inputs, targets in fine_tune_loader:
+                inputs, targets = inputs.to(device), targets.to(device)
+                optimizer.zero_grad()
+                outputs = self.model(inputs)
+
+                loss = criterion(outputs, targets)
+
+                # Backward pass and optimization
+                loss.backward()
+                optimizer.step()
+                epoch_loss += loss.item()
+
+            result_to_print = epoch_loss / len(fine_tune_loader)
+            print(f"Epoch [{epoch + 1}/{epochs}], Loss: {result_to_print:.4f}")
+        # self.weights = self.model.state_dict()self.weights = self.model.state_dict()
+
+        return result_to_print
+
+    def fine_tune_with_consistency(self):
+        print("*** " + self.__str__() + " fine-tune ***")
+
+        fine_tune_loader = DataLoader(self.local_data, batch_size=experiment_config.batch_size, shuffle=True)
+        self.model.train()
+
+        criterion_ce = nn.CrossEntropyLoss()
+        criterion_consistency = nn.MSELoss()
+        lambda_consistency = experiment_config.lambda_consistency  # You can tune this value
+
+        optimizer = torch.optim.Adam(self.model.parameters(), lr=experiment_config.learning_rate_fine_tune_c)
+
+        def add_noise(inputs, std=0.05):
+            noise = torch.randn_like(inputs) * std
+            return torch.clamp(inputs + noise, 0., 1.)
+
+        epochs = experiment_config.epochs_num_input_fine_tune_clients
+        for epoch in range(epochs):
+            self.epoch_count += 1
+            epoch_loss = 0
+
+            for inputs, targets in fine_tune_loader:
+                inputs, targets = inputs.to(device), targets.to(device)
+                optimizer.zero_grad()
+
+                outputs = self.model(inputs)
+                loss_ce = criterion_ce(outputs, targets)
+
+                # Input consistency regularization
+                inputs_aug = add_noise(inputs)
+                with torch.no_grad():
+                    outputs_aug = self.model(inputs_aug)
+                    probs = F.softmax(outputs, dim=1)
+                    probs_aug = F.softmax(outputs_aug, dim=1)
+
+                loss_consistency = criterion_consistency(probs, probs_aug)
+
+                # Total loss
+                loss = loss_ce + lambda_consistency * loss_consistency
+
+                loss.backward()
+                optimizer.step()
+                epoch_loss += loss.item()
+
+            result_to_print = epoch_loss / len(fine_tune_loader)
+            print(f"Epoch [{epoch + 1}/{epochs}], Loss: {result_to_print:.4f}")
+
+        return result_to_print
+
+    def print_grad_size(self):
+
+        # Measure total gradient size (L2 norm and memory in bytes)
+        total_grad_elements = 0
+        total_grad_bytes = 0
+        grad_norms = []
+
+        for param in self.model.parameters():
+            if param.grad is not None:
+                total_grad_elements += param.grad.numel()
+                total_grad_bytes += param.grad.numel() * param.grad.element_size()
+                grad_norms.append(param.grad.detach().norm(2))
+
+        if grad_norms:
+            total_l2_norm = torch.norm(torch.stack(grad_norms), 2).item()
+            print(f"Total gradient L2 norm: {total_l2_norm:.4f}")
+        print(f"Total gradient elements: {total_grad_elements}")
+        print(f"Total gradient size: {total_grad_bytes / 1024 / 1024:.4f} MB")
+        print()
+
+
 class Server(LearningEntity):
     def __init__(self, id_, global_data, test_data, clients_ids, clients_test_data_dict):
-        super().__init__(id_, global_data, test_data)
+        LearningEntity.__init__(self, id_, global_data, test_data)
+        # self.local_batch = experiment_config.local_batch
         self.pseudo_label_before_net_L2 = {}
         self.pseudo_label_after_net_L2 = {}
         self.num = (1000) * 17
@@ -957,11 +1134,11 @@ class Server(LearningEntity):
         self.clients_ids = clients_ids
         self.reset_clients_received_pl()
         self.clients_test_data_dict = clients_test_data_dict
-
+        # if experiment_config.server_learning_technique == ServerLearningTechnique.multi_head:
         self.accuracy_per_client_1_max = {}
+
         self.previous_centroids_dict = {}
         self.pseudo_label_to_send = {}
-
         if isinstance(experiment_config.num_clusters, int):
             num_clusters = experiment_config.num_clusters
         else:
@@ -982,6 +1159,7 @@ class Server(LearningEntity):
 
         if experiment_config.net_cluster_technique == NetClusterTechnique.multi_model:
             self.multi_model_dict = {}
+
             if num_clusters > 0:
                 for cluster_id in range(num_clusters):
                     self.multi_model_dict[cluster_id] = get_server_model()
@@ -1003,200 +1181,269 @@ class Server(LearningEntity):
             for cluster_id in range(num_clusters):
                 self.accuracy_server_test_1[cluster_id] = {}
                 self.accuracy_global_data_1[cluster_id] = {}
+        # self.accuracy_aggregated_head = {}
+        # self.accuracy_pl_measures[cluster_id] = {}
 
-    # ---------------- comms ----------------
+        # self.model = get_server_model()
+        # self.model.apply(self.initialize_weights)
+        # self.train_learning_rate = experiment_config.learning_rate_train_s
+        # self.train_epoches = experiment_config.epochs_num_train_server
+
+        # self.weights = None
+
     def receive_single_pseudo_label(self, sender, info):
         self.pseudo_label_received[sender] = info
 
-    # ---------------- aggregation helpers ----------------
+    def get_pseudo_label_list_after_models_train(self, mean_pseudo_labels_per_cluster):
+        pseudo_labels_for_model_per_cluster = {}
+        for cluster_id, mean_pseudo_label_for_cluster in mean_pseudo_labels_per_cluster.items():
+            model_ = self.model_per_cluster[cluster_id]
+            self.train(mean_pseudo_label_for_cluster, model_, str(cluster_id))
+            pseudo_labels_for_model = self.evaluate(model_)
+            pseudo_labels_for_model_per_cluster[cluster_id] = pseudo_labels_for_model
+        ans = list(pseudo_labels_for_model_per_cluster.values())
+        return ans
+
     def select_confident_pseudo_labels(self, cluster_pseudo_labels):
+        """
+        Select pseudo-labels from the cluster with the highest confidence for each data point.
+
+        Args:
+            cluster_pseudo_labels (list of torch.Tensor): List of tensors where each tensor contains pseudo-labels
+                                                          from a cluster with shape [num_data_points, num_classes].
+
+        Returns:
+            torch.Tensor: A tensor containing the selected pseudo-labels of shape [num_data_points, num_classes].
+        """
         num_clusters = len(cluster_pseudo_labels)
         num_data_points = cluster_pseudo_labels[0].size(0)
+
+        # Store the maximum confidence and the corresponding cluster index for each data point
         max_confidences = torch.zeros(num_data_points, device=cluster_pseudo_labels[0].device)
         selected_labels = torch.zeros_like(cluster_pseudo_labels[0])
-        for pseudo_labels in cluster_pseudo_labels:
+
+        for cluster_idx, pseudo_labels in enumerate(cluster_pseudo_labels):
+            # Compute the max confidence for the current cluster
             cluster_max_confidences, _ = torch.max(pseudo_labels, dim=1)
+
+            # Update selected labels where the current cluster has higher confidence
             mask = cluster_max_confidences > max_confidences
             max_confidences[mask] = cluster_max_confidences[mask]
             selected_labels[mask] = pseudo_labels[mask]
+
         return selected_labels
 
-    def _aggregate_pseudo_labels(self, pseudo_labels_list, mode="conf_weighted", alpha=2.0):
-        """
-        Aggregates a list of [N,C] tensors from clients into a single [N,C] tensor.
-        mode: "mean" | "max" | "conf_weighted"
-        """
-        assert len(pseudo_labels_list) > 0
-        stacked = torch.stack(pseudo_labels_list, dim=0)  # [K,N,C]
+    def create_feed_back_to_clients_multihead(self, mean_pseudo_labels_per_cluster, t):
+        for _ in range(experiment_config.num_rounds_multi_head):
+            for cluster_id, mean_pseudo_label_for_cluster in mean_pseudo_labels_per_cluster.items():
+                self.train(mean_pseudo_label_for_cluster, cluster_id)
+            if experiment_config.server_feedback_technique == ServerFeedbackTechnique.similar_to_cluster:
 
-        if mode == "mean":
-            return stacked.mean(dim=0)
-        if mode == "max":
-            return self.select_confident_pseudo_labels(pseudo_labels_list)
+                for cluster_id in mean_pseudo_labels_per_cluster.keys():
+                    pseudo_labels_for_cluster = self.evaluate_for_cluster(cluster_id)
+                    for client_id in self.clusters_client_id_dict_per_iter[t][cluster_id]:
+                        self.pseudo_label_to_send[client_id] = pseudo_labels_for_cluster
 
-        # confidence-weighted
-        with torch.no_grad():
-            conf = stacked.max(dim=2).values          # [K,N]
-            w = torch.softmax(alpha * conf, dim=0)    # per-sample weights over clients
-        return (w.unsqueeze(2) * stacked).sum(dim=0)
+        if experiment_config.server_feedback_technique == ServerFeedbackTechnique.similar_to_client:
+            pseudo_labels_for_cluster_list = []
+            for cluster_id, mean_pseudo_label_for_cluster in mean_pseudo_labels_per_cluster.items():
+                self.train(mean_pseudo_label_for_cluster, cluster_id)
+            for cluster_id in mean_pseudo_labels_per_cluster.keys():
+                pseudo_labels_for_cluster_list.append(self.evaluate_for_cluster(cluster_id))
 
-    def get_pseudo_labels_input_per_cluster(self, timestamp):
-        mean_per_cluster = {}
-        flag = False
-        clusters_client_id_dict = None
+            pseudo_labels_to_send = self.select_confident_pseudo_labels(pseudo_labels_for_cluster_list)
 
-        if experiment_config.num_clusters == "Optimal":
-            clusters_client_id_dict = experiment_config.known_clusters
-            flag = True
-        if experiment_config.num_clusters == 1:
-            clusters_client_id_dict = {0: self.clients_ids}
-            flag = True
+            for client_id in self.clients_ids:
+                self.pseudo_label_to_send[client_id] = pseudo_labels_to_send
 
-        if (experiment_config.cluster_technique == ClusterTechnique.greedy_elimination_cross_entropy
-            or experiment_config.cluster_technique == ClusterTechnique.greedy_elimination_L2) and not flag:
-            clusters_client_id_dict = self.greedy_elimination() if timestamp == 0 else self.clusters_client_id_dict_per_iter[0]
+    def create_feed_back_to_clients_multimodel(self, mean_pseudo_labels_per_cluster, t):
+        pl_per_cluster = {}
 
-        if experiment_config.cluster_technique == ClusterTechnique.kmeans and not flag:
-            clusters_client_id_dict = self.k_means_grouping()
+        for cluster_id, mean_pseudo_label_for_cluster in mean_pseudo_labels_per_cluster.items():
+            selected_model = self.multi_model_dict[cluster_id]
+            for _ in range(5):
 
-        if (experiment_config.cluster_technique == ClusterTechnique.manual_L2
-            or experiment_config.cluster_technique == ClusterTechnique.manual_cross_entropy) and not flag:
-            clusters_client_id_dict = self.manual_grouping()
+                if experiment_config.input_consistency == InputConsistency.withInputConsistency:
+                    self.train_with_consistency(mean_pseudo_label_for_cluster, 0, selected_model)
+                else:
+                    self.train(mean_pseudo_label_for_cluster, 0, selected_model)
 
-        if experiment_config.cluster_technique == ClusterTechnique.manual_single_iter and not flag:
-            clusters_client_id_dict = self.manual_grouping() if timestamp == 0 else self.clusters_client_id_dict_per_iter[0]
+                acc_global = self.evaluate_accuracy_single(self.test_global_data, model=selected_model, k=1,
+                                                           cluster_id=0)
 
-        cluster_mean_pseudo_labels_dict = self.get_cluster_mean_pseudo_labels_dict(clusters_client_id_dict)
+                acc_local = self.evaluate_accuracy_single(self.global_data, model=selected_model, k=1,
+                                                          cluster_id=0)
 
-        # aggregation
-        for cluster_id, pseudo_labels in cluster_mean_pseudo_labels_dict.items():
-            pseudo_labels_list = list(pseudo_labels)
+                if experiment_config.data_set_selected == DataSet.CIFAR100:
+                    if acc_global != 1 and acc_local != 1:
+                        break
+                    else:
+                        selected_model.apply(self.initialize_weights)
+                if experiment_config.data_set_selected == DataSet.CIFAR10 or experiment_config.data_set_selected == DataSet.SVHN:
+                    if acc_global != 10 and acc_local != 10:
+                        break
+                    else:
+                        selected_model.apply(self.initialize_weights)
+                if experiment_config.data_set_selected == DataSet.TinyImageNet:
+                    if acc_global != 0.5 and acc_local != 0.5:
+                        break
+                    else:
+                        selected_model.apply(self.initialize_weights)
 
-            agg_cfg = getattr(experiment_config, "server_input_tech", "conf_weighted")
-            alpha = getattr(experiment_config, "server_conf_alpha", 2.0)
+                if experiment_config.data_set_selected == DataSet.EMNIST_balanced:
+                    if acc_global > 2.14 and acc_local > 2.14:
+                        break
+                    else:
+                        selected_model.apply(self.initialize_weights)
 
-            if agg_cfg == ServerInputTech.mean:
-                mp = torch.stack(pseudo_labels_list).mean(dim=0)
-            elif agg_cfg == ServerInputTech.max:
-                mp = self.select_confident_pseudo_labels(pseudo_labels_list)
+            print("hihi")
+            if experiment_config.server_feedback_technique == ServerFeedbackTechnique.similar_to_cluster:
+                pseudo_labels_for_cluster = self.evaluate_for_cluster(0, selected_model)
+                pl_per_cluster[cluster_id] = pseudo_labels_for_cluster
+                for client_id in self.clusters_client_id_dict_per_iter[t][cluster_id]:
+                    self.pseudo_label_to_send[client_id] = pseudo_labels_for_cluster
+        if experiment_config.server_feedback_technique == ServerFeedbackTechnique.similar_to_client:
+            pseudo_labels_for_cluster_list = []
+            for cluster_id, mean_pseudo_label_for_cluster in mean_pseudo_labels_per_cluster.items():
+                pl_per_cluster[cluster_id] = mean_pseudo_label_for_cluster
+
+                selected_model = self.multi_model_dict[cluster_id]
+                self.train(mean_pseudo_label_for_cluster, 0, selected_model)
+                pl = self.evaluate_for_cluster(0, selected_model)
+
+                pseudo_labels_for_cluster_list.append(pl)
+
+            pseudo_labels_to_send = self.select_confident_pseudo_labels(pseudo_labels_for_cluster_list)
+
+            for client_id in self.clients_ids:
+                self.pseudo_label_to_send[client_id] = pseudo_labels_to_send
+
+        return pl_per_cluster
+
+    def evaluate_results(self, t):
+
+        if isinstance(experiment_config.num_clusters, int):
+            num_clusters = experiment_config.num_clusters
+        else:
+            num_clusters = experiment_config.number_of_optimal_clusters
+        models_list = list(self.multi_model_dict.values())
+        self.accuracy_global_data_1[t] = self.evaluate_max_accuracy_per_point(models=models_list,
+                                                                              data_=self.global_data, k=1,
+                                                                              cluster_id=None)
+        for cluster_id in range(num_clusters):
+            if experiment_config.net_cluster_technique == NetClusterTechnique.multi_model:
+                selected_model = self.multi_model_dict[cluster_id]
+            if experiment_config.net_cluster_technique == NetClusterTechnique.multi_head:
+                selected_model = None
+            if experiment_config.net_cluster_technique == NetClusterTechnique.multi_model:
+                cluster_id_to_examine = 0
             else:
-                mp = self._aggregate_pseudo_labels(pseudo_labels_list, mode="conf_weighted", alpha=alpha)
+                cluster_id_to_examine = cluster_id
+            self.accuracy_server_test_1[cluster_id][t] = self.evaluate_accuracy_single(self.test_global_data,
+                                                                                       model=selected_model, k=1,
+                                                                                       cluster_id=cluster_id_to_examine)
 
-            eps = 1e-8
-            mp = mp.clamp(min=eps, max=1 - eps)
-            mp = mp / mp.sum(dim=1, keepdim=True)
-            mean_per_cluster[cluster_id] = mp
+            # self.accuracy_global_data_1[cluster_id][t] = self.evaluate_accuracy(self.global_data,
+            #                                                                    model=selected_model, k=1,
+            #                                                                    cluster_id=cluster_id_to_examine)
 
-        return mean_per_cluster, clusters_client_id_dict
+        for client_id in self.clients_ids:
+            test_data_per_clients = self.clients_test_data_dict[client_id]
+            cluster_id_for_client = self.get_cluster_of_client(client_id, t)
+            if experiment_config.net_cluster_technique == NetClusterTechnique.multi_model:
+                print("cluster_id_for_client", cluster_id_for_client)
+                print("len(self.multi_model_dict)", len(self.multi_model_dict))
 
-    # ---------------- evaluate teacher head ----------------
-    def evaluate_for_cluster(self, cluster_id, model=None):
-        if model is None:
-            model = self.model
-        print(f"*** Evaluating Cluster {cluster_id} Head ***")
-        model.eval()
+                selected_model = self.multi_model_dict[cluster_id_for_client]
+                cluster_id_for_client = 0
 
-        global_data_loader = DataLoader(self.global_data, batch_size=experiment_config.batch_size, shuffle=False)
+            if experiment_config.net_cluster_technique == NetClusterTechnique.multi_head:
+                selected_model = None
+            print("client_id", client_id, "accuracy_per_client_1")
+            self.accuracy_per_client_1[client_id][t] = self.evaluate_accuracy_single(test_data_per_clients,
+                                                                                     model=selected_model, k=1,
+                                                                                     cluster_id=cluster_id_for_client)
+            # print("client_id",client_id,"accuracy_per_client_5")
+            # self.accuracy_per_client_5[client_id][t] = self.evaluate_accuracy(test_data_per_clients,
+            #                                                                 model=selected_model, k=5,
+            #                                                                 cluster_id=cluster_id_for_client)
+            l1 = []
+            l2 = []
+            l3 = []
+            l4 = []
 
-        cluster_probs = []
-        Tteach = getattr(experiment_config, "teacher_out_temperature", 2.0)
+            for cluster_id in range(num_clusters):
+                if experiment_config.net_cluster_technique == NetClusterTechnique.multi_model:
+                    l1.append(self.evaluate_accuracy_single(self.clients_test_data_dict[client_id],
+                                                            model=self.multi_model_dict[cluster_id], k=1,
+                                                            cluster_id=0))
+                    l2.append(self.evaluate_accuracy(self.clients_test_data_dict[client_id],
+                                                     model=self.multi_model_dict[cluster_id], k=10,
+                                                     cluster_id=0))
+                    l3.append(self.evaluate_accuracy(self.clients_test_data_dict[client_id],
+                                                     model=self.multi_model_dict[cluster_id], k=100,
+                                                     cluster_id=0))
+                    l4.append(self.evaluate_accuracy(self.clients_test_data_dict[client_id],
+                                                     model=self.multi_model_dict[cluster_id], k=5,
+                                                     cluster_id=0))
 
-        with torch.no_grad():
-            for inputs, _ in global_data_loader:
-                inputs = inputs.to(device)
-                if experiment_config.net_cluster_technique == NetClusterTechnique.multi_head:
-                    outputs = model(inputs, cluster_id=cluster_id)
-                else:  # multi_model
-                    outputs = model(inputs, cluster_id=0)
-                probs = F.softmax(outputs / Tteach, dim=1)  # softened teacher
-                cluster_probs.append(probs.cpu())
+                else:
+                    l1.append(self.evaluate_accuracy(self.clients_test_data_dict[client_id], model=selected_model, k=1,
+                                                     cluster_id=cluster_id))
 
-        cluster_probs = torch.cat(cluster_probs, dim=0)
+            print("client_id", client_id, "accuracy_per_client_1_max", max(l1))
 
-        with torch.no_grad():
-            ent = -(cluster_probs * (cluster_probs.clamp_min(1e-8).log())).sum(dim=1).mean().item()
-            print(f"[server] cluster {cluster_id} mean entropy={ent:.3f} (T={Tteach})")
+            self.accuracy_per_client_1_max[client_id][t] = max(l1)
+            self.accuracy_per_client_10_max[client_id][t] = max(l2)
+            self.accuracy_per_client_100_max[client_id][t] = max(l3)
 
-        return cluster_probs
+            self.accuracy_per_client_5_max[client_id][t] = max(l4)
 
-    # ---------------- server training (KD on global data) ----------------
-    def train(self, mean_pseudo_labels, cluster_num="0", selected_model=None):
-        print(f"Mean pseudo-labels shape: {mean_pseudo_labels.shape}")
-        print(f"*** {self.__str__()} train *** Cluster: {cluster_num} ***")
+    def iteration_context(self, t):
+        self.current_iteration = t
+        pseudo_labels_per_cluster, self.clusters_client_id_dict_per_iter[t] = self.get_pseudo_labels_input_per_cluster(
+            t)  # #
+        self.pseudo_label_before_net_L2[t] = {}
+        if t > 0:
+            for cluster_id, pl in pseudo_labels_per_cluster.items():
+                self.pseudo_label_before_net_L2[t][cluster_id] = self.get_pseudo_label_L2(pl)
 
-        server_loader = DataLoader(self.global_data, batch_size=experiment_config.batch_size,
-                                   shuffle=False, num_workers=0, drop_last=True)
-        selected_model_train = self.model if selected_model is None else selected_model
-        selected_model_train.train()
+            if experiment_config.net_cluster_technique == NetClusterTechnique.multi_head:
+                self.create_feed_back_to_clients_multihead(pseudo_labels_per_cluster, t)
+            if experiment_config.net_cluster_technique == NetClusterTechnique.multi_model:
+                pseudo_labels_for_cluster = self.create_feed_back_to_clients_multimodel(pseudo_labels_per_cluster, t)
 
-        criterion = nn.KLDivLoss(reduction='batchmean')
-        wd = getattr(experiment_config, "server_weight_decay", 1e-4)
-        lr = getattr(experiment_config, "learning_rate_train_s", experiment_config.learning_rate_train_s)
-        optimizer = torch.optim.AdamW(selected_model_train.parameters(), lr=lr, weight_decay=wd)
+            self.pseudo_label_after_net_L2[t] = {}
 
-        pseudo_targets_all = mean_pseudo_labels.to(device)
-        printed_once = False
 
-        for epoch in range(experiment_config.epochs_num_train_server):
-            self.epoch_count += 1
-            epoch_loss = 0.0
 
-            for batch_idx, (inputs, _) in enumerate(server_loader):
-                inputs = inputs.to(device)
-                optimizer.zero_grad()
 
-                outputs = selected_model_train(inputs, cluster_id=cluster_num)
-                outputs_prob = F.log_softmax(outputs, dim=1)
+            self.pseudo_label_after_net_L2[t] = 0  # np.mean(min_errors)
+            # print("PL after net",self.pseudo_label_after_net_L2[t])
+            # Return mean L2 error over all data points
+            # return np.mean(min_errors)
 
-                start_idx = batch_idx * experiment_config.batch_size
-                end_idx = start_idx + inputs.size(0)
-                pseudo_targets = pseudo_targets_all[start_idx:end_idx].to(device)
-
-                if pseudo_targets.size(0) != inputs.size(0):
-                    print(f"Skipping batch {batch_idx}: Expected {inputs.size(0)}, got {pseudo_targets.size(0)}")
-                    continue
-
-                eps = 1e-8
-                pseudo_targets = pseudo_targets.clamp(min=eps, max=1 - eps)
-                pseudo_targets = pseudo_targets / pseudo_targets.sum(dim=1, keepdim=True)
-
-                if not printed_once:
-                    conf = pseudo_targets.max(dim=1).values.mean().item()
-                    ent = -(pseudo_targets * pseudo_targets.clamp_min(1e-8).log()).sum(1).mean().item()
-                    print(f"[server] KD targets: mean_conf={conf:.3f}, entropy={ent:.3f}")
-                    printed_once = True
-
-                loss = criterion(outputs_prob, pseudo_targets)
-
-                if torch.isnan(loss) or torch.isinf(loss):
-                    print(f"NaN/Inf loss encountered at batch {batch_idx}: {loss}")
-                    continue
-
-                loss.backward()
-                torch.nn.utils.clip_grad_norm_(selected_model_train.parameters(), max_norm=1.0)
-                optimizer.step()
-                epoch_loss += loss.item()
-
-            avg_loss = epoch_loss / len(server_loader)
-            print(f"Epoch [{epoch + 1}/{experiment_config.epochs_num_train_server}], Loss: {avg_loss:.4f}")
-
-        return avg_loss
+            self.evaluate_results(t)
+        self.reset_clients_received_pl()
 
     def train_with_consistency(self, mean_pseudo_labels, cluster_num="0", selected_model=None):
-        print(f"Mean pseudo-labels shape: {mean_pseudo_labels.shape}")
-        print(f"*** {self.__str__()} train (consistency) *** Cluster: {cluster_num} ***")
+        print(f"Mean pseudo-labels shape: {mean_pseudo_labels.shape}")  # Should be (num_data_points, num_classes)
+        print(f"*** {self.__str__()} train *** Cluster: {cluster_num} ***")
 
-        server_loader = DataLoader(self.global_data, batch_size=experiment_config.batch_size,
-                                   shuffle=False, num_workers=0, drop_last=True)
+        server_loader = DataLoader(self.global_data, batch_size=experiment_config.batch_size, shuffle=False,
+                                   num_workers=0, drop_last=True)
 
-        selected_model_train = self.model if selected_model is None else selected_model
+        if selected_model is None:
+            selected_model_train = self.model
+        else:
+            selected_model_train = selected_model
+
         selected_model_train.train()
         criterion_kl = nn.KLDivLoss(reduction='batchmean')
         criterion_consistency = nn.MSELoss()
-        lambda_consistency = getattr(experiment_config, "lambda_consistency", 0.0)
+        lambda_consistency = experiment_config.lambda_consistency  # You can tune this hyperparameter
 
-        lr = getattr(experiment_config, "learning_rate_train_s", experiment_config.learning_rate_train_s)
-        optimizer = torch.optim.Adam(selected_model_train.parameters(), lr=lr)
+        optimizer = torch.optim.Adam(selected_model_train.parameters(), lr=experiment_config.learning_rate_train_s)
         pseudo_targets_all = mean_pseudo_labels.to(device)
 
         def add_noise(inputs, std=0.05):
@@ -1205,29 +1452,31 @@ class Server(LearningEntity):
 
         for epoch in range(experiment_config.epochs_num_train_server):
             self.epoch_count += 1
-            epoch_loss = 0.0
+            epoch_loss = 0
 
             for batch_idx, (inputs, _) in enumerate(server_loader):
                 inputs = inputs.to(device)
                 optimizer.zero_grad()
 
+                # Original model output
                 outputs = selected_model_train(inputs, cluster_id=cluster_num)
                 outputs_prob = F.log_softmax(outputs, dim=1)
 
+                # Slice pseudo-targets
                 start_idx = batch_idx * experiment_config.batch_size
                 end_idx = start_idx + inputs.size(0)
                 pseudo_targets = pseudo_targets_all[start_idx:end_idx].to(device)
 
                 if pseudo_targets.size(0) != inputs.size(0):
-                    print(f"Skipping batch {batch_idx}: Expected {inputs.size(0)}, got {pseudo_targets.size(0)}")
+                    print(
+                        f"Skipping batch {batch_idx}: Expected pseudo target size {inputs.size(0)}, got {pseudo_targets.size(0)}")
                     continue
 
-                eps = 1e-8
-                pseudo_targets = pseudo_targets.clamp(min=eps, max=1 - eps)
-                pseudo_targets = pseudo_targets / pseudo_targets.sum(dim=1, keepdim=True)
+                pseudo_targets = F.softmax(pseudo_targets, dim=1)
 
                 loss_kl = criterion_kl(outputs_prob, pseudo_targets)
 
+                # Input consistency regularization
                 inputs_aug = add_noise(inputs)
                 with torch.no_grad():
                     outputs_aug = selected_model_train(inputs_aug, cluster_id=cluster_num)
@@ -1235,10 +1484,12 @@ class Server(LearningEntity):
                     probs_aug = F.softmax(outputs_aug, dim=1)
 
                 loss_consistency = criterion_consistency(probs, probs_aug)
+
+                # Combine losses
                 loss = loss_kl + lambda_consistency * loss_consistency
 
                 if torch.isnan(loss) or torch.isinf(loss):
-                    print(f"NaN/Inf loss encountered at batch {batch_idx}: {loss}")
+                    print(f"NaN or Inf loss encountered at batch {batch_idx}: {loss}")
                     continue
 
                 loss.backward()
@@ -1251,197 +1502,134 @@ class Server(LearningEntity):
 
         return avg_loss
 
-    # ---------------- evaluation/metrics over rounds ----------------
-    def evaluate_results(self, t):
-        if isinstance(experiment_config.num_clusters, int):
-            num_clusters = experiment_config.num_clusters
+    def train(self, mean_pseudo_labels, cluster_num="0", selected_model=None):
+
+        print(f"Mean pseudo-labels shape: {mean_pseudo_labels.shape}")  # Should be (num_data_points, num_classes)
+
+        print(f"*** {self.__str__()} train *** Cluster: {cluster_num} ***")
+
+        # experiment_config.batch_size
+        # self.local_batch = 32
+        server_loader = DataLoader(self.global_data, batch_size=experiment_config.batch_size, shuffle=False,
+                                   num_workers=0, drop_last=True)
+
+        if selected_model is None:
+            selected_model_train = self.model
         else:
-            num_clusters = experiment_config.number_of_optimal_clusters
+            selected_model_train = selected_model
 
-        models_list = list(self.multi_model_dict.values()) if hasattr(self, "multi_model_dict") else []
-        if models_list:
-            self.accuracy_global_data_1[t] = self.evaluate_max_accuracy_per_point(
-                models=models_list, data_=self.global_data, k=1, cluster_id=None
-            )
+        selected_model_train.train()
+        criterion = nn.KLDivLoss(reduction='batchmean')
+        optimizer = torch.optim.Adam(selected_model_train.parameters(), lr=experiment_config.learning_rate_train_s)
+        pseudo_targets_all = mean_pseudo_labels.to(device)
 
-        for cluster_id in range(num_clusters):
-            if experiment_config.net_cluster_technique == NetClusterTechnique.multi_model:
-                selected_model = self.multi_model_dict[cluster_id]
-                cluster_id_to_examine = 0
-            else:
-                selected_model = None
-                cluster_id_to_examine = cluster_id
+        for epoch in range(experiment_config.epochs_num_train_server):
+            self.epoch_count += 1
+            epoch_loss = 0
 
-            self.accuracy_server_test_1[cluster_id][t] = self.evaluate_accuracy_single(
-                self.test_global_data, model=selected_model, k=1, cluster_id=cluster_id_to_examine
-            )
+            for batch_idx, (inputs, _) in enumerate(server_loader):
+                inputs = inputs.to(device)
+                optimizer.zero_grad()
 
-        for client_id in self.clients_ids:
-            test_data_per_clients = self.clients_test_data_dict[client_id]
-            cluster_id_for_client = self.get_cluster_of_client(client_id, t)
+                # Pass `cluster_id` to the model
+                outputs = selected_model_train(inputs, cluster_id=cluster_num)
 
-            if experiment_config.net_cluster_technique == NetClusterTechnique.multi_model:
-                selected_model = self.multi_model_dict[cluster_id_for_client]
-                cid_eval = 0
-            else:
-                selected_model = None
-                cid_eval = cluster_id_for_client
+                # Convert model outputs to log probabilities
+                outputs_prob = F.log_softmax(outputs, dim=1)
 
-            print("client_id", client_id, "accuracy_per_client_1")
-            self.accuracy_per_client_1[client_id][t] = self.evaluate_accuracy_single(
-                test_data_per_clients, model=selected_model, k=1, cluster_id=cid_eval
-            )
+                # Slice pseudo_targets to match the input batch size
+                start_idx = batch_idx * experiment_config.batch_size
+                end_idx = start_idx + inputs.size(0)
+                pseudo_targets = pseudo_targets_all[start_idx:end_idx].to(device)
 
-            l1, l2, l3, l4 = [], [], [], []
-            for cluster_id in range(num_clusters):
-                if experiment_config.net_cluster_technique == NetClusterTechnique.multi_model:
-                    l1.append(self.evaluate_accuracy_single(self.clients_test_data_dict[client_id],
-                                                            model=self.multi_model_dict[cluster_id], k=1, cluster_id=0))
-                    l2.append(self.evaluate_accuracy(self.clients_test_data_dict[client_id],
-                                                     model=self.multi_model_dict[cluster_id], k=10, cluster_id=0))
-                    l3.append(self.evaluate_accuracy(self.clients_test_data_dict[client_id],
-                                                     model=self.multi_model_dict[cluster_id], k=100, cluster_id=0))
-                    l4.append(self.evaluate_accuracy(self.clients_test_data_dict[client_id],
-                                                     model=self.multi_model_dict[cluster_id], k=5, cluster_id=0))
-                else:
-                    l1.append(self.evaluate_accuracy(self.clients_test_data_dict[client_id],
-                                                     model=selected_model, k=1, cluster_id=cluster_id))
+                # Check if pseudo_targets size matches the input batch size
+                if pseudo_targets.size(0) != inputs.size(0):
+                    print(
+                        f"Skipping batch {batch_idx}: Expected pseudo target size {inputs.size(0)}, got {pseudo_targets.size(0)}"
+                    )
+                    continue
 
-            print("client_id", client_id, "accuracy_per_client_1_max", max(l1))
-            self.accuracy_per_client_1_max[client_id][t] = max(l1)
-            self.accuracy_per_client_10_max[client_id][t] = max(l2) if l2 else 0.0
-            self.accuracy_per_client_100_max[client_id][t] = max(l3) if l3 else 0.0
-            self.accuracy_per_client_5_max[client_id][t] = max(l4) if l4 else 0.0
+                # Normalize pseudo targets to sum to 1
+                pseudo_targets = F.softmax(pseudo_targets, dim=1)
 
-    # ---------------- round loop on server ----------------
-    def iteration_context(self, t):
-        self.current_iteration = t
+                # Calculate the loss
+                loss = criterion(outputs_prob, pseudo_targets)
 
-        # Collect client PLs and build per-cluster inputs
-        mean_pl_per_cluster, clusters = self.get_pseudo_labels_input_per_cluster(t)
-        self.clusters_client_id_dict_per_iter[t] = clusters
+                # Skip batch if the loss is NaN or Inf
+                if torch.isnan(loss) or torch.isinf(loss):
+                    print(f"NaN or Inf loss encountered at batch {batch_idx}: {loss}")
+                    continue
 
-        # Optional: reset server weights once after the bootstrap
-        if t == 1:
-            if experiment_config.net_cluster_technique == NetClusterTechnique.multi_head:
-                self.model.apply(self.initialize_weights)
-            else:  # multi_model
-                for cid in range(len(clusters)):
-                    if cid not in self.multi_model_dict:
-                        self.multi_model_dict[cid] = get_server_model()
-                    self.multi_model_dict[cid].apply(self.initialize_weights)
+                loss.backward()
 
-        # Train server on aggregated PLs and prepare feedback
-        if experiment_config.net_cluster_technique == NetClusterTechnique.multi_head:
-            self.create_feed_back_to_clients_multihead(mean_pl_per_cluster, t)
-        else:
-            _ = self.create_feed_back_to_clients_multimodel(mean_pl_per_cluster, t)
+                # Clip gradients
+                torch.nn.utils.clip_grad_norm_(selected_model_train.parameters(), max_norm=1.0)
 
-        # Evaluate and record metrics
-        self.evaluate_results(t)
+                optimizer.step()
+                epoch_loss += loss.item()
 
-        # Ready for next round
-        self.reset_clients_received_pl()
+            avg_loss = epoch_loss / len(server_loader)
+            print(f"Epoch [{epoch + 1}/{experiment_config.epochs_num_train_server}], Loss: {avg_loss:.4f}")
 
-    # ---------------- feedback paths ----------------
-    def create_feed_back_to_clients_multihead(self, mean_pseudo_labels_per_cluster, t):
-        for _ in range(experiment_config.num_rounds_multi_head):
-            for cluster_id, mean_pl in mean_pseudo_labels_per_cluster.items():
-                self.train(mean_pl, cluster_id)
+        return avg_loss
 
-            if experiment_config.server_feedback_technique == ServerFeedbackTechnique.similar_to_cluster:
-                for cluster_id in mean_pseudo_labels_per_cluster.keys():
-                    pseudo_labels_for_cluster = self.evaluate_for_cluster(cluster_id)
-                    for client_id in self.clusters_client_id_dict_per_iter[t][cluster_id]:
-                        self.pseudo_label_to_send[client_id] = pseudo_labels_for_cluster
-
-        if experiment_config.server_feedback_technique == ServerFeedbackTechnique.similar_to_client:
-            pseudo_labels_for_cluster_list = []
-            for cluster_id, mean_pl in mean_pseudo_labels_per_cluster.items():
-                self.train(mean_pl, cluster_id)
-            for cluster_id in mean_pseudo_labels_per_cluster.keys():
-                pseudo_labels_for_cluster_list.append(self.evaluate_for_cluster(cluster_id))
-
-            pseudo_labels_to_send = self.select_confident_pseudo_labels(pseudo_labels_for_cluster_list)
-            for client_id in self.clients_ids:
-                self.pseudo_label_to_send[client_id] = pseudo_labels_to_send
-
-    def create_feed_back_to_clients_multimodel(self, mean_pseudo_labels_per_cluster, t):
-        pl_per_cluster = {}
-        for cluster_id, mean_pl in mean_pseudo_labels_per_cluster.items():
-            selected_model = self.multi_model_dict[cluster_id]
-            for _ in range(5):
-                if experiment_config.input_consistency == InputConsistency.withInputConsistency:
-                    self.train_with_consistency(mean_pl, 0, selected_model)
-                else:
-                    self.train(mean_pl, 0, selected_model)
-
-                acc_global = self.evaluate_accuracy_single(self.test_global_data, model=selected_model, k=1, cluster_id=0)
-                acc_local = self.evaluate_accuracy_single(self.global_data, model=selected_model, k=1, cluster_id=0)
-
-                # your existing dataset-specific restart logic
-                if experiment_config.data_set_selected == DataSet.CIFAR100:
-                    if acc_global != 1 and acc_local != 1: break
-                    selected_model.apply(self.initialize_weights)
-                if experiment_config.data_set_selected in (DataSet.CIFAR10, DataSet.SVHN):
-                    if acc_global != 10 and acc_local != 10: break
-                    selected_model.apply(self.initialize_weights)
-                if experiment_config.data_set_selected == DataSet.TinyImageNet:
-                    if acc_global != 0.5 and acc_local != 0.5: break
-                    selected_model.apply(self.initialize_weights)
-                if experiment_config.data_set_selected == DataSet.EMNIST_balanced:
-                    if acc_global > 2.14 and acc_local > 2.14: break
-                    selected_model.apply(self.initialize_weights)
-
-            print("hihi")
-            if experiment_config.server_feedback_technique == ServerFeedbackTechnique.similar_to_cluster:
-                pseudo_labels_for_cluster = self.evaluate_for_cluster(0, selected_model)
-                pl_per_cluster[cluster_id] = pseudo_labels_for_cluster
-                for client_id in self.clusters_client_id_dict_per_iter[t][cluster_id]:
-                    self.pseudo_label_to_send[client_id] = pseudo_labels_for_cluster
-
-        if experiment_config.server_feedback_technique == ServerFeedbackTechnique.similar_to_client:
-            pseudo_labels_for_cluster_list = []
-            for cluster_id, mean_pl in mean_pseudo_labels_per_cluster.items():
-                pl_per_cluster[cluster_id] = mean_pl
-                selected_model = self.multi_model_dict[cluster_id]
-                self.train(mean_pl, 0, selected_model)
-                pl = self.evaluate_for_cluster(0, selected_model)
-                pseudo_labels_for_cluster_list.append(pl)
-
-            pseudo_labels_to_send = self.select_confident_pseudo_labels(pseudo_labels_for_cluster_list)
-            for client_id in self.clients_ids:
-                self.pseudo_label_to_send[client_id] = pseudo_labels_to_send
-
-        return pl_per_cluster
-
-    # ---------------- clustering & utilities (unchanged) ----------------
     def reset_clients_received_pl(self):
         for id_ in self.clients_ids:
             self.pseudo_label_received[id_] = None
 
     def k_means_grouping(self):
+        """
+        Groups agents into k clusters based on the similarity of their pseudo-labels,
+        with memory of cluster centroids from the previous iteration.
+
+        Args:
+            k (int): Number of clusters for k-means.
+
+        Returns:
+            dict: A dictionary where keys are cluster indices (0 to k-1) and values are lists of client IDs in that cluster.
+        """
         k = experiment_config.num_clusters
         client_data = self.pseudo_label_received
+
+        # Extract client IDs and pseudo-labels
         client_ids = list(client_data.keys())
-        pseudo_labels = [client_data[cid].flatten().numpy() for cid in client_ids]
+        pseudo_labels = [client_data[client_id].flatten().numpy() for client_id in client_ids]
+
+        # Stack pseudo-labels into a matrix for clustering
         data_matrix = np.vstack(pseudo_labels)
 
+        # Prepare initial centroids based on previous clusters if available
+
         if not self.centroids_are_empty():
+            # Convert previous centroids from a dictionary to a 2D array for KMeans init
+            # Assuming `self.previous_centroids` is a dictionary with cluster indices as keys and centroids as values.
+            # We need to extract the centroids as a list of numpy arrays and ensure it has shape (k, n_features).
             previous_centroids_array = np.array(list(self.previous_centroids_dict.values()))
+
+            # Check if the number of centroids matches k
             if previous_centroids_array.shape[0] != k:
-                raise ValueError(f"Previous centroids count does not match k={k}.")
+                raise ValueError(f"Previous centroids count does not match the number of clusters (k={k}).")
+
+            # Initialize k-means with the previous centroids
             kmeans = KMeans(n_clusters=k, init=previous_centroids_array, n_init=1, random_state=42)
         else:
+            # Default initialization
             kmeans = KMeans(n_clusters=k, random_state=42)
 
+        # Perform clustering
         kmeans.fit(data_matrix)
-        self.previous_centroids_dict = {i: c for i, c in enumerate(kmeans.cluster_centers_)}
 
+        # Update centroids for the next iteration
+        self.previous_centroids_dict = {i: centroid for i, centroid in enumerate(kmeans.cluster_centers_)}
+
+        # Assign clients to clusters
         cluster_assignments = kmeans.predict(data_matrix)
         clusters = {i: [] for i in range(k)}
+
+        # Assign client IDs to their respective clusters
         for client_id, cluster in zip(client_ids, cluster_assignments):
             clusters[cluster].append(client_id)
+
         return clusters
 
     def get_cluster_mean_pseudo_labels_dict(self, clusters_client_id_dict):
@@ -1455,20 +1643,31 @@ class Server(LearningEntity):
     def calc_L2(self, pair):
         first_pl = self.pseudo_label_received[pair[0]]
         second_pl = self.pseudo_label_received[pair[1]]
+
         return Server.calc_L2_given_pls(first_pl, second_pl)
+
+    # def get_L2_of_all_clients(self):
+
+    # Example list of client IDs
+    # pairs = list(combinations(self.clients_ids, 2))
+    # ans_dict = {}
+    # for pair in pairs:
+    #    ans_dict[pair] = self.calc_L2(pair).item()
+    # return ans_dict
 
     @staticmethod
     def calc_L2_given_pls(pl1, pl2):
-        difference = pl1 - pl2
-        squared_difference = difference ** 2
-        sum_squared = torch.sum(squared_difference)
-        return torch.sqrt(sum_squared).item()
+        difference = pl1 - pl2  # Element-wise difference
+        squared_difference = difference ** 2  # Square the differences
+        sum_squared = torch.sum(squared_difference)  # Sum of squared differences
+        return torch.sqrt(sum_squared).item()  # Take the square root
 
     def initiate_clusters_centers_dict(self, L2_of_all_clients):
         max_pair = max(L2_of_all_clients.items(), key=lambda item: item[1])
         max_pair_keys = max_pair[0]
-        return {max_pair_keys[0]: self.pseudo_label_received[max_pair_keys[0]],
-                max_pair_keys[1]: self.pseudo_label_received[max_pair_keys[1]]}
+        clusters_centers_dict = {max_pair_keys[0]: self.pseudo_label_received[max_pair_keys[0]],
+                                 max_pair_keys[1]: self.pseudo_label_received[max_pair_keys[1]]}
+        return clusters_centers_dict
 
     def update_distance_of_all_clients(self, L2_of_all_clients, clusters_centers_dict):
         L2_temp = {}
@@ -1476,20 +1675,32 @@ class Server(LearningEntity):
             id1, id2 = pair
             if (id1 in clusters_centers_dict) ^ (id2 in clusters_centers_dict):
                 L2_temp[pair] = L2_of_all_clients[pair]
+            # if id1 in clusters_centers_dict:
+            #    if id2 not in clusters_centers_dict:
+            #        L2_temp[pair] = L2_of_all_clients[pair]
+            # if id2 in clusters_centers_dict:
+            #    if id1 not in clusters_centers_dict:
+            #        L2_temp[pair] = L2_of_all_clients[pair]
+
         return L2_temp
 
     def get_l2_of_non_centers(self, L2_of_all_clients, clusters_centers_dict):
         all_vals = {}
         for pair, l2 in L2_of_all_clients.items():
             if pair[0] in clusters_centers_dict:
-                which = pair[1]
+                which_of_the_two = pair[1]
             elif pair[1] in clusters_centers_dict:
-                which = pair[0]
-            if which not in all_vals:
-                all_vals[which] = []
-            all_vals[which].append(l2)
-        sum_of_vals = {k: sum(v) for k, v in all_vals.items()}
-        return max(sum_of_vals, key=sum_of_vals.get)
+                which_of_the_two = pair[0]
+            if which_of_the_two not in all_vals:
+                all_vals[which_of_the_two] = []
+            all_vals[which_of_the_two].append(l2)
+
+        sum_of_vals = {}
+        for k, v in all_vals.items():
+            sum_of_vals[k] = sum(v)
+        max_key = max(sum_of_vals, key=sum_of_vals.get)
+
+        return max_key
 
     def complete_clusters_centers_and_L2_of_all_clients(self, clusters_centers_dict):
         if isinstance(experiment_config.num_clusters, str):
@@ -1499,11 +1710,11 @@ class Server(LearningEntity):
 
         while cluster_counter > 0:
             distance_of_all_clients = self.get_distance_dict()
-            distance_of_all_clients = self.update_distance_of_all_clients(distance_of_all_clients, clusters_centers_dict)
+            distance_of_all_clients = self.update_distance_of_all_clients(distance_of_all_clients,
+                                                                          clusters_centers_dict)
             new_center = self.get_l2_of_non_centers(distance_of_all_clients, clusters_centers_dict)
             clusters_centers_dict[new_center] = self.pseudo_label_received[new_center]
-            cluster_counter -= 1
-
+            cluster_counter = cluster_counter - 1
         distance_of_all_clients = self.get_distance_dict()
         distance_of_all_clients = self.update_distance_of_all_clients(distance_of_all_clients, clusters_centers_dict)
         return distance_of_all_clients, clusters_centers_dict
@@ -1512,9 +1723,11 @@ class Server(LearningEntity):
         ans = {}
         for pair, l2 in L2_from_center_clients.items():
             if pair[0] in clusters_centers_dict:
-                not_center, center = pair[1], pair[0]
+                not_center = pair[1]
+                center = pair[0]
             elif pair[1] in clusters_centers_dict:
-                not_center, center = pair[0], pair[1]
+                not_center = pair[0]
+                center = pair[1]
             if not_center not in ans:
                 ans[not_center] = {}
             ans[not_center][center] = l2
@@ -1522,19 +1735,27 @@ class Server(LearningEntity):
 
     def get_non_center_to_which_center_dict(self, l2_of_non_center_to_center):
         one_to_one_dict = {}
-        for ncenter, dct in l2_of_non_center_to_center.items():
-            one_to_one_dict[ncenter] = min(dct, key=dct.get)
-        inv = {}
-        for k, v in one_to_one_dict.items():
-            inv.setdefault(v, []).append(k)
-        return inv
+        for none_center, dict_ in l2_of_non_center_to_center.items():
+            one_to_one_dict[none_center] = min(dict_, key=dict_.get)
+
+        dict_ = one_to_one_dict
+        ans = {}
+        for key, value in dict_.items():
+            # Add the key to the list of the corresponding value in new_dict
+            if value not in ans:
+                ans[value] = []  # Initialize a list for the value if not present
+            ans[value].append(key)
+
+        return ans
 
     def prep_clusters(self, input_):
         ans = {}
         counter = 0
         for k, list_of_other in input_.items():
-            ans[counter] = [k] + list(list_of_other)
-            counter += 1
+            ans[counter] = [k]
+            for other_ in list_of_other:
+                ans[counter].append(other_)
+            counter = counter + 1
         return ans
 
     def get_clusters_centers_dict(self):
@@ -1543,36 +1764,183 @@ class Server(LearningEntity):
         L2_from_center_clients, clusters_centers_dict = self.complete_clusters_centers_and_L2_of_all_clients(
             clusters_centers_dict)
         L2_of_non_centers = self.get_l2_of_non_center_to_center(L2_from_center_clients, clusters_centers_dict)
+
         non_center_to_which_center_dict = self.get_non_center_to_which_center_dict(L2_of_non_centers)
         ans = self.prep_clusters(non_center_to_which_center_dict)
         centers_to_add = self.get_centers_to_add(clusters_centers_dict, ans)
+        temp_ans = {}
         if len(centers_to_add) > 0:
-            start = max(ans.keys()) + 1 if len(ans) > 0 else 0
-            for i, center in enumerate(centers_to_add):
-                ans[start + i] = [center]
+            for cluster_id in range(max(ans.keys()) + 1, max(ans.keys()) + 1 + len(centers_to_add)):
+                index = cluster_id - (max(ans.keys()) + 1)
+                temp_ans[cluster_id] = centers_to_add[index]
+        for k, v in temp_ans.items():
+            ans[k] = [v]
+
         return ans
 
     def get_centers_to_add(self, clusters_centers_dict, ans):
         centers_to_add = []
         for center_id in clusters_centers_dict.keys():
-            if self.center_id_not_in_ans(ans, center_id) is not None:
-                centers_to_add.append(center_id)
+            center_to_add = self.center_id_not_in_ans(ans, center_id)
+            if center_to_add is not None:
+                centers_to_add.append(center_to_add)
         return centers_to_add
 
     def center_id_not_in_ans(self, ans, center_id):
-        for lst in ans.values():
-            if center_id in lst:
-                return None
+        for list_of_id in ans.values():
+            if center_id in list_of_id:
+                return
         return center_id
 
     def manual_grouping(self):
+        clusters_client_id_dict = {}
         if isinstance(experiment_config.num_clusters, int):
             num_clusters = experiment_config.num_clusters
         else:
             num_clusters = experiment_config.number_of_optimal_clusters
+
         if num_clusters == 1:
-            return {0: self.clients_ids}
-        return self.get_clusters_centers_dict()
+            clusters_client_id_dict[0] = self.clients_ids
+        else:
+            clusters_client_id_dict = self.get_clusters_centers_dict()
+        return clusters_client_id_dict
+
+    def get_pseudo_labels_input_per_cluster(self, timestamp):
+        # Stack the pseudo labels tensors into a single tensor
+        mean_per_cluster = {}
+
+        flag = False
+        clusters_client_id_dict = None
+        if experiment_config.num_clusters == "Optimal":
+            clusters_client_id_dict = experiment_config.known_clusters
+            flag = True
+        if experiment_config.num_clusters == 1:
+            clusters_client_id_dict = {0: self.clients_ids}
+            # clusters_client_id_dict = experiment_config.known_clusters
+            flag = True
+
+        if (
+                experiment_config.cluster_technique == ClusterTechnique.greedy_elimination_cross_entropy or experiment_config.cluster_technique == ClusterTechnique.greedy_elimination_L2) and not flag:
+            if timestamp == 0:
+                clusters_client_id_dict = self.greedy_elimination()
+            else:
+                clusters_client_id_dict = self.clusters_client_id_dict_per_iter[0]
+
+        if experiment_config.cluster_technique == ClusterTechnique.kmeans and not flag:
+            clusters_client_id_dict = self.k_means_grouping()
+
+        if (
+                experiment_config.cluster_technique == ClusterTechnique.manual_L2 or experiment_config.cluster_technique == ClusterTechnique.manual_cross_entropy) and not flag:
+            clusters_client_id_dict = self.manual_grouping()
+
+        if experiment_config.cluster_technique == ClusterTechnique.manual_single_iter and not flag:
+            if timestamp == 0:
+                clusters_client_id_dict = self.manual_grouping()
+            else:
+                clusters_client_id_dict = self.clusters_client_id_dict_per_iter[0]
+
+        cluster_mean_pseudo_labels_dict = self.get_cluster_mean_pseudo_labels_dict(clusters_client_id_dict)
+
+        # if experiment_config.num_clusters>1:
+        for cluster_id, pseudo_labels in cluster_mean_pseudo_labels_dict.items():
+            pseudo_labels_list = list(pseudo_labels)
+            if experiment_config.server_input_tech == ServerInputTech.mean:
+                stacked_labels = torch.stack(pseudo_labels_list)
+                # Average the pseudo labels across clients
+                average_pseudo_labels = torch.mean(stacked_labels, dim=0)
+                mean_per_cluster[cluster_id] = average_pseudo_labels
+            if experiment_config.server_input_tech == ServerInputTech.max:
+                mean_per_cluster[cluster_id] = self.select_confident_pseudo_labels(pseudo_labels_list)
+        return mean_per_cluster, clusters_client_id_dict
+
+    def evaluate_for_cluster(self, cluster_id, model=None):
+        """
+        Evaluate the model using the specified cluster head on the validation data.
+
+        Args:
+            cluster_id (int): The ID of the cluster head to evaluate.
+            model (nn.Module, optional): The model to evaluate. Defaults to `self.model`.
+
+        Returns:
+            torch.Tensor: The concatenated probabilities for the specified cluster head.
+        """
+        if model is None:
+            model = self.model
+
+        print(f"*** Evaluating Cluster {cluster_id} Head ***")
+        model.eval()  # Set the model to evaluation mode
+
+        # Use the global validation data for the evaluation
+        # experiment_config.batch_size
+        global_data_loader = DataLoader(self.global_data, batch_size=experiment_config.batch_size, shuffle=False)
+
+        # List to store the probabilities for this cluster
+        cluster_probs = []
+
+        with torch.no_grad():  # Disable gradient computation
+            for inputs, _ in global_data_loader:
+                inputs = inputs.to(device)
+
+                # Evaluate the model using the specified cluster head
+                if experiment_config.net_cluster_technique == NetClusterTechnique.multi_head:
+                    outputs = model(inputs, cluster_id=cluster_id)
+                if experiment_config.net_cluster_technique == NetClusterTechnique.multi_model:
+                    outputs = model(inputs, cluster_id=0)
+
+                # Apply softmax to get class probabilities
+                probs = F.softmax(outputs, dim=1)
+
+                # Store probabilities for this cluster head
+                cluster_probs.append(probs.cpu())
+
+        # Concatenate all probabilities into a single tensor
+        cluster_probs = torch.cat(cluster_probs, dim=0)
+
+        return cluster_probs
+
+    def __str__(self):
+        return "server"
+
+    def centroids_are_empty(self):
+        for prev_cent in self.previous_centroids_dict.values():
+            if prev_cent is None:
+                return True
+        else:
+            return False
+
+    def get_cluster_of_client(self, client_id, t):
+        if experiment_config.cluster_technique == ClusterTechnique.manual_single_iter:
+            for cluster_id, clients_id_list in self.clusters_client_id_dict_per_iter[0].items():
+                if client_id in clients_id_list:
+                    return cluster_id
+        else:
+            for cluster_id, clients_id_list in self.clusters_client_id_dict_per_iter[t].items():
+                if client_id in clients_id_list:
+                    return cluster_id
+            print()
+
+    def init_models_measures(self):
+        num_clusters = experiment_config.num_clusters
+        for cluster_id in range(num_clusters):
+            self.previous_centroids_dict[cluster_id] = None
+            self.accuracy_server_test_1[cluster_id] = {}
+            self.accuracy_global_data_1[cluster_id] = {}
+            self.multi_model_dict[cluster_id] = get_server_model()
+            self.multi_model_dict[cluster_id].apply(self.initialize_weights)
+
+    def get_distance_per_client(self, distance_dict):
+        ans = {}
+        for pair, dist in distance_dict.items():
+            first_id = pair[0]
+            second_id = pair[1]
+            if first_id not in ans:
+                ans[first_id] = {}
+            if second_id not in ans:
+                ans[second_id] = {}
+            ans[first_id][second_id] = dist
+            ans[second_id][first_id] = dist
+
+        return ans
 
     def greedy_elimination(self):
         distance_dict = self.get_distance_dict()
@@ -1582,14 +1950,16 @@ class Server(LearningEntity):
         experiment_config.num_clusters = len(clusters_client_id_dict)
         self.init_models_measures()
         return clusters_client_id_dict
+        # experiment_config.num_clusters, clusters_client_id_dict = self.greedy_elimination_t_larger(epsilon_=None,
+        #                                                                                           k=experiment_config.num_clusters)
 
     def get_distance_dict(self):
         pairs = list(combinations(self.clients_ids, 2))
         distance_dict = {}
         for pair in pairs:
-            if experiment_config.cluster_technique in (ClusterTechnique.greedy_elimination_L2, ClusterTechnique.manual_L2):
+            if experiment_config.cluster_technique == ClusterTechnique.greedy_elimination_L2 or experiment_config.cluster_technique == ClusterTechnique.manual_L2:
                 distance_dict[pair] = self.calc_L2(pair)
-            else:
+            if experiment_config.cluster_technique == ClusterTechnique.greedy_elimination_cross_entropy or experiment_config.cluster_technique == ClusterTechnique.manual_cross_entropy:
                 distance_dict[pair] = self.calc_cross_entropy(pair)
         return distance_dict
 
@@ -1621,44 +1991,68 @@ class Server(LearningEntity):
             if amount_clusters <= experiment_config.number_of_optimal_clusters + experiment_config.cluster_addition:
                 break
             else:
-                epsilon_ += 0.1
+                epsilon_ = epsilon_ + 0.1
         with open("results.txt", "a") as f:
             f.write(
                 f"BETA for {experiment_config.cluster_addition} "
-                f"for seed {experiment_config.seed_num} is {epsilon_}\n"
+                f"for seed {experiment_config.seed_num} "
+                f"is {epsilon_}\n"
             )
         return epsilon_
 
+        # clusters_client_id_dict = experiment_config.known_clusters
+        # pseudo_labels_in_cluster = self.get_pseudo_label_in_cluster(clusters_client_id_dict)
+
+        # center_of_cluster = {}
+        # for cluster_id,list_of_pseudo_labels in pseudo_labels_in_cluster.items():
+        #    center_of_cluster[cluster_id] = torch.stack(list_of_pseudo_labels).mean(dim=0)
+
+        # if experiment_config.cluster_technique == ClusterTechnique.greedy_elimination_cross_entropy:
+        #    distance_dict = self.compute_distances(center_of_cluster,Server.calc_cross_entropy_given_pl)
+        # else:
+        #    distance_dict = self.compute_distances(center_of_cluster, Server.calc_L2_given_pls)
+
+        # min_distance = min(distance_dict.values())
+        # return min_distance*experiment_config.epsilon#(4.2/5)
+
     def compute_distances(self, id_label_dict, distance_function):
+        """
+        Given a dictionary of {id: pseudo_label}, compute the pairwise distances.
+
+        Args:
+        id_label_dict (dict): Dictionary where keys are IDs and values are pseudo labels.
+        distance_function (function): Function that computes distance between two pseudo labels.
+
+        Returns:
+        dict: Dictionary where keys are (id1, id2) tuples and values are distances.
+        """
         distance_dict = {}
         ids = list(id_label_dict.keys())
+
         for i in range(len(ids)):
             for j in range(i + 1, len(ids)):
                 id1, id2 = ids[i], ids[j]
                 distance = distance_function(id_label_dict[id1], id_label_dict[id2])
                 distance_dict[(id1, id2)] = distance
-        return distance_dict
 
-    def get_distance_per_client(self, distance_dict):
-        ans = {}
-        for pair, dist in distance_dict.items():
-            a, b = pair
-            ans.setdefault(a, {})[b] = dist
-            ans.setdefault(b, {})[a] = dist
-        return ans
+        return distance_dict
 
     def filter_far_clients(self, distance_per_client, epsilon):
         for client, distance_dict in distance_per_client.items():
-            far_clients = [other for other, d in distance_dict.items() if d > epsilon]
+            far_clients = []
+            for other_client, distance in distance_dict.items():
+                if distance > epsilon:
+                    far_clients.append(other_client)
             for other_client in far_clients:
                 del distance_dict[other_client]
 
     def greedy_elimination_t0(self, epsilon_, distance_per_client):
-        self.filter_far_clients(distance_per_client, epsilon_)
+        self.filter_far_clients(distance_per_client, epsilon_)  # what is the distance between 10 and 11
         clusters_client_id_dict = {}
         counter = -1
         while len(distance_per_client) > 0:
-            counter += 1
+            counter = counter + 1
+
             max_client = max(distance_per_client, key=lambda k: len(distance_per_client[k]))
             others_to_remove = list(distance_per_client[max_client].keys())
             lst = copy.deepcopy(others_to_remove)
@@ -1670,36 +2064,6 @@ class Server(LearningEntity):
                         del other_in_distance_per_client[other]
                 del distance_per_client[other]
         return clusters_client_id_dict
-
-    def __str__(self):
-        return "server"
-
-    def centroids_are_empty(self):
-        for prev_cent in self.previous_centroids_dict.values():
-            if prev_cent is None:
-                return True
-        else:
-            return False
-
-    def get_cluster_of_client(self, client_id, t):
-        if experiment_config.cluster_technique == ClusterTechnique.manual_single_iter:
-            for cluster_id, clients_id_list in self.clusters_client_id_dict_per_iter[0].items():
-                if client_id in clients_id_list:
-                    return cluster_id
-        else:
-            for cluster_id, clients_id_list in self.clusters_client_id_dict_per_iter[t].items():
-                if client_id in clients_id_list:
-                    return cluster_id
-
-    def init_models_measures(self):
-        num_clusters = experiment_config.num_clusters
-        for cluster_id in range(num_clusters):
-            self.previous_centroids_dict[cluster_id] = None
-            self.accuracy_server_test_1[cluster_id] = {}
-            self.accuracy_global_data_1[cluster_id] = {}
-            self.multi_model_dict[cluster_id] = get_server_model()
-            self.multi_model_dict[cluster_id].apply(self.initialize_weights)
-
 class Client_pFedCK(Client):
     def __init__(self, id_, client_data, global_data, global_test_data, local_test_data):
         super().__init__(id_, client_data, global_data, global_test_data, local_test_data)

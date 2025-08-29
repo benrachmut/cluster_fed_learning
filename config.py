@@ -195,7 +195,7 @@ class ExperimentConfig:
 
         # general vars
         self.local_batch = 64
-        self.batch_size = 32#32
+        self.batch_size = 128#32
         self.percent_train_data_use = 1
         self.percent_test_relative_to_train = 1
         self.num_rounds_multi_head = 1
@@ -244,6 +244,12 @@ class ExperimentConfig:
 
 
     def update_net_type(self,net_type):
+        # Common defaults (Adam). Optionally scale by batch size vs 128.
+        scale = (self.batch_size / 128.0) if hasattr(self, "batch_size") else 1.0
+        LR_FT = 1e-3 * scale  # local CE fine-tune (higher)
+        LR_KD_C = 3e-4 * scale  # client KD / KD+consistency
+        LR_KD_S = 1e-4 * scale  # server KD / KD+consistency (lower than client)
+
         if  net_type == NetsType.C_alex or net_type==NetsType.S_alex or net_type==NetsType.S_vgg:
             self.client_net_type = NetType.ALEXNET
             self.server_net_type = NetType.ALEXNET
@@ -256,53 +262,45 @@ class ExperimentConfig:
 
             self.learning_rate_fine_tune_c = 0.001
             self.learning_rate_train_s = 0.001
+        scale = (self.batch_size / 128.0) if hasattr(self, "batch_size") else 1.0
+        LR_FT = 1e-3 * scale  # 5e-4
+        LR_KD_C = 3e-4 * scale  # 1.5e-4
+        LR_KD_S = 1e-4 * scale  # 5e-5
+
         if net_type == NetsType.C_alex_S_alex:
-            self.learning_rate_train_c = 5e-4  # or 1e-3 if stable
-            self.learning_rate_fine_tune_c = 2e-5  # 20–50x smaller than KD
-
-            self.learning_rate_train_s = 2e-4  # slightly higher so server actually moves
             self.client_net_type = NetType.ALEXNET
             self.server_net_type = NetType.ALEXNET
+            self.learning_rate_fine_tune_c = LR_FT
+            self.learning_rate_train_c = LR_KD_C
+            self.learning_rate_train_s = LR_KD_S
 
-        if net_type == NetsType.C_rnd_S_vgg:
+        elif net_type == NetsType.C_rnd_S_vgg:
             self.client_net_type = NetType.rnd_net
             self.server_net_type = NetType.VGG
-        if net_type == NetsType.C_MobileNet_S_vgg:
+            self.learning_rate_fine_tune_c = LR_FT
+            self.learning_rate_train_c = LR_KD_C
+            self.learning_rate_train_s = LR_KD_S
+
+        elif net_type == NetsType.C_MobileNet_S_vgg:
             self.client_net_type = NetType.MobileNetV2
             self.server_net_type = NetType.VGG
-            self.learning_rate_train_c = 0.0001
-            self.learning_rate_fine_tune_c = 0.0001
-            self.learning_rate_train_s = 0.0001
+            self.learning_rate_fine_tune_c = LR_FT
+            self.learning_rate_train_c = LR_KD_C
+            self.learning_rate_train_s = LR_KD_S
 
-        if net_type == NetsType.C_MobileNet_S_alex:
+        elif net_type == NetsType.C_MobileNet_S_alex:
             self.client_net_type = NetType.MobileNetV2
             self.server_net_type = NetType.ALEXNET
-            self.learning_rate_train_c = 0.0001
-            self.learning_rate_fine_tune_c = 0.0001
-            self.learning_rate_train_s = 0.0001
+            self.learning_rate_fine_tune_c = LR_FT
+            self.learning_rate_train_c = LR_KD_C
+            self.learning_rate_train_s = LR_KD_S
 
-        if net_type == NetsType.C_alex_S_vgg or net_type == NetsType.S_vgg :
+        elif net_type in (NetsType.C_alex_S_vgg, NetsType.S_vgg):
             self.client_net_type = NetType.ALEXNET
             self.server_net_type = NetType.VGG
-            self.learning_rate_train_c = 5e-4  # or 1e-3 if stable
-            self.learning_rate_fine_tune_c = 2e-5  # 20–50x smaller than KD
-
-            self.learning_rate_train_s = 2e-4  # slightly higher so server actually moves
-
-        if  net_type ==NetsType.C_alex_S_DenseNet:
-            self.client_net_type = NetType.ALEXNET
-            self.server_net_type = NetType.DenseNetServer
-            self.learning_rate_train_c = 0.0001
-            self.learning_rate_fine_tune_c = 0.001
-            self.learning_rate_train_s = 0.0001
-
-        if net_type == NetsType.C_rnd_S_vgg:
-            self.client_net_type = NetType.rnd_net
-            self.server_net_type = NetType.VGG
-            self.learning_rate_train_c = 0.0001
-            self.learning_rate_fine_tune_c = 0.001
-            self.learning_rate_train_s = 0.0001
-
+            self.learning_rate_fine_tune_c = LR_FT
+            self.learning_rate_train_c = LR_KD_C
+            self.learning_rate_train_s = LR_KD_S
 
 
 
