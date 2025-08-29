@@ -79,6 +79,7 @@ class AlexNet(nn.Module):
         return {f"head_{i}": head(x) for i, head in self.heads.items()}
 
 
+
 # Define VGG16 for server
 class VGGServer(nn.Module):
     def __init__(self, num_classes, num_clusters=1):
