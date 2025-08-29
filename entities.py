@@ -594,8 +594,10 @@ class Client(LearningEntity):
     def iteration_context(self, t):
         self.current_iteration = t
 
-        # KD against server PLs if t>0
-        if t > 0:
+        has_server_pl = isinstance(self.pseudo_label_received, torch.Tensor)
+
+        # ---- KD only after the server has produced feedback (round >= 2) ----
+        if t > 1 and has_server_pl:
             if experiment_config.input_consistency == InputConsistency.withInputConsistency:
                 if experiment_config.weights_for_ps:
                     _ = self.train_with_consistency_and_weights(self.pseudo_label_received)
@@ -607,23 +609,24 @@ class Client(LearningEntity):
                 else:
                     _ = self.train(self.pseudo_label_received)
 
-        # Local supervised fine-tune (once per round)
+        # ---- Always do local fine-tune each round ----
         if t == 0:
             self.fine_tune(50)
         else:
+            # (keep your reinit-at-t==1 behavior if you want)
+            # if t == 1: self.model.apply(self.initialize_weights)
             self.fine_tune()
 
-        # Send pseudo-labels
+        # send PLs to server
         self.pseudo_label_to_send = self.evaluate()
         pl = self.pseudo_label_to_send
         self.size_sent[t] = (pl.numel() * pl.element_size()) / (1024 * 1024)
         self.pseudo_label_L2[t] = self.get_pseudo_label_L2(pl)
 
-        # Local metrics
-        self.accuracy_per_client_1[t]   = self.evaluate_accuracy_single(self.local_test_set, k=1)
-        self.accuracy_per_client_10[t]  = self.evaluate_accuracy(self.local_test_set, k=10)
+        self.accuracy_per_client_1[t] = self.evaluate_accuracy_single(self.local_test_set, k=1)
+        self.accuracy_per_client_10[t] = self.evaluate_accuracy(self.local_test_set, k=10)
         self.accuracy_per_client_100[t] = self.evaluate_accuracy(self.local_test_set, k=100)
-        self.accuracy_per_client_5[t]   = self.evaluate_accuracy(self.local_test_set, k=5)
+        self.accuracy_per_client_5[t] = self.evaluate_accuracy(self.local_test_set, k=5)
         print("hi")
 
     def train_with_weights(self, mean_pseudo_labels):
