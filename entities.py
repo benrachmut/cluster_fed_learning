@@ -919,7 +919,7 @@ class Client(LearningEntity):
         # 1) Knowledge distillation on GLOBAL data using server PL
         if experiment_config.input_consistency == InputConsistency.withInputConsistency:
             if experiment_config.weights_for_ps:
-                self.set_pseudo_labels(self.pseudo_label_received)
+                self.train_with_consistency_and_weights(self.pseudo_label_received)
             else:
                 _ = self.train_with_consistency(self.pseudo_label_received)
         else:
