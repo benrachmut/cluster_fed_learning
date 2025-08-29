@@ -244,7 +244,7 @@ class ExperimentConfig:
 
 
     def update_net_type(self,net_type):
-        if net_type == NetsType.C_alex_S_alex or net_type == NetsType.C_alex or net_type==NetsType.S_alex or net_type==NetsType.S_vgg:
+        if  net_type == NetsType.C_alex or net_type==NetsType.S_alex or net_type==NetsType.S_vgg:
             self.client_net_type = NetType.ALEXNET
             self.server_net_type = NetType.ALEXNET
             if self.algorithm_selection == AlgorithmSelected.COMET:
@@ -256,6 +256,13 @@ class ExperimentConfig:
 
             self.learning_rate_fine_tune_c = 0.001
             self.learning_rate_train_s = 0.001
+        if net_type == NetsType.C_alex_S_alex:
+            self.learning_rate_train_c = 5e-4  # or 1e-3 if stable
+            self.learning_rate_fine_tune_c = 2e-5  # 20–50x smaller than KD
+
+            self.learning_rate_train_s = 2e-4  # slightly higher so server actually moves
+            self.client_net_type = NetType.ALEXNET
+            self.server_net_type = NetType.ALEXNET
 
         if net_type == NetsType.C_rnd_S_vgg:
             self.client_net_type = NetType.rnd_net
@@ -264,22 +271,24 @@ class ExperimentConfig:
             self.client_net_type = NetType.MobileNetV2
             self.server_net_type = NetType.VGG
             self.learning_rate_train_c = 0.0001
-            self.learning_rate_fine_tune_c = 0.001
+            self.learning_rate_fine_tune_c = 0.0001
             self.learning_rate_train_s = 0.0001
 
         if net_type == NetsType.C_MobileNet_S_alex:
             self.client_net_type = NetType.MobileNetV2
             self.server_net_type = NetType.ALEXNET
             self.learning_rate_train_c = 0.0001
-            self.learning_rate_fine_tune_c = 0.001
+            self.learning_rate_fine_tune_c = 0.0001
             self.learning_rate_train_s = 0.0001
 
         if net_type == NetsType.C_alex_S_vgg or net_type == NetsType.S_vgg :
             self.client_net_type = NetType.ALEXNET
             self.server_net_type = NetType.VGG
-            self.learning_rate_train_c = 0.0001
-            self.learning_rate_fine_tune_c = 0.001
-            self.learning_rate_train_s = 0.0001
+            self.learning_rate_train_c = 5e-4  # or 1e-3 if stable
+            self.learning_rate_fine_tune_c = 2e-5  # 20–50x smaller than KD
+
+            self.learning_rate_train_s = 2e-4  # slightly higher so server actually moves
+
         if  net_type ==NetsType.C_alex_S_DenseNet:
             self.client_net_type = NetType.ALEXNET
             self.server_net_type = NetType.DenseNetServer
