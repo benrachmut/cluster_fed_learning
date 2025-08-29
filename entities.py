@@ -614,7 +614,7 @@ class Client(LearningEntity):
             self.fine_tune(50)
         else:
             # (keep your reinit-at-t==1 behavior if you want)
-            # if t == 1: self.model.apply(self.initialize_weights)
+            if t == 1: self.model.apply(self.initialize_weights)
             self.fine_tune()
 
         # send PLs to server
@@ -765,28 +765,47 @@ class Server(LearningEntity):
             for client_id in self.clients_ids:
                 self.pseudo_label_to_send[client_id] = merged
 
+    # --- in Server.create_feed_back_to_clients_multimodel ---
     def create_feed_back_to_clients_multimodel(self, mean_pseudo_labels_per_cluster, t):
-        pl_per_cluster = {}
-        for cluster_id, pl in mean_pseudo_labels_per_cluster.items():
-            model = self.multi_model_dict[cluster_id]
-            if experiment_config.input_consistency == InputConsistency.withInputConsistency:
-                self.train_with_consistency(pl, 0, model)
-            else:
-                self.train(pl, 0, model)
+        if not isinstance(self.pseudo_label_to_send, dict):
+            self.pseudo_label_to_send = {}
 
+        pl_per_cluster = {}
+
+        for cluster_id, mean_pl in mean_pseudo_labels_per_cluster.items():
+            selected_model = self.multi_model_dict[cluster_id]
+
+            for _ in range(5):
+                if experiment_config.input_consistency == InputConsistency.withInputConsistency:
+                    self.train_with_consistency(mean_pl, 0, selected_model)
+                else:
+                    self.train(mean_pl, 0, selected_model)
+
+                acc_global = self.evaluate_accuracy_single(self.test_global_data, model=selected_model, k=1,
+                                                           cluster_id=0)
+                acc_local = self.evaluate_accuracy_single(self.global_data, model=selected_model, k=1, cluster_id=0)
+
+                # your existing break/reinit logic ...
+
+            # Feedback
             if experiment_config.server_feedback_technique == ServerFeedbackTechnique.similar_to_cluster:
-                cluster_pl = self.evaluate_for_cluster(0, model)
+                cluster_pl = self.evaluate_for_cluster(0, selected_model)
                 pl_per_cluster[cluster_id] = cluster_pl
+
+                # assign per-client
                 for client_id in self.clusters_client_id_dict_per_iter[t][cluster_id]:
                     self.pseudo_label_to_send[client_id] = cluster_pl
 
         if experiment_config.server_feedback_technique == ServerFeedbackTechnique.similar_to_client:
-            lst = []
-            for cluster_id, pl in mean_pseudo_labels_per_cluster.items():
-                model = self.multi_model_dict[cluster_id]
-                self.train(pl, 0, model)
-                lst.append(self.evaluate_for_cluster(0, model))
-            merged = self.select_confident_pseudo_labels(lst)
+            cluster_pl_list = []
+            for cluster_id, mean_pl in mean_pseudo_labels_per_cluster.items():
+                selected_model = self.multi_model_dict[cluster_id]
+                self.train(mean_pl, 0, selected_model)
+                pl = self.evaluate_for_cluster(0, selected_model)
+                pl_per_cluster[cluster_id] = pl
+                cluster_pl_list.append(pl)
+
+            merged = self.select_confident_pseudo_labels(cluster_pl_list)
             for client_id in self.clients_ids:
                 self.pseudo_label_to_send[client_id] = merged
 
@@ -851,18 +870,24 @@ class Server(LearningEntity):
             if l4: self.accuracy_per_client_5_max[client_id][t]   = max(l4)
 
     # ---------- round orchestration ----------
+    # --- in Server.iteration_context ---
     def iteration_context(self, t):
         self.current_iteration = t
-        mean_pl_per_cluster, self.clusters_client_id_dict_per_iter[t] = self.get_pseudo_labels_input_per_cluster(t)
-        self.pseudo_label_before_net_L2[t] = {}
 
+        # Reset server outbox every round
+        self.pseudo_label_to_send = {}  # ensures dict
+
+        mean_pl_per_cluster, self.clusters_client_id_dict_per_iter[t] = \
+            self.get_pseudo_labels_input_per_cluster(t)
+
+        self.pseudo_label_before_net_L2[t] = {}
         if t > 0:
             for cid, pl in mean_pl_per_cluster.items():
                 self.pseudo_label_before_net_L2[t][cid] = self.get_pseudo_label_L2(pl)
 
             if experiment_config.net_cluster_technique == NetClusterTechnique.multi_head:
                 self.create_feed_back_to_clients_multihead(mean_pl_per_cluster, t)
-            if experiment_config.net_cluster_technique == NetClusterTechnique.multi_model:
+            elif experiment_config.net_cluster_technique == NetClusterTechnique.multi_model:
                 _ = self.create_feed_back_to_clients_multimodel(mean_pl_per_cluster, t)
 
             self.pseudo_label_after_net_L2[t] = 0
