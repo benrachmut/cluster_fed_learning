@@ -556,6 +556,37 @@ class Client(LearningEntity):
             label_counts[label.item() if hasattr(label, 'item') else int(label)] += 1
         return dict(label_counts)
 
+    # inside class Client(LearningEntity):
+    def fine_tune(self, num_of_epochs=None):
+        print(f"*** {self.__str__()} fine-tune ***")
+        if num_of_epochs is None:
+            num_of_epochs = experiment_config.epochs_num_input_fine_tune_clients
+
+        loader = DataLoader(self.local_data,
+                            batch_size=experiment_config.batch_size,
+                            shuffle=True)
+        self.model.train()
+        criterion = nn.CrossEntropyLoss()
+        optimizer = torch.optim.Adam(self.model.parameters(),
+                                     lr=experiment_config.learning_rate_fine_tune_c)
+
+        epoch_loss = 0.0
+        for epoch in range(num_of_epochs):
+            self.epoch_count += 1
+            running = 0.0
+            for inputs, targets in loader:
+                inputs, targets = inputs.to(device), targets.to(device)
+                optimizer.zero_grad()
+                outputs = self.model(inputs)
+                loss = criterion(outputs, targets)
+                loss.backward()
+                optimizer.step()
+                running += loss.item()
+            epoch_loss = running / len(loader)
+            print(f"Epoch [{epoch + 1}/{num_of_epochs}], Loss: {epoch_loss:.4f}")
+        return epoch_loss
+
+
     def get_global_label_distribution(self, k):
         return self.global_label_distribution.get(k, 0)
 
