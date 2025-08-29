@@ -23,6 +23,18 @@ import torch.nn as nn
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
+# ---------- utilities ----------
+class WithIndex(torch.utils.data.Dataset):
+    """Wrap a dataset so __getitem__ returns (..., idx)."""
+    def __init__(self, base):
+        self.base = base
+    def __len__(self):
+        return len(self.base)
+    def __getitem__(self, idx):
+        item = self.base[idx]
+        if isinstance(item, tuple):
+            return (*item, idx)
+        return item, idx
 
 class AlexNet(nn.Module):
     def __init__(self, num_classes, num_clusters=1):
@@ -534,6 +546,12 @@ class LearningEntity(ABC):
 class Client(LearningEntity):
     def __init__(self, id_, client_data, global_data, global_test_data, local_test_data):
         super().__init__(id_, global_data, global_test_data)
+        # KD knobs (override from experiment_config if present)
+        self.kd_T_s = getattr(experiment_config, "student_temperature", 1.0)
+        self.kd_T_t = getattr(experiment_config, "teacher_temperature", 0.9)  # keep <=1 to stay sharp
+        self.kd_conf_thr = getattr(experiment_config, "pl_conf_thresh_client", 0.60)
+        self.kd_eps = 1e-8
+
         self.num = (self.id_ + 1) * 17
         self.local_test_set = local_test_data
         self.rnd_net = Random((self.seed + 1) * 17 + 13 + (id_ + 1) * 17)
@@ -547,6 +565,41 @@ class Client(LearningEntity):
         self.global_label_distribution = self.get_label_distribution()
 
     # ---------------- core utilities ----------------
+
+    # put this inside class Client (or in LearningEntity if you want it shared)
+    def set_pseudo_labels(self, server_tensor: torch.Tensor, *, enforce_len: bool = True):
+        """
+        Ingest server pseudo-labels [N,C] as probabilities.
+        - clamps & re-normalizes rows
+        - keeps them on CPU (moved to device during train)
+        - optional length check vs global_data
+        """
+        if server_tensor is None:
+            raise ValueError(f"No pseudo-labels provided for client {self.id_}")
+
+        if server_tensor.dim() != 2:
+            raise ValueError(f"Expected [N,C] tensor, got shape {tuple(server_tensor.shape)}")
+
+        if enforce_len:
+            n_expected = len(self.global_data)
+            n_actual = server_tensor.size(0)
+            if n_actual != n_expected:
+                # hard fail (safer than silently misaligning)
+                raise ValueError(f"PL length mismatch for client {self.id_}: expected {n_expected}, got {n_actual}")
+
+        pl = server_tensor.detach().float().cpu()
+        eps = 1e-8
+        pl = pl.clamp_min(eps)
+        pl = pl / pl.sum(dim=1, keepdim=True)  # row-wise probs
+
+        # (optional) quick diagnostics you can keep or remove
+        with torch.no_grad():
+            conf = pl.max(dim=1).values.mean().item()
+            ent = -(pl * pl.clamp_min(eps).log()).sum(dim=1).mean().item()
+            print(f"[client {self.id_}] received PL: mean_conf={conf:.3f}, entropy={ent:.3f}")
+
+        self.pseudo_label_received = pl
+
     def get_label_distribution(self):
         label_counts = defaultdict(int)
         for _, label in self.local_data:
@@ -588,296 +641,250 @@ class Client(LearningEntity):
         return self.global_label_distribution.get(k, 0)
 
     # ---------------- training (KD, with adaptive masking) ----------------
-    def _kd_target_postprocess_and_mask(self, pseudo_targets):
-        """Clamp+renorm pseudo targets and build an adaptive confidence mask."""
-        eps = 1e-8
-        pseudo_targets = pseudo_targets.clamp(min=eps, max=1 - eps)
-        pseudo_targets = pseudo_targets / pseudo_targets.sum(dim=1, keepdim=True)
+    def _kd_target_postprocess_and_mask(self, teacher_probs):
+        """
+        teacher_probs: [B,C] probs at T=1 (already clamped+renormed by setter)
+        Returns: probs (renormed), conf[B], mask[B]
+        """
+        eps = self.kd_eps
+        probs = teacher_probs.clamp(min=eps, max=1.0).contiguous()
+        probs = probs / probs.sum(dim=1, keepdim=True)
 
-        base_tau = getattr(experiment_config, "pl_conf_thresh_client", 0.55)
+        # dynamic warmup on confidence gate
+        base_tau = self.kd_conf_thr
         warmup_T = getattr(experiment_config, "pl_conf_warmup_rounds", 3)
-        keep_ratio = getattr(experiment_config, "pl_keep_ratio_min", 0.25)
+        tau = max(0.40, base_tau - 0.05 * min(getattr(self, "current_iteration", 0), warmup_T))
 
-        # warmup threshold across early global rounds
-        tau = base_tau
-        if hasattr(self, "current_iteration"):
-            tau = max(0.40, base_tau - 0.05 * min(self.current_iteration, warmup_T))
-
-        conf = pseudo_targets.max(dim=1).values
+        conf = probs.max(dim=1).values
         mask = conf >= tau
+
+        # fallback: keep top-k% by confidence if nothing passes
+        keep_ratio = getattr(experiment_config, "pl_keep_ratio_min", 0.25)
         if mask.sum() == 0:
             k = max(1, int(keep_ratio * conf.numel()))
-            topk_idx = torch.topk(conf, k, largest=True, sorted=False).indices
+            topk = torch.topk(conf, k, largest=True, sorted=False).indices
             mask = torch.zeros_like(conf, dtype=torch.bool)
-            mask[topk_idx] = True
+            mask[topk] = True
 
-        return pseudo_targets, mask
+        return probs, conf, mask
 
     def train(self, mean_pseudo_labels):
         print(f"Mean pseudo-labels shape: {mean_pseudo_labels.shape}")
         print(f"*** {self.__str__()} train ***")
 
-        server_loader = DataLoader(self.global_data, batch_size=experiment_config.batch_size,
-                                   shuffle=False, num_workers=0, drop_last=True)
-        self.model.train()
-        criterion = nn.KLDivLoss(reduction='batchmean')
-        optimizer = torch.optim.Adam(self.model.parameters(), lr=experiment_config.learning_rate_train_c)
+        # map by dataset indices, not by start/end slicing
+        kd_set = WithIndex(self.global_data)
+        loader = DataLoader(kd_set, batch_size=experiment_config.batch_size,
+                            shuffle=True, num_workers=0, drop_last=False, pin_memory=True)
 
-        pseudo_targets_all = mean_pseudo_labels.to(device)
+        self.model.train()
+        opt = torch.optim.Adam(self.model.parameters(), lr=experiment_config.learning_rate_train_c)
+        teacher_all = mean_pseudo_labels.to("cpu")  # [N,C] at T=1
+        eps, Ts, Tt = self.kd_eps, self.kd_T_s, self.kd_T_t
 
         for epoch in range(experiment_config.epochs_num_train_client):
             self.epoch_count += 1
-            epoch_loss = 0.0
+            running = 0.0
 
-            for batch_idx, (inputs, _) in enumerate(server_loader):
-                inputs = inputs.to(device)
-                optimizer.zero_grad()
+            for batch in loader:
+                (x, _y, idx) = batch
+                x = x.to(device, non_blocking=True)
+                idx = idx.long()
 
-                outputs = self.model(inputs)
-                outputs_prob = F.log_softmax(outputs, dim=1)
+                with torch.no_grad():
+                    teacher_probs = teacher_all[idx].to(device, non_blocking=True)  # [B,C] probs (T=1)
+                    teacher_probs, conf, mask = self._kd_target_postprocess_and_mask(teacher_probs)
 
-                start_idx = batch_idx * experiment_config.batch_size
-                end_idx = start_idx + inputs.size(0)
-                pseudo_targets = pseudo_targets_all[start_idx:end_idx].to(device)
+                if mask.sum() == 0:
+                    continue  # nothing confident this batch
 
-                if pseudo_targets.size(0) != inputs.size(0):
-                    print(f"Skipping batch {batch_idx}: Expected {inputs.size(0)}, got {pseudo_targets.size(0)}")
-                    continue
-                if torch.isnan(pseudo_targets).any() or torch.isinf(pseudo_targets).any():
-                    print(f"NaN/Inf pseudo targets at batch {batch_idx}")
-                    continue
+                opt.zero_grad()
+                logits = self.model(x)  # [B,C]
+                s_logp = F.log_softmax(logits[mask] / Ts, dim=1)
+                t_p = F.softmax(torch.log(teacher_probs[mask] + eps) / Tt, dim=1)
 
-                pseudo_targets, mask = self._kd_target_postprocess_and_mask(pseudo_targets)
+                kd_per = F.kl_div(s_logp, t_p, reduction='none').sum(dim=1)  # [M]
+                w = conf[mask]  # confidence weights
+                kd_loss = (kd_per * w).sum() / (w.sum() + eps)
+                kd_loss.backward()
+                torch.nn.utils.clip_grad_norm_(self.model.parameters(), 1.0)
+                opt.step()
+                running += kd_loss.item()
 
-                outputs_prob = outputs_prob[mask]
-                pseudo_targets = pseudo_targets[mask]
-
-                loss = criterion(outputs_prob, pseudo_targets)
-
-                if torch.isnan(loss) or torch.isinf(loss):
-                    print(f"NaN/Inf loss at batch {batch_idx}: {loss}")
-                    continue
-
-                loss.backward()
-                torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
-                optimizer.step()
-                epoch_loss += loss.item()
-
-            avg_loss = epoch_loss / len(server_loader)
-            print(f"Epoch [{epoch + 1}/{experiment_config.epochs_num_train_client}], Loss: {avg_loss:.4f}")
-
-        return avg_loss
+            print(f"Epoch [{epoch + 1}/{experiment_config.epochs_num_train_client}], Loss: {running / len(loader):.4f}")
+        return running / len(loader)
 
     def train_with_consistency(self, mean_pseudo_labels):
         print(f"Mean pseudo-labels shape: {mean_pseudo_labels.shape}")
         print(f"*** {self.__str__()} train (consistency) ***")
 
-        server_loader = DataLoader(self.global_data, batch_size=experiment_config.batch_size,
-                                   shuffle=False, num_workers=0, drop_last=True)
+        kd_set = WithIndex(self.global_data)
+        loader = DataLoader(kd_set, batch_size=experiment_config.batch_size,
+                            shuffle=True, num_workers=0, drop_last=False, pin_memory=True)
+
         self.model.train()
-        criterion_kl = nn.KLDivLoss(reduction='batchmean')
-        lambda_consistency = getattr(experiment_config, "lambda_consistency", 0.0)
-        criterion_consistency = nn.MSELoss()
+        opt = torch.optim.Adam(self.model.parameters(), lr=experiment_config.learning_rate_train_c)
+        teacher_all = mean_pseudo_labels.to("cpu")
+        lam = getattr(experiment_config, "lambda_consistency", 0.0)
+        eps, Ts, Tt = self.kd_eps, self.kd_T_s, self.kd_T_t
+        mse = nn.MSELoss()
 
-        optimizer = torch.optim.Adam(self.model.parameters(), lr=experiment_config.learning_rate_train_c)
-        pseudo_targets_all = mean_pseudo_labels.to(device)
-
-        def add_noise(inputs, std=0.05):
-            noise = torch.randn_like(inputs) * std
-            return torch.clamp(inputs + noise, 0., 1.)
+        def add_noise(u, std=0.05):
+            return torch.clamp(u + torch.randn_like(u) * std, 0., 1.)
 
         for epoch in range(experiment_config.epochs_num_train_client):
             self.epoch_count += 1
-            epoch_loss = 0.0
+            running = 0.0
+            for batch in loader:
+                (x, _y, idx) = batch
+                x = x.to(device, non_blocking=True)
+                idx = idx.long()
 
-            for batch_idx, (inputs, _) in enumerate(server_loader):
-                inputs = inputs.to(device)
-                optimizer.zero_grad()
-
-                outputs = self.model(inputs)
-                outputs_log_prob = F.log_softmax(outputs, dim=1)
-
-                start_idx = batch_idx * experiment_config.batch_size
-                end_idx = start_idx + inputs.size(0)
-                pseudo_targets = pseudo_targets_all[start_idx:end_idx].to(device)
-
-                if pseudo_targets.size(0) != inputs.size(0):
-                    print(f"Skipping batch {batch_idx}: Pseudo target size mismatch.")
-                    continue
-                if torch.isnan(pseudo_targets).any() or torch.isinf(pseudo_targets).any():
-                    print(f"NaN/Inf in pseudo targets at batch {batch_idx}")
-                    continue
-
-                pseudo_targets, mask = self._kd_target_postprocess_and_mask(pseudo_targets)
-                outputs_log_prob = outputs_log_prob[mask]
-                pseudo_targets = pseudo_targets[mask]
-
-                loss_kl = criterion_kl(outputs_log_prob, pseudo_targets)
-
-                # consistency
-                inputs_aug = add_noise(inputs)
                 with torch.no_grad():
-                    outputs_aug = self.model(inputs_aug)
-                    probs = F.softmax(outputs, dim=1)
-                    probs_aug = F.softmax(outputs_aug, dim=1)
-                loss_consistency = criterion_consistency(probs, probs_aug)
-
-                loss = loss_kl + lambda_consistency * loss_consistency
-
-                if torch.isnan(loss) or torch.isinf(loss):
-                    print(f"NaN/Inf loss at batch {batch_idx}: {loss}")
+                    t_probs = teacher_all[idx].to(device, non_blocking=True)
+                    t_probs, conf, mask = self._kd_target_postprocess_and_mask(t_probs)
+                if mask.sum() == 0:
                     continue
 
+                opt.zero_grad()
+                logits = self.model(x)
+                s_logp = F.log_softmax(logits[mask] / Ts, dim=1)
+                t_p = F.softmax(torch.log(t_probs[mask] + eps) / Tt, dim=1)
+                kd_per = F.kl_div(s_logp, t_p, reduction='none').sum(dim=1)
+                w = conf[mask]
+                kd_loss = (kd_per * w).sum() / (w.sum() + eps)
+
+                # consistency on probabilities
+                x_aug = add_noise(x)
+                with torch.no_grad():
+                    p = F.softmax(logits, dim=1)
+                    p2 = F.softmax(self.model(x_aug), dim=1)
+                cons = mse(p, p2)
+
+                loss = kd_loss + lam * cons
                 loss.backward()
-                torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
-                optimizer.step()
-                epoch_loss += loss.item()
+                torch.nn.utils.clip_grad_norm_(self.model.parameters(), 1.0)
+                opt.step()
+                running += loss.item()
 
-            avg_loss = epoch_loss / len(server_loader)
-            print(f"Epoch [{epoch + 1}/{experiment_config.epochs_num_train_client}], Loss: {avg_loss:.4f}")
-
-        return avg_loss
+            print(f"Epoch [{epoch + 1}/{experiment_config.epochs_num_train_client}], Loss: {running / len(loader):.4f}")
+        return running / len(loader)
 
     def train_with_weights(self, mean_pseudo_labels):
         print(f"Mean pseudo-labels shape: {mean_pseudo_labels.shape}")
         print(f"*** {self.__str__()} train (weights) ***")
 
-        server_loader = DataLoader(self.global_data, batch_size=experiment_config.batch_size,
-                                   shuffle=False, num_workers=0, drop_last=True)
+        kd_set = WithIndex(self.global_data)
+        loader = DataLoader(kd_set, batch_size=experiment_config.batch_size,
+                            shuffle=True, num_workers=0, drop_last=False, pin_memory=True)
+
         self.model.train()
-        optimizer = torch.optim.Adam(self.model.parameters(), lr=experiment_config.learning_rate_train_c)
-        pseudo_targets_all = mean_pseudo_labels.to(device)
+        opt = torch.optim.Adam(self.model.parameters(), lr=experiment_config.learning_rate_train_c)
+        teacher_all = mean_pseudo_labels.to("cpu")
+        eps, Ts, Tt = self.kd_eps, self.kd_T_s, self.kd_T_t
 
         for epoch in range(experiment_config.epochs_num_train_client):
             self.epoch_count += 1
-            epoch_loss = 0.0
+            running = 0.0
+            for (x, y, idx) in loader:
+                x = x.to(device, non_blocking=True)
+                y = y.to(device, non_blocking=True)
+                idx = idx.long()
 
-            for batch_idx, (inputs, true_labels) in enumerate(server_loader):
-                inputs = inputs.to(device)
-                true_labels = true_labels.to(device)
-                optimizer.zero_grad()
-
-                outputs = self.model(inputs)
-                outputs_prob = F.log_softmax(outputs, dim=1)
-
-                start_idx = batch_idx * experiment_config.batch_size
-                end_idx = start_idx + inputs.size(0)
-                pseudo_targets = pseudo_targets_all[start_idx:end_idx].to(device)
-
-                if pseudo_targets.size(0) != inputs.size(0):
-                    print(f"Skipping batch {batch_idx}: Expected {inputs.size(0)}, got {pseudo_targets.size(0)}")
-                    continue
-                if torch.isnan(pseudo_targets).any() or torch.isinf(pseudo_targets).any():
-                    print(f"NaN/Inf found in pseudo targets at batch {batch_idx}")
+                with torch.no_grad():
+                    t_probs = teacher_all[idx].to(device, non_blocking=True)
+                    t_probs, conf, mask = self._kd_target_postprocess_and_mask(t_probs)
+                if mask.sum() == 0:
                     continue
 
-                pseudo_targets, mask = self._kd_target_postprocess_and_mask(pseudo_targets)
+                opt.zero_grad()
+                logits = self.model(x)
+                s_logp = F.log_softmax(logits[mask] / Ts, dim=1)
+                t_p = F.softmax(torch.log(t_probs[mask] + eps) / Tt, dim=1)
+                kd_per = F.kl_div(s_logp, t_p, reduction='none').sum(dim=1)
 
-                outputs_prob = outputs_prob[mask]
-                pseudo_targets = pseudo_targets[mask]
-                true_labels = true_labels[mask]
-
-                # per-sample weights based on local label distribution
-                weights = torch.tensor(
-                    [self.get_global_label_distribution(lbl.item()) / max(1, len(self.global_data))
-                     for lbl in true_labels],
+                # your label-distribution weights (optionally combined with confidence)
+                lbls = y[mask]
+                freq = torch.tensor(
+                    [self.get_global_label_distribution(lbl.item()) for lbl in lbls],
                     dtype=torch.float32, device=device
-                )
-
-                loss_per_sample = F.kl_div(outputs_prob, pseudo_targets, reduction='none').sum(dim=1)
-                loss = (loss_per_sample * weights).mean()
-
-                if torch.isnan(loss) or torch.isinf(loss):
-                    print(f"NaN/Inf loss encountered at batch {batch_idx}: {loss}")
-                    continue
+                ).clamp_min(1.0)
+                freq = freq / float(max(1, len(self.global_data)))  # ~class prior
+                w = conf[mask] * freq
+                loss = (kd_per * w).sum() / (w.sum() + eps)
 
                 loss.backward()
-                torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
-                optimizer.step()
-                epoch_loss += loss.item()
+                torch.nn.utils.clip_grad_norm_(self.model.parameters(), 1.0)
+                opt.step()
+                running += loss.item()
 
-            avg_loss = epoch_loss / len(server_loader)
-            print(f"Epoch [{epoch + 1}/{experiment_config.epochs_num_train_client}], Loss: {avg_loss:.4f}")
-
-        return avg_loss
+            print(f"Epoch [{epoch + 1}/{experiment_config.epochs_num_train_client}], Loss: {running / len(loader):.4f}")
+        return running / len(loader)
 
     def train_with_consistency_and_weights(self, pseudo_label_received):
         print(f"Mean pseudo-labels shape: {pseudo_label_received.shape}")
         print(f"*** {self.__str__()} train (consistency+weights) ***")
 
-        server_loader = DataLoader(self.global_data, batch_size=experiment_config.batch_size,
-                                   shuffle=False, num_workers=0, drop_last=True)
-        self.model.train()
-        lambda_consistency = getattr(experiment_config, "lambda_consistency", 0.0)
-        criterion_consistency = nn.MSELoss()
-        optimizer = torch.optim.Adam(self.model.parameters(), lr=experiment_config.learning_rate_train_c)
-        pseudo_targets_all = pseudo_label_received.to(device)
+        kd_set = WithIndex(self.global_data)
+        loader = DataLoader(kd_set, batch_size=experiment_config.batch_size,
+                            shuffle=True, num_workers=0, drop_last=False, pin_memory=True)
 
-        def add_noise(inputs, std=0.05):
-            noise = torch.randn_like(inputs) * std
-            return torch.clamp(inputs + noise, 0., 1.)
+        self.model.train()
+        opt = torch.optim.Adam(self.model.parameters(), lr=experiment_config.learning_rate_train_c)
+        teacher_all = pseudo_label_received.to("cpu")
+        lam = getattr(experiment_config, "lambda_consistency", 0.0)
+        eps, Ts, Tt = self.kd_eps, self.kd_T_s, self.kd_T_t
+        mse = nn.MSELoss()
+
+        def add_noise(u, std=0.05):
+            return torch.clamp(u + torch.randn_like(u) * std, 0., 1.)
 
         for epoch in range(experiment_config.epochs_num_train_client):
             self.epoch_count += 1
-            epoch_loss = 0.0
+            running = 0.0
+            for (x, y, idx) in loader:
+                x = x.to(device, non_blocking=True)
+                y = y.to(device, non_blocking=True)
+                idx = idx.long()
 
-            for batch_idx, (inputs, true_labels) in enumerate(server_loader):
-                inputs = inputs.to(device)
-                true_labels = true_labels.to(device)
-                optimizer.zero_grad()
-
-                outputs = self.model(inputs)
-                outputs_log_prob = F.log_softmax(outputs, dim=1)
-
-                start_idx = batch_idx * experiment_config.batch_size
-                end_idx = start_idx + inputs.size(0)
-                pseudo_targets = pseudo_targets_all[start_idx:end_idx].to(device)
-
-                if pseudo_targets.size(0) != inputs.size(0):
-                    print(f"Skipping batch {batch_idx}: Pseudo target size mismatch.")
-                    continue
-                if torch.isnan(pseudo_targets).any() or torch.isinf(pseudo_targets).any():
-                    print(f"NaN/Inf in pseudo targets at batch {batch_idx}")
-                    continue
-
-                pseudo_targets, mask = self._kd_target_postprocess_and_mask(pseudo_targets)
-
-                outputs_log_prob = outputs_log_prob[mask]
-                pseudo_targets = pseudo_targets[mask]
-                true_labels = true_labels[mask]
-
-                # KL term (weighted)
-                loss_kl_per_sample = F.kl_div(outputs_log_prob, pseudo_targets, reduction='none').sum(dim=1)
-                weights = torch.tensor(
-                    [self.get_global_label_distribution(lbl.item()) / max(1, len(self.global_data))
-                     for lbl in true_labels],
-                    dtype=torch.float32, device=device
-                )
-                loss_kl = (loss_kl_per_sample * weights).mean()
-
-                # consistency term
-                inputs_aug = add_noise(inputs)
                 with torch.no_grad():
-                    outputs_aug = self.model(inputs_aug)
-                    probs = F.softmax(outputs, dim=1)
-                    probs_aug = F.softmax(outputs_aug, dim=1)
-                loss_consistency = criterion_consistency(probs, probs_aug)
-
-                loss = loss_kl + lambda_consistency * loss_consistency
-
-                if torch.isnan(loss) or torch.isinf(loss):
-                    print(f"NaN/Inf loss at batch {batch_idx}: {loss}")
+                    t_probs = teacher_all[idx].to(device, non_blocking=True)
+                    t_probs, conf, mask = self._kd_target_postprocess_and_mask(t_probs)
+                if mask.sum() == 0:
                     continue
 
+                opt.zero_grad()
+                logits = self.model(x)
+                s_logp = F.log_softmax(logits[mask] / Ts, dim=1)
+                t_p = F.softmax(torch.log(t_probs[mask] + eps) / Tt, dim=1)
+                kd_per = F.kl_div(s_logp, t_p, reduction='none').sum(dim=1)
+
+                # class prior * confidence
+                lbls = y[mask]
+                freq = torch.tensor(
+                    [self.get_global_label_distribution(lbl.item()) for lbl in lbls],
+                    dtype=torch.float32, device=device
+                ).clamp_min(1.0)
+                freq = freq / float(max(1, len(self.global_data)))
+                w = conf[mask] * freq
+
+                kd_loss = (kd_per * w).sum() / (w.sum() + eps)
+
+                # consistency
+                x_aug = add_noise(x)
+                with torch.no_grad():
+                    p = F.softmax(logits, dim=1)
+                    p2 = F.softmax(self.model(x_aug), dim=1)
+                cons = mse(p, p2)
+
+                loss = kd_loss + lam * cons
                 loss.backward()
-                torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
-                optimizer.step()
-                epoch_loss += loss.item()
+                torch.nn.utils.clip_grad_norm_(self.model.parameters(), 1.0)
+                opt.step()
+                running += loss.item()
 
-            avg_loss = epoch_loss / len(server_loader)
-            print(f"Epoch [{epoch + 1}/{experiment_config.epochs_num_train_client}], Loss: {avg_loss:.4f}")
-
-        return avg_loss
+            print(f"Epoch [{epoch + 1}/{experiment_config.epochs_num_train_client}], Loss: {running / len(loader):.4f}")
+        return running / len(loader)
 
     # ---------------- outer loop for one round ----------------
     def iteration_context(self, t):
@@ -912,7 +919,7 @@ class Client(LearningEntity):
         # 1) Knowledge distillation on GLOBAL data using server PL
         if experiment_config.input_consistency == InputConsistency.withInputConsistency:
             if experiment_config.weights_for_ps:
-                _ = self.train_with_consistency_and_weights(self.pseudo_label_received)
+                self.set_pseudo_labels(self.pseudo_label_received)
             else:
                 _ = self.train_with_consistency(self.pseudo_label_received)
         else:

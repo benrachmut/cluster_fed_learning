@@ -147,8 +147,8 @@ def iterate_fl_clusters(clients,server,net_type,net_cluster_technique,server_inp
         # 1) Give clients last round's teacher BEFORE they train this round
         if t > 0:
             for c in clients:
-                c.pseudo_label_received = server.pseudo_label_to_send[c.id_]
-
+                pl = server.pseudo_label_to_send[c.id_]
+                c.set_pseudo_labels(pl)  # <-- use the setter
         # 2) Clients train (KD + local CE)
         for c in clients:
             c.iterate(t)
