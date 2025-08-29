@@ -619,7 +619,9 @@ class Client(LearningEntity):
                     print(f"NaN/Inf in pseudo targets at batch {batch_idx}")
                     continue
 
-                pseudo_targets = F.softmax(pseudo_targets, dim=1)
+                pseudo_targets = pseudo_targets.clamp(min=1e-8)
+                pseudo_targets = pseudo_targets / pseudo_targets.sum(dim=1, keepdim=True)
+
 
                 # Compute weights based on global label distribution
                 weights = torch.tensor(
@@ -660,7 +662,7 @@ class Client(LearningEntity):
     def iteration_context(self, t):
         self.current_iteration = t
         for _ in range(10):
-            if t > 1:
+            if t >= 1:
                 if t == 1:
                     self.model.apply(self.initialize_weights)
 
@@ -761,8 +763,9 @@ class Client(LearningEntity):
                     print(f"NaN or Inf found in pseudo targets at batch {batch_idx}: {pseudo_targets}")
                     continue
 
-                # Normalize pseudo targets to sum to 1
-                pseudo_targets = F.softmax(pseudo_targets, dim=1)
+                # if they already sum to 1, just clamp for numerical safety
+                pseudo_targets = pseudo_targets.clamp(min=1e-8)
+                pseudo_targets = pseudo_targets / pseudo_targets.sum(dim=1, keepdim=True)
 
                 # Calculate the loss
                 loss = criterion(outputs_prob, pseudo_targets)
@@ -829,7 +832,10 @@ class Client(LearningEntity):
                     print(f"NaN/Inf in pseudo targets at batch {batch_idx}")
                     continue
 
-                pseudo_targets = F.softmax(pseudo_targets, dim=1)
+                # if they already sum to 1, just clamp for numerical safety
+                pseudo_targets = pseudo_targets.clamp(min=1e-8)
+                pseudo_targets = pseudo_targets / pseudo_targets.sum(dim=1, keepdim=True)
+
                 loss_kl = criterion_kl(outputs_log_prob, pseudo_targets)
 
                 # Input consistency regularization
@@ -901,7 +907,9 @@ class Client(LearningEntity):
                     print(f"NaN or Inf found in pseudo targets at batch {batch_idx}: {pseudo_targets}")
                     continue
 
-                pseudo_targets = F.softmax(pseudo_targets, dim=1)
+                # if they already sum to 1, just clamp for numerical safety
+                pseudo_targets = pseudo_targets.clamp(min=1e-8)
+                pseudo_targets = pseudo_targets / pseudo_targets.sum(dim=1, keepdim=True)
 
                 # Get weights based on true labels
                 weights = torch.tensor(
@@ -984,7 +992,9 @@ class Client(LearningEntity):
                     continue
 
                 # Normalize pseudo targets to sum to 1
-                pseudo_targets = F.softmax(pseudo_targets, dim=1)
+                # if they already sum to 1, just clamp for numerical safety
+                pseudo_targets = pseudo_targets.clamp(min=1e-8)
+                pseudo_targets = pseudo_targets / pseudo_targets.sum(dim=1, keepdim=True)
 
                 # Calculate the loss
                 loss = criterion(outputs_prob, pseudo_targets)
@@ -1026,7 +1036,7 @@ class Client(LearningEntity):
 
         # Define loss function and optimizer
 
-        criterion = nn.CrossEntropyLoss()
+        criterion = nn.CrossEntropyLoss(label_smoothing=0.05)
 
         optimizer = torch.optim.Adam(self.model.parameters(), lr=experiment_config.learning_rate_fine_tune_c)
 
