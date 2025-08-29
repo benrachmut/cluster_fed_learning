@@ -21,7 +21,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+device = torch.device("cuda:1" if torch.cuda.is_available() else "cpu")
 
 
 class AlexNet(nn.Module):
@@ -2737,3 +2737,233 @@ class ServerFedAvg(Server):
             for client_id in clients_ids:
                 ans[cluster_id].append(self.received_weights[client_id])
         return ans
+
+class Client_SCAFFOLD(Client):
+    def __init__(self, id_, client_data, global_data, global_test_data, local_test_data):
+        Client.__init__(self, id_, client_data, global_data, global_test_data, local_test_data)
+        self.weights_to_send = None
+        self.weights_received = None
+        # Initialize local control variate c_i
+        self.c_local = None
+        self.c_diff = None
+        self.initial_weights = None
+
+    def iteration_context(self, t):
+        self.current_iteration = t
+        
+        if t == 0:
+            # Initialize local control variate c_i with zeros
+            self.c_local = [torch.zeros_like(param) for param in self.model.parameters()]
+            self.model.apply(self.initialize_weights)
+            self.initial_weights = [param.clone().detach() for param in self.model.parameters()]
+        else:
+            # Load received weights
+            self.model.load_state_dict(self.weights_received)
+            # Store initial weights for this iteration
+            self.initial_weights = [param.clone().detach() for param in self.model.parameters()]
+        
+        # Always train with SCAFFOLD (in first iteration, c_diff will be zero)
+        self.train_scaffold()
+        
+        # Calculate weight differences for server aggregation
+        self.calculate_weight_differences()
+        
+        # Send weights to server
+        self.weights_to_send = self.model.state_dict()
+        
+        # Evaluate accuracy
+        self.accuracy_per_client_1[t] = self.evaluate_accuracy_single(self.local_test_set, k=1)
+        self.accuracy_per_client_5[t] = self.evaluate_accuracy(self.local_test_set, k=5)
+        self.accuracy_per_client_10[t] = self.evaluate_accuracy(self.local_test_set, k=10)
+        self.accuracy_per_client_100[t] = self.evaluate_accuracy(self.local_test_set, k=100)
+
+    def calculate_weight_differences(self):
+        """Calculate the difference between current and initial weights for SCAFFOLD."""
+        if self.initial_weights is not None:
+            self.weight_differences = []
+            for current_param, initial_param in zip(self.model.parameters(), self.initial_weights):
+                self.weight_differences.append(current_param - initial_param)
+
+    def train_scaffold(self):
+        """Train with SCAFFOLD correction terms"""
+        print("*** " + self.__str__() + " train with SCAFFOLD ***")
+        
+        train_loader = DataLoader(self.local_data, batch_size=experiment_config.batch_size, shuffle=True)
+        self.model.train()
+        
+        criterion = nn.CrossEntropyLoss()
+        optimizer = torch.optim.Adam(self.model.parameters(), lr=experiment_config.learning_rate_train_c)
+        
+        epochs = experiment_config.epochs_num_train_client
+        for epoch in range(epochs):
+            self.epoch_count += 1
+            epoch_loss = 0
+            
+            for inputs, targets in train_loader:
+                inputs, targets = inputs.to(device), targets.to(device)
+                optimizer.zero_grad()
+                
+                outputs = self.model(inputs)
+                loss = criterion(outputs, targets)
+                
+                # Add SCAFFOLD correction terms to gradients
+                loss.backward()
+                if self.c_diff is not None:
+                    for param, c_diff in zip(self.model.parameters(), self.c_diff):
+                        if param.grad is not None:
+                            param.grad += c_diff.data
+                optimizer.step()
+                epoch_loss += loss.item()
+            
+            avg_loss = epoch_loss / len(train_loader)
+            print(f"Epoch [{epoch + 1}/{epochs}], Loss: {avg_loss:.4f}")
+        
+        return avg_loss
+
+    def set_control_variates(self, c_global, c_local):
+        """Set the control variates for SCAFFOLD training."""
+        self.c_diff = [c_g - c_l for c_g, c_l in zip(c_global, c_local)]
+
+    def get_control_variates(self):
+        """Get the local control variate and weight differences for server aggregation."""
+        return self.c_local, self.weight_differences if hasattr(self, 'weight_differences') else None
+
+
+class Server_SCAFFOLD(Server):
+    def __init__(self, id_, global_data, test_data, clients_ids, clients_test_data_dict):
+        Server.__init__(self, id_, global_data, test_data, clients_ids, clients_test_data_dict)
+        self.received_weights = {}
+        self.weights_to_send = {}
+        self.c_global = None  # Global control variate
+        self.c_local_dict = {}  # Dictionary to store local control variates for each client
+        self.clients = None  # Will be set when clients are created
+        self.accuracy_scaffold_server_1 = {}
+        self.accuracy_scaffold_server_5 = {}
+        self.accuracy_scaffold_server_10 = {}
+        self.accuracy_scaffold_server_100 = {}
+
+        # SCAFFOLD needs a server model for aggregation, even with no_model technique
+        if self.model is None:
+            self.model = get_server_model()
+            self.model.apply(self.initialize_weights)
+
+    def set_clients(self, clients):
+        """Set the clients list for control variate management."""
+        self.clients = clients
+
+    def iteration_context(self, t):
+        self.current_iteration = t
+        
+        if t == 0:
+            # Initialize global control variate c_global with zeros
+            self.c_global = [torch.zeros_like(param) for param in self.model.parameters()]
+        
+        # Collect weights and control variates from clients
+        weights_per_cluster, self.clusters_client_id_dict_per_iter[t] = self.get_weights_per_cluster(t)
+        
+        # Update global model and control variates
+        self.aggregate_scaffold(weights_per_cluster)
+        
+        # Update control variates for next iteration
+        self.update_control_variates()
+        
+        # Evaluate Accuracy
+        self.accuracy_scaffold_server_1[t] = self.evaluate_accuracy_single(self.test_global_data, k=1)
+        self.accuracy_scaffold_server_5[t] = self.evaluate_accuracy(self.test_global_data, k=5)
+        self.accuracy_scaffold_server_10[t] = self.evaluate_accuracy(self.test_global_data, k=10)
+        self.accuracy_scaffold_server_100[t] = self.evaluate_accuracy(self.test_global_data, k=100)
+
+        # Ensure all clients have control variates in c_local_dict (initialize with zeros if missing)
+        for client_id in self.clients_ids:
+            if client_id not in self.c_local_dict:
+                # Initialize with zeros for clients that don't have control variates yet
+                self.c_local_dict[client_id] = [torch.zeros_like(param) for param in self.model.parameters()]
+        
+        # Send updated weights and control variates to clients
+        for cluster_id, clients_ids_list in self.clusters_client_id_dict_per_iter[t].items():
+            for client_id in clients_ids_list:
+                self.weights_to_send[client_id] = weights_per_cluster[cluster_id]
+                # Also send control variates to clients
+                if client_id in self.c_local_dict:
+                    client = next((c for c in self.clients if c.id_ == client_id), None)
+                    if client is not None:
+                        client.set_control_variates(self.c_global, self.c_local_dict[client_id])
+
+    def get_weights_per_cluster(self, t):
+        mean_per_cluster = {}
+
+        if experiment_config.num_clusters == "Optimal":
+            clusters_client_id_dict = experiment_config.known_clusters
+        elif experiment_config.num_clusters == 1:
+            clusters_client_id_dict = {0: []}
+            for client_id in self.clients_ids:
+                clusters_client_id_dict[0].append(client_id)
+        else:
+            raise Exception("implemented 1 and optimal only")
+
+        cluster_weights_dict = self.get_cluster_weights_dict(clusters_client_id_dict)
+
+        for cluster_id, weights in cluster_weights_dict.items():
+            mean_per_cluster[cluster_id] = self.average_weights(weights)
+        
+        return mean_per_cluster, clusters_client_id_dict
+
+    def get_cluster_weights_dict(self, clusters_client_id_dict):
+        ans = {}
+        for cluster_id, clients_ids in clusters_client_id_dict.items():
+            ans[cluster_id] = []
+            for client_id in clients_ids:
+                ans[cluster_id].append(self.received_weights[client_id])
+        return ans
+
+    def average_weights(self, weights_list):
+        """Averages a list of state_dicts (model weights) using Federated Averaging (FedAvg)."""
+        if not weights_list:
+            raise ValueError("The weights list is empty")
+
+        avg_weights = {}
+        for key in weights_list[0].keys():
+            avg_weights[key] = torch.stack([weights[key] for weights in weights_list]).mean(dim=0)
+        return avg_weights
+
+    def aggregate_scaffold(self, weights_per_cluster):
+        """Aggregate weights and update global control variate using SCAFFOLD algorithm."""
+        # Update global model with averaged weights
+        for cluster_id, avg_weights in weights_per_cluster.items():
+            # Update global model parameters
+            for name, param in self.model.named_parameters():
+                if name in avg_weights:
+                    param.data = avg_weights[name].data.clone()
+
+    def update_control_variates(self):
+        """Update global control variate based on client updates."""
+        if not self.clients:
+            return
+            
+        # Collect control variates from all clients
+        c_delta_cache = []
+        for client in self.clients:
+            c_local, weight_diffs = client.get_control_variates()
+            if c_local is not None and weight_diffs is not None:
+                # Calculate c_delta for this client
+                c_delta = []
+                for c_l, w_diff in zip(c_local, weight_diffs):
+                    # c_delta = c_local - (1/(K*eta)) * weight_difference
+                    # where K is number of local epochs, eta is learning rate
+                    coef = 1.0 / (experiment_config.epochs_num_train_client * experiment_config.learning_rate_train_c)
+                    c_delta.append(c_l - coef * w_diff)
+                c_delta_cache.append(c_delta)
+        
+        # Update global control variate
+        if c_delta_cache:
+            for i, c_g in enumerate(self.c_global):
+                c_delta_avg = torch.stack([c_delta[i] for c_delta in c_delta_cache]).mean(dim=0)
+                c_g.data += c_delta_avg
+
+    def set_client_control_variates(self, client_id, c_local):
+        """Set the local control variate for a specific client."""
+        self.c_local_dict[client_id] = c_local
+
+    def get_client_control_variates(self, client_id):
+        """Get the local control variate for a specific client."""
+        return self.c_local_dict.get(client_id, None)
