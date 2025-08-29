@@ -886,50 +886,58 @@ class Client(LearningEntity):
     def iteration_context(self, t):
         self.current_iteration = t
 
+        # ----- ROUND 0: local warmup to make good pseudo-labels -----
         if t == 0:
-            _ = self.fine_tune(50)
-        else:
-            if experiment_config.input_consistency == InputConsistency.withInputConsistency:
-                if experiment_config.weights_for_ps:
-                    _ = self.train_with_consistency_and_weights(self.pseudo_label_received)
-                else:
-                    _ = self.train_with_consistency(self.pseudo_label_received)
+            # fresh init for warmup
+            self.model = get_client_model(self.rnd_net)
+            self.model.apply(self.initialize_weights)
+
+            # long local training for good PL (50 epochs)
+            self.fine_tune(num_of_epochs=50)
+
+            # produce PL on GLOBAL data for the server to cluster on
+            self.pseudo_label_to_send = self.evaluate()
+            self.size_sent[t] = (self.pseudo_label_to_send.numel() *
+                                 self.pseudo_label_to_send.element_size()) / (1024 * 1024)
+            self.pseudo_label_L2[t] = self.get_pseudo_label_L2(self.pseudo_label_to_send)
+
+            # (optional diagnostics)
+            _ = self.evaluate_accuracy_single(self.local_test_set, k=1)
+            _ = self.evaluate_accuracy_single(self.test_global_data, k=1)
+            return
+
+        # ----- ROUNDS t >= 1: reset once, then KD + short local FT -----
+        if t == 1:
+            # reset after bootstrap so FL stage starts “clean”
+            self.model = get_client_model(self.rnd_net)
+            self.model.apply(self.initialize_weights)
+
+        # 1) Knowledge distillation on GLOBAL data using server PL
+        if experiment_config.input_consistency == InputConsistency.withInputConsistency:
+            if experiment_config.weights_for_ps:
+                _ = self.train_with_consistency_and_weights(self.pseudo_label_received)
             else:
-                if experiment_config.weights_for_ps:
-                    _ = self.train_with_weights(self.pseudo_label_received)
-                else:
-                    _ = self.train(self.pseudo_label_received)
-            _ = self.fine_tune()
+                _ = self.train_with_consistency(self.pseudo_label_received)
+        else:
+            if experiment_config.weights_for_ps:
+                _ = self.train_with_weights(self.pseudo_label_received)
+            else:
+                _ = self.train(self.pseudo_label_received)
 
-        # send PLs + bookkeeping
+        # 2) Short local fine-tune on own labels (use default epochs)
+        _ = self.fine_tune()
+
+        # 3) Produce new PL for next server round (on GLOBAL data)
         self.pseudo_label_to_send = self.evaluate()
-        what_to_send = self.pseudo_label_to_send
-        self.size_sent[t] = (what_to_send.numel() * what_to_send.element_size()) / (1024 * 1024)
-        self.pseudo_label_L2[t] = self.get_pseudo_label_L2(what_to_send)
+        self.size_sent[t] = (self.pseudo_label_to_send.numel() *
+                             self.pseudo_label_to_send.element_size()) / (1024 * 1024)
+        self.pseudo_label_L2[t] = self.get_pseudo_label_L2(self.pseudo_label_to_send)
 
-        acc = self.evaluate_accuracy_single(self.local_test_set)
-        acc_test = self.evaluate_accuracy_single(self.test_global_data)
-
-        # your existing dataset-specific init-escape logic
-        if experiment_config.data_set_selected == DataSet.CIFAR100:
-            if acc == 1 or acc_test == 1:
-                self.model.apply(self.initialize_weights)
-        elif experiment_config.data_set_selected in (DataSet.CIFAR10, DataSet.SVHN):
-            if acc == 10 or acc_test == 10:
-                self.model.apply(self.initialize_weights)
-        elif experiment_config.data_set_selected == DataSet.TinyImageNet:
-            if acc == 0.5 or acc_test == 0.5:
-                self.model.apply(self.initialize_weights)
-        elif experiment_config.data_set_selected == DataSet.EMNIST_balanced:
-            if not (acc > 2.14 and acc_test > 2.14):
-                self.model.apply(self.initialize_weights)
-
-        print("hi")
-
+        # 4) Track client accuracies for monitoring
         self.accuracy_per_client_1[t] = self.evaluate_accuracy_single(self.local_test_set, k=1)
+        self.accuracy_per_client_5[t] = self.evaluate_accuracy(self.local_test_set, k=5)
         self.accuracy_per_client_10[t] = self.evaluate_accuracy(self.local_test_set, k=10)
         self.accuracy_per_client_100[t] = self.evaluate_accuracy(self.local_test_set, k=100)
-        self.accuracy_per_client_5[t] = self.evaluate_accuracy(self.local_test_set, k=5)
 
     def __str__(self):
         return "Client " + str(self.id_)
@@ -1304,22 +1312,31 @@ class Server(LearningEntity):
     # ---------------- round loop on server ----------------
     def iteration_context(self, t):
         self.current_iteration = t
-        pseudo_labels_per_cluster, self.clusters_client_id_dict_per_iter[t] = \
-            self.get_pseudo_labels_input_per_cluster(t)
 
-        self.pseudo_label_before_net_L2[t] = {}
-        if t > 0:
-            for cluster_id, pl in pseudo_labels_per_cluster.items():
-                self.pseudo_label_before_net_L2[t][cluster_id] = self.get_pseudo_label_L2(pl)
+        # Collect client PLs and build per-cluster inputs
+        mean_pl_per_cluster, clusters = self.get_pseudo_labels_input_per_cluster(t)
+        self.clusters_client_id_dict_per_iter[t] = clusters
 
+        # Optional: reset server weights once after the bootstrap
+        if t == 1:
             if experiment_config.net_cluster_technique == NetClusterTechnique.multi_head:
-                self.create_feed_back_to_clients_multihead(pseudo_labels_per_cluster, t)
-            else:
-                _ = self.create_feed_back_to_clients_multimodel(pseudo_labels_per_cluster, t)
+                self.model.apply(self.initialize_weights)
+            else:  # multi_model
+                for cid in range(len(clusters)):
+                    if cid not in self.multi_model_dict:
+                        self.multi_model_dict[cid] = get_server_model()
+                    self.multi_model_dict[cid].apply(self.initialize_weights)
 
-            self.pseudo_label_after_net_L2[t] = 0
-            self.evaluate_results(t)
+        # Train server on aggregated PLs and prepare feedback
+        if experiment_config.net_cluster_technique == NetClusterTechnique.multi_head:
+            self.create_feed_back_to_clients_multihead(mean_pl_per_cluster, t)
+        else:
+            _ = self.create_feed_back_to_clients_multimodel(mean_pl_per_cluster, t)
 
+        # Evaluate and record metrics
+        self.evaluate_results(t)
+
+        # Ready for next round
         self.reset_clients_received_pl()
 
     # ---------------- feedback paths ----------------
