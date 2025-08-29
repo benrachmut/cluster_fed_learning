@@ -261,6 +261,8 @@ class ExperimentConfig:
             self.learning_rate_fine_tune_c = 2e-5  # 20–50x smaller than KD
 
             self.learning_rate_train_s = 2e-4  # slightly higher so server actually moves
+            self.client_net_type = NetType.ALEXNET
+            self.server_net_type = NetType.ALEXNET
 
         if net_type == NetsType.C_rnd_S_vgg:
             self.client_net_type = NetType.rnd_net
