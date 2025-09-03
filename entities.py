@@ -775,19 +775,44 @@ class Server(LearningEntity):
         for cluster_id, mean_pl in mean_pseudo_labels_per_cluster.items():
             selected_model = self.multi_model_dict[cluster_id]
 
-            for _ in range(5):
-                if experiment_config.input_consistency == InputConsistency.withInputConsistency:
-                    self.train_with_consistency(mean_pl, 0, selected_model)
-                else:
-                    self.train(mean_pl, 0, selected_model)
+            for cluster_id, mean_pseudo_label_for_cluster in mean_pseudo_labels_per_cluster.items():
+                selected_model = self.multi_model_dict[cluster_id]
+                for _ in range(5):
 
-                acc_global = self.evaluate_accuracy_single(self.test_global_data, model=selected_model, k=1,
-                                                           cluster_id=0)
-                acc_local = self.evaluate_accuracy_single(self.global_data, model=selected_model, k=1, cluster_id=0)
+                    if experiment_config.input_consistency == InputConsistency.withInputConsistency:
+                        self.train_with_consistency(mean_pseudo_label_for_cluster, 0, selected_model)
+                    else:
+                        self.train(mean_pseudo_label_for_cluster, 0, selected_model)
 
-                # your existing break/reinit logic ...
+                    acc_global = self.evaluate_accuracy_single(self.test_global_data, model=selected_model, k=1,
+                                                               cluster_id=0)
 
-            # Feedback
+                    acc_local = self.evaluate_accuracy_single(self.global_data, model=selected_model, k=1,
+                                                              cluster_id=0)
+
+                    if experiment_config.data_set_selected == DataSet.CIFAR100:
+                        if acc_global != 1 and acc_local != 1:
+                            break
+                        else:
+                            selected_model.apply(self.initialize_weights)
+                    if experiment_config.data_set_selected == DataSet.CIFAR10 or experiment_config.data_set_selected == DataSet.SVHN:
+                        if acc_global != 10 and acc_local != 10:
+                            break
+                        else:
+                            selected_model.apply(self.initialize_weights)
+                    if experiment_config.data_set_selected == DataSet.TinyImageNet:
+                        if acc_global != 0.5 and acc_local != 0.5:
+                            break
+                        else:
+                            selected_model.apply(self.initialize_weights)
+
+                    if experiment_config.data_set_selected == DataSet.EMNIST_balanced:
+                        if acc_global > 2.14 and acc_local > 2.14:
+                            break
+                        else:
+                            selected_model.apply(self.initialize_weights)
+
+                print("hihi")
             if experiment_config.server_feedback_technique == ServerFeedbackTechnique.similar_to_cluster:
                 cluster_pl = self.evaluate_for_cluster(0, selected_model)
                 pl_per_cluster[cluster_id] = cluster_pl

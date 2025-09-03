@@ -98,7 +98,10 @@ class NetsType(Enum):
     C_alex_S_DenseNet = 7
     C_MobileNet_S_vgg = 10
     C_MobileNet_S_alex = 11
-    C_rnd_S_vgg = 9
+    C_rnd_S_alex = 9
+    C_rnd_S_Vgg = 12
+
+
     C_alex = 3
     S_alex = 4
     S_vgg = 5
@@ -274,13 +277,19 @@ class ExperimentConfig:
             self.learning_rate_train_c = LR_KD_C
             self.learning_rate_train_s = LR_KD_S
 
-        elif net_type == NetsType.C_rnd_S_vgg:
+        elif net_type == NetsType.C_rnd_S_alex:
+            self.client_net_type = NetType.rnd_net
+            self.server_net_type = NetType.ALEXNET
+            self.learning_rate_fine_tune_c = LR_FT
+            self.learning_rate_train_c = LR_KD_C
+            self.learning_rate_train_s = LR_KD_S
+
+        elif net_type == NetsType.C_rnd_S_Vgg:
             self.client_net_type = NetType.rnd_net
             self.server_net_type = NetType.VGG
             self.learning_rate_fine_tune_c = LR_FT
             self.learning_rate_train_c = LR_KD_C
             self.learning_rate_train_s = LR_KD_S
-
         elif net_type == NetsType.C_MobileNet_S_vgg:
             self.client_net_type = NetType.MobileNetV2
             self.server_net_type = NetType.VGG

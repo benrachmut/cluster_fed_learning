@@ -611,7 +611,7 @@ def get_PseudoLabelsClusters_name(algo,dict_):
             algo_name = "C=AlexNet,S=alexNet"
         if net_type == NetsType.C_MobileNet_S_vgg.name:
             algo_name = "C=MobileNet,S=VGG"
-        if net_type == NetsType.C_rnd_S_vgg.name:
+        if net_type == NetsType.C_rnd_S_alex.name:
             algo_name = "C=Random,S=VGG"
         if net_type == NetsType.C_MobileNet_S_alex.name:
             algo_name = "C=random,S=VGG"
@@ -720,9 +720,9 @@ def extract_rd_PseudoLabelsClusters(algo,dict_):
         if name == "C=MobileNet,S=VGG":
             dict_1 = dict_[NetsType.C_MobileNet_S_vgg.name]
         if name == "C=Random,S=VGG":
-            dict_1 = dict_[NetsType.C_rnd_S_vgg.name]
+            dict_1 = dict_[NetsType.C_rnd_S_alex.name]
         if name == "C=random,S=VGG":
-            dict_1 = dict_[NetsType.C_rnd_S_vgg.name]
+            dict_1 = dict_[NetsType.C_rnd_S_alex.name]
 
         try:
             rd = dict_1["multi_model"]["max"][ClusterTechnique.greedy_elimination_L2.name]["similar_to_cluster"][0][

@@ -152,8 +152,11 @@ if __name__ == '__main__':
                 if algo == "SCAFFOLD":
                     rd = dict_4["C_alex_S_alex"]["no_model"]["mean"]["kmeans"]["similar_to_client"][1]
                     data_[alpha][algo].append(rd.client_accuracy_per_client_1)
-                else:
+                if algo == AlgorithmSelected.PseudoLabelsClusters.name:
                     print()
+                    #rd = dict_4["C_alex_S_vgg"]["multi_model"]["max"]["greedy_elimination_L2"]["similar_to_cluster"][0]["withWeights"]["withInputConsistency"]
+                    #data_[alpha][algo].append(rd.client_accuracy_per_client_1)
+                    #print()
     plot_accuracy_curves_two_alphas_by_algo(data_, alphas=(1,5))
 
 
