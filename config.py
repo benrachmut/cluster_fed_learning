@@ -290,6 +290,7 @@ class ExperimentConfig:
             self.learning_rate_fine_tune_c = LR_FT
             self.learning_rate_train_c = LR_KD_C
             self.learning_rate_train_s = LR_KD_S
+
         elif net_type == NetsType.C_MobileNet_S_vgg:
             self.client_net_type = NetType.MobileNetV2
             self.server_net_type = NetType.VGG
