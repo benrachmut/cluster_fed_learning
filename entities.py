@@ -1,4 +1,5 @@
 import copy
+import os
 from collections import defaultdict
 from random import Random
 
@@ -276,6 +277,9 @@ def get_server_model():
     #if experiment_config.server_net_type == NetType.DenseNetServer:
     #    return DenseNetServer(num_classes=experiment_config.num_classes, num_clusters=num_heads).to(device)
 
+# add at top of your file if not already present
+import os
+
 
 class LearningEntity(ABC):
     def __init__(self, id_, global_data, test_global_data):
@@ -323,10 +327,18 @@ class LearningEntity(ABC):
         gt_onehot = F.one_hot(torch.tensor(gt), num_classes=num_classes).float().numpy()
         return np.mean(np.linalg.norm(pseudo_labels - gt_onehot, axis=1) ** 2)
 
+    # ---- hooks for subclasses (no-ops by default) ----
+    def on_model_recreated(self, t: int):  # used by Client
+        pass
+    def save_optimizers(self):             # used by Client
+        pass
+    def after_model_saved(self):           # used by Client
+        pass
+
     def iterate(self, t):
-        if isinstance(self.id_,str):
-            torch.manual_seed( t * 17)
-            torch.cuda.manual_seed( t * 17)
+        if isinstance(self.id_, str):
+            torch.manual_seed(t * 17)
+            torch.cuda.manual_seed(t * 17)
         else:
             torch.manual_seed(self.id_ + t * 17)
             torch.cuda.manual_seed(self.id_ + t * 17)
@@ -335,11 +347,18 @@ class LearningEntity(ABC):
             if t == 0:
                 self.iteration_context(t)
             else:
+                # recreate model + load weights, then rebind/load optimizers
                 self.model = get_client_model(self.rnd_net)
-                self.model.load_state_dict(torch.load(f"./models/model_{self.id_}.pth"))
+                self.model.load_state_dict(torch.load(f"./models/model_{self.id_}.pth", map_location="cpu"))
+                self.on_model_recreated(t)  # (Client overrides) rebuilds opts + loads their state (except at t==1)
                 self.iteration_context(t)
+
+            # persist model + optimizer state so momentum carries across rounds
+            os.makedirs("./models", exist_ok=True)
             torch.save(self.model.state_dict(), f"./models/model_{self.id_}.pth")
+            self.save_optimizers()  # (Client overrides) save opt states
             del self.model
+            self.after_model_saved()  # (Client overrides) optionally drop opt refs to free memory
         else:
             self.iteration_context(t)
 
@@ -431,19 +450,6 @@ class LearningEntity(ABC):
         return avg
 
 
-# add at top of your file if not present
-import os
-
-import os
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
-from torch.utils.data import DataLoader
-from collections import defaultdict
-
-# assumes: get_client_model, Random, device, experiment_config, InputConsistency exist
-
-
 class Client(LearningEntity):
     def __init__(self, id_, client_data, global_data, global_test_data, local_test_data):
         super().__init__(id_, global_data, global_test_data)
@@ -451,52 +457,62 @@ class Client(LearningEntity):
         self.local_test_set = local_test_data
         self.rnd_net = Random((self.seed + 1) * 17 + 13 + (id_ + 1) * 17)
         self.local_data = client_data
-
-        # model once here; weights can be reinitialized later (t==1)
         self.model = get_client_model(self.rnd_net)
         self.model.apply(self.initialize_weights)
-
-        # --- PERSISTENT OPTIMIZERS (created once, reused every round) ---
-        self.opt_kd_client = torch.optim.AdamW(
-            self.model.parameters(),
-            lr=experiment_config.learning_rate_train_c,
-            weight_decay=5e-4
-        )
-        self.opt_finetune_client = torch.optim.Adam(
-            self.model.parameters(),
-            lr=experiment_config.learning_rate_fine_tune_c
-        )
-        # ---------------------------------------------------------------
-
         self.server = None
         self.pseudo_label_L2 = {}
         self.global_label_distribution = self.get_label_distribution()
 
-    # ---------- helpers ----------
-    def _ensure_client_optimizers(self, reset: bool = False):
-        """
-        Re-create optimizers if:
-        - reset=True (e.g., after reinit weights at t==1), or
-        - param groups are stale (different model object), or
-        - optimizer objects are missing.
-        """
-        if reset or self.opt_kd_client is None:
-            self.opt_kd_client = torch.optim.AdamW(
-                self.model.parameters(),
-                lr=experiment_config.learning_rate_train_c,
-                weight_decay=5e-4
-            )
-        else:
-            # replace param groups if they don't point to current model params
-            self.opt_kd_client.param_groups[0]['params'] = list(self.model.parameters())
+        # persistent (per-process) optimizers
+        self.optimizer_kd = None
+        self.optimizer_ft = None
+        self._build_client_optimizers()
 
-        if reset or self.opt_finetune_client is None:
-            self.opt_finetune_client = torch.optim.Adam(
-                self.model.parameters(),
-                lr=experiment_config.learning_rate_fine_tune_c
-            )
-        else:
-            self.opt_finetune_client.param_groups[0]['params'] = list(self.model.parameters())
+    # ---- client optimizer helpers ----
+    def _build_client_optimizers(self):
+        self.optimizer_kd = torch.optim.AdamW(
+            self.model.parameters(),
+            lr=experiment_config.learning_rate_train_c,
+            weight_decay=5e-4,
+        )
+        self.optimizer_ft = torch.optim.Adam(
+            self.model.parameters(),
+            lr=experiment_config.learning_rate_fine_tune_c,
+        )
+
+    def save_optimizers(self):
+        # store optimizer state so momentum persists across rounds when model is re-created
+        torch.save(self.optimizer_kd.state_dict(), f"./models/opt_kd_{self.id_}.pth")
+        torch.save(self.optimizer_ft.state_dict(), f"./models/opt_ft_{self.id_}.pth")
+
+    def _load_optim_state_to_device(self, optimizer):
+        # ensure loaded states move to the same device as params
+        try:
+            dev = next(optimizer.param_groups[0]["params"]).device
+        except StopIteration:
+            return
+        for state in optimizer.state.values():
+            for k, v in state.items():
+                if isinstance(v, torch.Tensor):
+                    state[k] = v.to(dev)
+
+    def on_model_recreated(self, t: int):
+        # new model instance -> rebuild param groups and (if t>1) restore optimizer states
+        self._build_client_optimizers()
+        if t > 1:
+            kd_p = f"./models/opt_kd_{self.id_}.pth"
+            ft_p = f"./models/opt_ft_{self.id_}.pth"
+            if os.path.exists(kd_p):
+                self.optimizer_kd.load_state_dict(torch.load(kd_p, map_location="cpu"))
+                self._load_optim_state_to_device(self.optimizer_kd)
+            if os.path.exists(ft_p):
+                self.optimizer_ft.load_state_dict(torch.load(ft_p, map_location="cpu"))
+                self._load_optim_state_to_device(self.optimizer_ft)
+
+    def after_model_saved(self):
+        # optional: drop references so GPU memory can be reclaimed between rounds
+        self.optimizer_kd = None
+        self.optimizer_ft = None
 
     def get_label_distribution(self):
         label_counts = defaultdict(int)
@@ -551,13 +567,18 @@ class Client(LearningEntity):
                             shuffle=False, num_workers=0, drop_last=False)
 
         T = getattr(experiment_config, "kd_temperature", 2.0)
+        optimizer = self.optimizer_kd  # persistent
+        if optimizer is None:  # can happen when memory_load dropped refs
+            self._build_client_optimizers()
+            optimizer = self.optimizer_kd
+
         pseudo_targets_all = mean_pseudo_labels.to(device)
         print(f"Teacher PL mean entropy: {self._mean_entropy(pseudo_targets_all):.3f}")
 
         last = 0.0
         for ep in range(experiment_config.epochs_num_train_client):
             self.epoch_count += 1
-            last = self._kd_epoch(loader, pseudo_targets_all, self.opt_kd_client, T)
+            last = self._kd_epoch(loader, pseudo_targets_all, optimizer, T)
             print(f"Epoch [{ep + 1}/{experiment_config.epochs_num_train_client}], Loss: {last:.4f}")
         return last
 
@@ -570,6 +591,11 @@ class Client(LearningEntity):
 
         T = getattr(experiment_config, "kd_temperature", 2.0)
         lam = experiment_config.lambda_consistency
+        optimizer = self.optimizer_kd  # persistent
+        if optimizer is None:
+            self._build_client_optimizers()
+            optimizer = self.optimizer_kd
+
         pseudo_targets_all = mean_pseudo_labels.to(device)
         print(f"Teacher PL mean entropy: {self._mean_entropy(pseudo_targets_all):.3f}")
 
@@ -587,7 +613,7 @@ class Client(LearningEntity):
         last = 0.0
         for ep in range(experiment_config.epochs_num_train_client):
             self.epoch_count += 1
-            last = self._kd_epoch(loader, pseudo_targets_all, self.opt_kd_client, T, extra_loss_fn=extra)
+            last = self._kd_epoch(loader, pseudo_targets_all, optimizer, T, extra_loss_fn=extra)
             print(f"Epoch [{ep + 1}/{experiment_config.epochs_num_train_client}], Loss: {last:.4f}")
         return last
 
@@ -600,6 +626,11 @@ class Client(LearningEntity):
 
         T = getattr(experiment_config, "kd_temperature", 2.0)
         lam = experiment_config.lambda_consistency
+        optimizer = self.optimizer_kd  # persistent
+        if optimizer is None:
+            self._build_client_optimizers()
+            optimizer = self.optimizer_kd
+
         pseudo_targets_all = mean_pseudo_labels.to(device)
         print(f"Teacher PL mean entropy: {self._mean_entropy(pseudo_targets_all):.3f}")
 
@@ -615,7 +646,7 @@ class Client(LearningEntity):
                 [1.0 if self.global_label_distribution.get(int(lbl.item()), 0) > 0 else 0.0 for lbl in y_true],
                 device=device
             )
-            weights = present * present_w + (1.0 - present) * absent_w  # [B]
+            weights = present * present_w + (1.0 - present) * absent_w
             per_sample_kld = F.kl_div(logp, pseudo_targets, reduction='none').sum(dim=1) * (T * T)
             loss_kd_weighted = (per_sample_kld * weights).mean()
 
@@ -624,13 +655,12 @@ class Client(LearningEntity):
                 probs_aug = F.softmax(self.model(add_noise(inputs)), dim=1)
             loss_cons = mse(probs, probs_aug)
 
-            # replace base KD with weighted KD, still add consistency
             return (loss_kd_weighted - per_sample_kld.mean()) + lam * loss_cons
 
         last = 0.0
         for ep in range(experiment_config.epochs_num_train_client):
             self.epoch_count += 1
-            last = self._kd_epoch(loader, pseudo_targets_all, self.opt_kd_client, T, extra_loss_fn=extra)
+            last = self._kd_epoch(loader, pseudo_targets_all, optimizer, T, extra_loss_fn=extra)
             print(f"Epoch [{ep + 1}/{experiment_config.epochs_num_train_client}], Loss: {last:.4f}")
         return last
 
@@ -638,14 +668,14 @@ class Client(LearningEntity):
     def iteration_context(self, t):
         self.current_iteration = t
 
-        # (A) If t==1, reinitialize weights ONCE (per your request) and reset optimizers
+        # Reset ONLY at the beginning of round t==1
         if t == 1:
             self.model.apply(self.initialize_weights)
-            self._ensure_client_optimizers(reset=True)
+            self._build_client_optimizers()
 
         has_server_pl = isinstance(self.pseudo_label_received, torch.Tensor)
 
-        # (B) KD only after server feedback (round >= 2)
+        # KD only after the server has produced feedback (round >= 2)
         if t > 1 and has_server_pl:
             if experiment_config.input_consistency == InputConsistency.withInputConsistency:
                 if experiment_config.weights_for_ps:
@@ -658,17 +688,13 @@ class Client(LearningEntity):
                 else:
                     _ = self.train(self.pseudo_label_received)
 
-        # (C) Always do local fine-tune each round
+        # Always do local fine-tune each round
         if t == 0:
-            # first contact: optimizers already exist
-            self._ensure_client_optimizers(reset=False)
             self.fine_tune(50)
         else:
-            # subsequent rounds: do not reinit weights (except t==1 handled above)
-            self._ensure_client_optimizers(reset=False)
             self.fine_tune()
 
-        # send PLs to server + stats
+        # send PLs to server
         self.pseudo_label_to_send = self.evaluate()
         pl = self.pseudo_label_to_send
         self.size_sent[t] = (pl.numel() * pl.element_size()) / (1024 * 1024)
@@ -680,7 +706,6 @@ class Client(LearningEntity):
         self.accuracy_per_client_5[t] = self.evaluate_accuracy(self.local_test_set, k=5)
         print("hi")
 
-    # If you need the simple “weights only” KD:
     def train_with_weights(self, mean_pseudo_labels):
         return self.train(mean_pseudo_labels)
 
@@ -692,6 +717,10 @@ class Client(LearningEntity):
         loader = DataLoader(self.local_data, batch_size=experiment_config.batch_size, shuffle=True)
         self.model.train()
         criterion = nn.CrossEntropyLoss(label_smoothing=0.05)
+        optimizer = self.optimizer_ft  # persistent
+        if optimizer is None:
+            self._build_client_optimizers()
+            optimizer = self.optimizer_ft
 
         last = 0.0
         for ep in range(num_of_epochs):
@@ -699,11 +728,11 @@ class Client(LearningEntity):
             epoch_loss = 0.0
             for x, y in loader:
                 x, y = x.to(device), y.to(device)
-                self.opt_finetune_client.zero_grad()
+                optimizer.zero_grad()
                 out = self.model(x)
                 loss = criterion(out, y)
                 loss.backward()
-                self.opt_finetune_client.step()
+                optimizer.step()
                 epoch_loss += loss.item()
             last = epoch_loss / max(1, len(loader))
             print(f"Epoch [{ep + 1}/{num_of_epochs}], Loss: {last:.4f}")
@@ -724,42 +753,6 @@ class Client(LearningEntity):
         print(f"Total gradient elements: {total_elems}")
         print(f"Total gradient size: {total_bytes / 1024 / 1024:.4f} MB\n")
 
-    # ---------- optional: persist optimizer state when using "memory load" ----------
-    def iterate(self, t):
-        # override to ALSO save/load optimizer state when is_with_memory_load is True
-        if isinstance(self.id_, str):
-            torch.manual_seed(t * 17)
-            torch.cuda.manual_seed(t * 17)
-        else:
-            torch.manual_seed(self.id_ + t * 17)
-            torch.cuda.manual_seed(self.id_ + t * 17)
-
-        if experiment_config.is_with_memory_load:
-            if t == 0:
-                self.iteration_context(t)
-            else:
-                # rebuild model, then load weights
-                self.model = get_client_model(self.rnd_net)
-                self.model.load_state_dict(torch.load(f"./models/model_{self.id_}.pth"))
-                # ensure optimizers exist and point to correct params
-                self._ensure_client_optimizers(reset=False)
-                # load optimizer states if exist
-                opt_kd_path = f"./models/opt_kd_{self.id_}.pth"
-                opt_ft_path = f"./models/opt_ft_{self.id_}.pth"
-                if os.path.exists(opt_kd_path):
-                    self.opt_kd_client.load_state_dict(torch.load(opt_kd_path))
-                if os.path.exists(opt_ft_path):
-                    self.opt_finetune_client.load_state_dict(torch.load(opt_ft_path))
-                self.iteration_context(t)
-
-            # save model + optimizer states
-            os.makedirs("./models", exist_ok=True)
-            torch.save(self.model.state_dict(), f"./models/model_{self.id_}.pth")
-            torch.save(self.opt_kd_client.state_dict(), f"./models/opt_kd_{self.id_}.pth")
-            torch.save(self.opt_finetune_client.state_dict(), f"./models/opt_ft_{self.id_}.pth")
-        else:
-            self.iteration_context(t)
-
 
 class Server(LearningEntity):
     def __init__(self, id_, global_data, test_data, clients_ids, clients_test_data_dict):
@@ -773,7 +766,6 @@ class Server(LearningEntity):
         self.reset_clients_received_pl()
         self.clients_test_data_dict = clients_test_data_dict
 
-        # previous kmeans centroids (if used)
         self.previous_centroids_dict = {}
         if isinstance(experiment_config.num_clusters, int):
             num_clusters = experiment_config.num_clusters
@@ -782,32 +774,29 @@ class Server(LearningEntity):
         for c in range(num_clusters):
             self.previous_centroids_dict[c] = None
 
-        # --- MODEL(S) + PERSISTENT OPTIMIZER(S) ---
+        # models + persistent optimizers
         if experiment_config.net_cluster_technique == NetClusterTechnique.multi_head:
             self.model = get_server_model()
             self.model.apply(self.initialize_weights)
             self.server_optimizer = torch.optim.AdamW(
                 self.model.parameters(),
                 lr=experiment_config.learning_rate_train_s,
-                weight_decay=5e-4
+                weight_decay=5e-4,
             )
-            self.multi_model_dict = None
-            self.server_opt_dict = None
-
-        elif experiment_config.net_cluster_technique == NetClusterTechnique.multi_model:
-            self.model = None
+        if experiment_config.net_cluster_technique == NetClusterTechnique.multi_model:
             self.multi_model_dict = {}
-            self.server_opt_dict = {}
             for c in range(num_clusters):
-                m = get_server_model()
-                m.apply(self.initialize_weights)
-                self.multi_model_dict[c] = m
-                self.server_opt_dict[c] = torch.optim.AdamW(
-                    m.parameters(),
+                self.multi_model_dict[c] = get_server_model()
+                self.multi_model_dict[c].apply(self.initialize_weights)
+            self.server_optimizers = {
+                c: torch.optim.AdamW(
+                    self.multi_model_dict[c].parameters(),
                     lr=experiment_config.learning_rate_train_s,
-                    weight_decay=5e-4
+                    weight_decay=5e-4,
                 )
-        # ------------------------------------------------
+                for c in self.multi_model_dict
+            }
+            self._model_to_cluster = {id(m): c for c, m in self.multi_model_dict.items()}
 
         self.accuracy_per_client_1_max = {}
         self.accuracy_per_client_10_max = {}
@@ -852,13 +841,6 @@ class Server(LearningEntity):
             selected[mask] = pl[mask]
         return selected
 
-    def _get_server_optimizer(self, cluster_num, selected_model):
-        if experiment_config.net_cluster_technique == NetClusterTechnique.multi_model:
-            # cluster_num is an int index in this mode
-            return self.server_opt_dict[int(cluster_num)]
-        else:
-            return self.server_optimizer
-
     def create_feed_back_to_clients_multihead(self, mean_pseudo_labels_per_cluster, t):
         for _ in range(experiment_config.num_rounds_multi_head):
             for cluster_id, pl in mean_pseudo_labels_per_cluster.items():
@@ -884,18 +866,52 @@ class Server(LearningEntity):
 
         pl_per_cluster = {}
 
-        for cluster_id, mean_pl in mean_pseudo_labels_per_cluster.items():
+        for cluster_id, mean_pseudo_label_for_cluster in mean_pseudo_labels_per_cluster.items():
             selected_model = self.multi_model_dict[cluster_id]
-
             for _ in range(5):
-                if experiment_config.input_consistency == InputConsistency.withInputConsistency:
-                    self.train_with_consistency(mean_pl, cluster_id, selected_model)
-                else:
-                    self.train(mean_pl, cluster_id, selected_model)
 
-                acc_global = self.evaluate_accuracy_single(self.test_global_data, model=selected_model, k=1, cluster_id=0)
-                acc_local = self.evaluate_accuracy_single(self.global_data,     model=selected_model, k=1, cluster_id=0)
-                # (keep your break/reinit logic here if you had one)
+                if experiment_config.input_consistency == InputConsistency.withInputConsistency:
+                    self.train_with_consistency(mean_pseudo_label_for_cluster, 0, selected_model)
+                else:
+                    self.train(mean_pseudo_label_for_cluster, 0, selected_model)
+
+                acc_global = self.evaluate_accuracy_single(self.test_global_data, model=selected_model, k=1,
+                                                           cluster_id=0)
+
+                acc_local = self.evaluate_accuracy_single(self.global_data, model=selected_model, k=1,
+                                                          cluster_id=0)
+
+                if experiment_config.data_set_selected == DataSet.CIFAR100:
+                    if acc_global != 1 and acc_local != 1:
+                        break
+                    else:
+                        selected_model.apply(self.initialize_weights)
+                if experiment_config.data_set_selected == DataSet.CIFAR10 or experiment_config.data_set_selected == DataSet.SVHN:
+                    if acc_global != 10 and acc_local != 10:
+                        break
+                    else:
+                        selected_model.apply(self.initialize_weights)
+                if experiment_config.data_set_selected == DataSet.TinyImageNet:
+                    if acc_global != 0.5 and acc_local != 0.5:
+                        break
+                    else:
+                        selected_model.apply(self.initialize_weights)
+
+                if experiment_config.data_set_selected == DataSet.EMNIST_balanced:
+                    if acc_global > 2.14 and acc_local > 2.14:
+                        break
+                    else:
+                        selected_model.apply(self.initialize_weights)
+
+            print("hihi")
+            if experiment_config.server_feedback_technique == ServerFeedbackTechnique.similar_to_cluster:
+                pseudo_labels_for_cluster = self.evaluate_for_cluster(0, selected_model)
+                pl_per_cluster[cluster_id] = pseudo_labels_for_cluster
+                for client_id in self.clusters_client_id_dict_per_iter[t][cluster_id]:
+                    self.pseudo_label_to_send[client_id] = pseudo_labels_for_cluster
+
+
+
 
             if experiment_config.server_feedback_technique == ServerFeedbackTechnique.similar_to_cluster:
                 cluster_pl = self.evaluate_for_cluster(0, selected_model)
@@ -907,7 +923,7 @@ class Server(LearningEntity):
             cluster_pl_list = []
             for cluster_id, mean_pl in mean_pseudo_labels_per_cluster.items():
                 selected_model = self.multi_model_dict[cluster_id]
-                self.train(mean_pl, cluster_id, selected_model)
+                self.train(mean_pl, 0, selected_model)
                 pl = self.evaluate_for_cluster(0, selected_model)
                 pl_per_cluster[cluster_id] = pl
                 cluster_pl_list.append(pl)
@@ -928,7 +944,7 @@ class Server(LearningEntity):
         if experiment_config.net_cluster_technique == NetClusterTechnique.multi_model:
             models_list = list(self.multi_model_dict.values())
         else:
-            models_list = [self.model]
+            models_list = [self.model]  # fallback
 
         self.accuracy_global_data_1[t] = self.evaluate_max_accuracy_per_point(models=models_list,
                                                                               data_=self.global_data, k=1,
@@ -964,9 +980,9 @@ class Server(LearningEntity):
                 if experiment_config.net_cluster_technique == NetClusterTechnique.multi_model:
                     m = self.multi_model_dict[c]
                     l1.append(self.evaluate_accuracy_single(test_data_per_clients, model=m, k=1,   cluster_id=0))
-                    l2.append(self.evaluate_accuracy(        test_data_per_clients, model=m, k=10,  cluster_id=0))
-                    l3.append(self.evaluate_accuracy(        test_data_per_clients, model=m, k=100, cluster_id=0))
-                    l4.append(self.evaluate_accuracy(        test_data_per_clients, model=m, k=5,   cluster_id=0))
+                    l2.append(self.evaluate_accuracy(test_data_per_clients,        model=m, k=10,  cluster_id=0))
+                    l3.append(self.evaluate_accuracy(test_data_per_clients,        model=m, k=100, cluster_id=0))
+                    l4.append(self.evaluate_accuracy(test_data_per_clients,        model=m, k=5,   cluster_id=0))
                 else:
                     l1.append(self.evaluate_accuracy(test_data_per_clients, model=selected_model, k=1, cluster_id=c))
             print("client_id", client_id, "accuracy_per_client_1_max", max(l1))
@@ -982,6 +998,25 @@ class Server(LearningEntity):
 
         # Reset server outbox every round
         self.pseudo_label_to_send = {}
+
+        # Reset ONLY once at t==1 (optimizer state; weights remain as-is unless you reinit elsewhere)
+        if t == 1:
+            if experiment_config.net_cluster_technique == NetClusterTechnique.multi_head:
+                self.server_optimizer = torch.optim.AdamW(
+                    self.model.parameters(),
+                    lr=experiment_config.learning_rate_train_s,
+                    weight_decay=5e-4,
+                )
+            elif experiment_config.net_cluster_technique == NetClusterTechnique.multi_model:
+                if not hasattr(self, "server_optimizers") or not isinstance(self.server_optimizers, dict):
+                    self.server_optimizers = {}
+                for cid, m in self.multi_model_dict.items():
+                    self.server_optimizers[cid] = torch.optim.AdamW(
+                        m.parameters(),
+                        lr=experiment_config.learning_rate_train_s,
+                        weight_decay=5e-4,
+                    )
+                self._model_to_cluster = {id(m): c for c, m in self.multi_model_dict.items()}
 
         mean_pl_per_cluster, self.clusters_client_id_dict_per_iter[t] = \
             self.get_pseudo_labels_input_per_cluster(t)
@@ -1002,6 +1037,24 @@ class Server(LearningEntity):
         self.reset_clients_received_pl()
 
     # ---------- server KD ----------
+    def _server_optimizer_for(self, selected_model=None, cluster_hint=None):
+        if experiment_config.net_cluster_technique == NetClusterTechnique.multi_head:
+            return self.server_optimizer
+        # multi-model
+        if not hasattr(self, "server_optimizers"):
+            self.server_optimizers = {}
+        if selected_model is not None:
+            if hasattr(self, "_model_to_cluster") and id(selected_model) in self._model_to_cluster:
+                cid = self._model_to_cluster[id(selected_model)]
+                return self.server_optimizers[cid]
+            if isinstance(cluster_hint, int) and cluster_hint in self.server_optimizers:
+                return self.server_optimizers[cluster_hint]
+        return torch.optim.AdamW(
+            (self.model.parameters() if selected_model is None else selected_model.parameters()),
+            lr=experiment_config.learning_rate_train_s,
+            weight_decay=5e-4,
+        )
+
     def train_with_consistency(self, mean_pseudo_labels, cluster_num="0", selected_model=None):
         print(f"Mean pseudo-labels shape: {mean_pseudo_labels.shape}")
         print(f"*** {self.__str__()} train *** Cluster: {cluster_num} ***")
@@ -1013,7 +1066,8 @@ class Server(LearningEntity):
         m.train()
         T = getattr(experiment_config, "kd_temperature", 2.0)
         lam = experiment_config.lambda_consistency
-        optimizer = self._get_server_optimizer(cluster_num, m)
+        optimizer = self._server_optimizer_for(selected_model=m,
+                                               cluster_hint=(cluster_num if isinstance(cluster_num, int) else None))
         pseudo_targets_all = mean_pseudo_labels.to(device)
         print(f"Teacher PL mean entropy: {self._mean_entropy(pseudo_targets_all):.3f}")
 
@@ -1072,7 +1126,8 @@ class Server(LearningEntity):
         m = self.model if selected_model is None else selected_model
         m.train()
         T = getattr(experiment_config, "kd_temperature", 2.0)
-        optimizer = self._get_server_optimizer(cluster_num, m)
+        optimizer = self._server_optimizer_for(selected_model=m,
+                                               cluster_hint=(cluster_num if isinstance(cluster_num, int) else None))
         pseudo_targets_all = mean_pseudo_labels.to(device)
         print(f"Teacher PL mean entropy: {self._mean_entropy(pseudo_targets_all):.3f}")
 
@@ -1110,7 +1165,7 @@ class Server(LearningEntity):
             print(f"Epoch [{ep + 1}/{experiment_config.epochs_num_train_server}], Loss: {last:.4f}")
         return last
 
-    # ---------- utils (unchanged logic, kept for completeness) ----------
+    # ---------- utils kept from your version ----------
     def reset_clients_received_pl(self):
         for id_ in self.clients_ids:
             self.pseudo_label_received[id_] = None
@@ -1317,26 +1372,25 @@ class Server(LearningEntity):
                     return cid
 
     def init_models_measures(self):
-        # called when number of clusters changes (greedy)
+        # (re)create models and their optimizers for multi-model setup
         num_clusters = experiment_config.num_clusters
         for cid in range(num_clusters):
             self.previous_centroids_dict[cid] = None
             self.accuracy_server_test_1[cid] = {}
             self.accuracy_global_data_1[cid] = {}
-
         if experiment_config.net_cluster_technique == NetClusterTechnique.multi_model:
-            # rebuild models AND persistent optimizers for each cluster
             self.multi_model_dict = {}
-            self.server_opt_dict = {}
             for c in range(num_clusters):
-                m = get_server_model()
-                m.apply(self.initialize_weights)
-                self.multi_model_dict[c] = m
-                self.server_opt_dict[c] = torch.optim.AdamW(
-                    m.parameters(),
+                self.multi_model_dict[c] = get_server_model()
+                self.multi_model_dict[c].apply(self.initialize_weights)
+            self.server_optimizers = {
+                c: torch.optim.AdamW(
+                    self.multi_model_dict[c].parameters(),
                     lr=experiment_config.learning_rate_train_s,
-                    weight_decay=5e-4
-                )
+                    weight_decay=5e-4,
+                ) for c in range(num_clusters)
+            }
+            self._model_to_cluster = {id(m): c for c, m in self.multi_model_dict.items()}
 
     def get_distance_per_client(self, distance_dict):
         ans = {}
@@ -1422,6 +1476,8 @@ class Server(LearningEntity):
                     if u in d: del d[u]
                 del distance_per_client[u]
         return clusters
+
+
 
 class Client_pFedCK(Client):
     def __init__(self, id_, client_data, global_data, global_test_data, local_test_data):
