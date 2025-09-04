@@ -1060,7 +1060,7 @@ class Server(LearningEntity):
         print(f"*** {self.__str__()} train *** Cluster: {cluster_num} ***")
 
         if isinstance(self.model,VGGServer):
-            loader = DataLoader(self.global_data, batch_size=64,
+            loader = DataLoader(self.global_data, batch_size=32,
                                 shuffle=False, num_workers=0, drop_last=False)
         else:
             loader = DataLoader(self.global_data, batch_size=experiment_config.batch_size,
@@ -1125,7 +1125,7 @@ class Server(LearningEntity):
         print(f"*** {self.__str__()} train *** Cluster: {cluster_num} ***")
 
         if isinstance(self.model, VGGServer):
-            loader = DataLoader(self.global_data, batch_size=64,
+            loader = DataLoader(self.global_data, batch_size=32,
                                 shuffle=False, num_workers=0, drop_last=False)
         else:
             loader = DataLoader(self.global_data, batch_size=experiment_config.batch_size,
