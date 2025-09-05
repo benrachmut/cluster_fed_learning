@@ -1059,8 +1059,12 @@ class Server(LearningEntity):
         print(f"Mean pseudo-labels shape: {mean_pseudo_labels.shape}")
         print(f"*** {self.__str__()} train *** Cluster: {cluster_num} ***")
 
-
-        loader = DataLoader(self.global_data, batch_size=experiment_config.batch_size,
+        if experiment_config.server_net_type == NetType.VGG:
+            loader = DataLoader(self.global_data, batch_size=32,
+                                shuffle=False, num_workers=0, drop_last=False)
+            print("batch_size=32")
+        else:
+            loader = DataLoader(self.global_data, batch_size=experiment_config.batch_size,
                                 shuffle=False, num_workers=0, drop_last=False)
 
         m = self.model if selected_model is None else selected_model
@@ -1121,7 +1125,12 @@ class Server(LearningEntity):
         print(f"Mean pseudo-labels shape: {mean_pseudo_labels.shape}")
         print(f"*** {self.__str__()} train *** Cluster: {cluster_num} ***")
 
-        loader = DataLoader(self.global_data, batch_size=experiment_config.batch_size,
+        if experiment_config.server_net_type == NetType.VGG:
+            loader = DataLoader(self.global_data, batch_size=32,
+                                    shuffle=False, num_workers=0, drop_last=False)
+            print("batch_size=32")
+        else:
+            loader = DataLoader(self.global_data, batch_size=experiment_config.batch_size,
                                 shuffle=False, num_workers=0, drop_last=False)
 
         m = self.model if selected_model is None else selected_model
