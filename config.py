@@ -287,7 +287,6 @@ class ExperimentConfig:
         elif net_type == NetsType.C_rnd_S_Vgg:
             self.client_net_type = NetType.rnd_net
             self.server_net_type = NetType.VGG
-            self.batch_size =64
             self.learning_rate_fine_tune_c = LR_FT
             self.learning_rate_train_c = LR_KD_C
             self.learning_rate_train_s = LR_KD_S
