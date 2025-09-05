@@ -311,7 +311,7 @@ class ExperimentConfig:
             self.learning_rate_fine_tune_c = LR_FT
             self.learning_rate_train_c = LR_KD_C
             self.learning_rate_train_s = 0.0001
-            self.batch_size =16
+            self.batch_size =32
 
 
 
