@@ -310,7 +310,7 @@ class ExperimentConfig:
             self.server_net_type = NetType.VGG
             self.learning_rate_fine_tune_c = LR_FT
             self.learning_rate_train_c = LR_KD_C
-            self.learning_rate_train_s = LR_KD_S
+            self.learning_rate_train_s = 0.0001
 
 
 
