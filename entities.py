@@ -667,38 +667,66 @@ class Client(LearningEntity):
     # ---------- orchestration ----------
     def iteration_context(self, t):
         self.current_iteration = t
+        for _ in range(10):
 
-        # Reset ONLY at the beginning of round t==1
-        if t == 1:
-            self.model.apply(self.initialize_weights)
-            self._build_client_optimizers()
+            # Reset ONLY at the beginning of round t==1
+            if t == 1:
+                self.model.apply(self.initialize_weights)
+                self._build_client_optimizers()
 
-        has_server_pl = isinstance(self.pseudo_label_received, torch.Tensor)
+            has_server_pl = isinstance(self.pseudo_label_received, torch.Tensor)
 
-        # KD only after the server has produced feedback (round >= 2)
-        if t > 1 and has_server_pl:
-            if experiment_config.input_consistency == InputConsistency.withInputConsistency:
-                if experiment_config.weights_for_ps:
-                    _ = self.train_with_consistency_and_weights(self.pseudo_label_received)
+            # KD only after the server has produced feedback (round >= 2)
+            if t > 1 and has_server_pl:
+                if experiment_config.input_consistency == InputConsistency.withInputConsistency:
+                    if experiment_config.weights_for_ps:
+                        _ = self.train_with_consistency_and_weights(self.pseudo_label_received)
+                    else:
+                        _ = self.train_with_consistency(self.pseudo_label_received)
                 else:
-                    _ = self.train_with_consistency(self.pseudo_label_received)
+                    if experiment_config.weights_for_ps:
+                        _ = self.train_with_weights(self.pseudo_label_received)
+                    else:
+                        _ = self.train(self.pseudo_label_received)
+
+            # Always do local fine-tune each round
+            if t == 0:
+               self.fine_tune(50)
             else:
-                if experiment_config.weights_for_ps:
-                    _ = self.train_with_weights(self.pseudo_label_received)
-                else:
-                    _ = self.train(self.pseudo_label_received)
-
-        # Always do local fine-tune each round
-        if t == 0:
-            self.fine_tune(50)
-        else:
-            self.fine_tune()
+                self.fine_tune()
 
         # send PLs to server
-        self.pseudo_label_to_send = self.evaluate()
-        pl = self.pseudo_label_to_send
-        self.size_sent[t] = (pl.numel() * pl.element_size()) / (1024 * 1024)
-        self.pseudo_label_L2[t] = self.get_pseudo_label_L2(pl)
+            self.pseudo_label_to_send = self.evaluate()
+            what_to_send = self.pseudo_label_to_send
+
+            pl = self.pseudo_label_to_send
+            self.size_sent[t] = (pl.numel() * pl.element_size()) / (1024 * 1024)
+            self.pseudo_label_L2[t] = self.get_pseudo_label_L2(pl)
+            acc = self.evaluate_accuracy_single(self.local_test_set)
+            acc_test = self.evaluate_accuracy_single(self.test_global_data)
+            if experiment_config.data_set_selected == DataSet.CIFAR100:
+                if acc != 1 and acc_test != 1:
+                    break
+                else:
+                    self.model.apply(self.initialize_weights)
+            if experiment_config.data_set_selected == DataSet.CIFAR10 or experiment_config.data_set_selected == DataSet.SVHN:
+                if acc != 10 and acc_test != 10:
+                    break
+                else:
+                    self.model.apply(self.initialize_weights)
+            if experiment_config.data_set_selected == DataSet.TinyImageNet:
+                if acc != 0.5 and acc_test != 0.5:
+                    break
+                else:
+                    self.model.apply(self.initialize_weights)
+
+            if experiment_config.data_set_selected == DataSet.EMNIST_balanced:
+                if acc > 2.14 and acc_test > 2.14:
+                    break
+                else:
+                    self.model.apply(self.initialize_weights)
+
+
 
         self.accuracy_per_client_1[t] = self.evaluate_accuracy_single(self.local_test_set, k=1)
         self.accuracy_per_client_10[t] = self.evaluate_accuracy(self.local_test_set, k=10)
