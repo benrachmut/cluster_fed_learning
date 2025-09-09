@@ -2072,6 +2072,8 @@ class Server_PseudoLabelsNoServerModel(Server):
 
         for cluster_id, pseudo_labels_for_cluster in mean_pseudo_labels_per_cluster_dict.items():
             for client_id in self.clusters_client_id_dict_per_iter[t][cluster_id]:
+                if self.pseudo_label_to_send is None:
+                    self.pseudo_label_to_send = {}
                 self.pseudo_label_to_send[client_id] = pseudo_labels_for_cluster
 
 
