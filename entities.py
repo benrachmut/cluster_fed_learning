@@ -240,15 +240,12 @@ def get_rnd_net(rnd:Random = None):
         return ResNet18Server(num_classes=experiment_config.num_classes).to(device)
     if 0.25 < p <= 0.5:
         print("MobileNetV2Server")
-
         return MobileNetV2Server(num_classes=experiment_config.num_classes).to(device)
     if 0.5 < p <= 0.75:
         print("SqueezeNetServer")
-
         return SqueezeNetServer(num_classes=experiment_config.num_classes).to(device)
     else:
         print("AlexNet")
-
         return AlexNet(num_classes=experiment_config.num_classes).to(device)
 def get_client_model(rnd:Random = None):
     if experiment_config.client_net_type == NetType.ALEXNET:
@@ -672,32 +669,34 @@ class Client(LearningEntity):
     def iteration_context(self, t):
         self.current_iteration = t
         for _ in range(10):
-
-            # Reset ONLY at the beginning of round t==1
-            if t == 1:
-                self.model.apply(self.initialize_weights)
-                self._build_client_optimizers()
-
-            has_server_pl = isinstance(self.pseudo_label_received, torch.Tensor)
-
-            # KD only after the server has produced feedback (round >= 2)
-            if t > 1 and has_server_pl:
-                if experiment_config.input_consistency == InputConsistency.withInputConsistency:
-                    if experiment_config.weights_for_ps:
-                        _ = self.train_with_consistency_and_weights(self.pseudo_label_received)
-                    else:
-                        _ = self.train_with_consistency(self.pseudo_label_received)
-                else:
-                    if experiment_config.weights_for_ps:
-                        _ = self.train_with_weights(self.pseudo_label_received)
-                    else:
-                        _ = self.train(self.pseudo_label_received)
-
-            # Always do local fine-tune each round
-            if t == 0:
-               self.fine_tune(50)
-            else:
+            if experiment_config.algorithm_selection == AlgorithmSelected.COMET:
                 self.fine_tune()
+            else:
+                # Reset ONLY at the beginning of round t==1
+                if t == 1:
+                    self.model.apply(self.initialize_weights)
+                    self._build_client_optimizers()
+
+                has_server_pl = isinstance(self.pseudo_label_received, torch.Tensor)
+
+                # KD only after the server has produced feedback (round >= 2)
+                if t > 1 and has_server_pl:
+                    if experiment_config.input_consistency == InputConsistency.withInputConsistency:
+                        if experiment_config.weights_for_ps:
+                            _ = self.train_with_consistency_and_weights(self.pseudo_label_received)
+                        else:
+                            _ = self.train_with_consistency(self.pseudo_label_received)
+                    else:
+                        if experiment_config.weights_for_ps:
+                            _ = self.train_with_weights(self.pseudo_label_received)
+                        else:
+                            _ = self.train(self.pseudo_label_received)
+
+                # Always do local fine-tune each round
+                if t == 0:
+                   self.fine_tune(50)
+                else:
+                    self.fine_tune()
 
         # send PLs to server
             self.pseudo_label_to_send = self.evaluate()
@@ -1539,8 +1538,12 @@ class Client_pFedCK(Client):
         super().__init__(id_, client_data, global_data, global_test_data, local_test_data)
         self.rnd_net = Random((self.seed + 1) * 17 + 13 + (id_ + 1) * 17)
 
-        self.personalized_model =get_rnd_net(self.rnd_net) #AlexNet(num_classes=experiment_config.num_classes).to(device)
+        self.personalized_model, t =get_rnd_net(self.rnd_net) #AlexNet(num_classes=experiment_config.num_classes).to(device)
+
+
         self.interactive_model = AlexNet(num_classes=experiment_config.num_classes).to(device)
+
+
         self.initial_state = None  # To store interactive model's state before training
 
     def set_models(self, personalized_state, interactive_state):
@@ -1627,6 +1630,52 @@ class Client_pFedCK(Client):
         self.interactive_model.load_state_dict(updated_state)
         print(f"Client {self.id_}: Updated interactive model with average parameter variations.")
 
+class Server_pFedCK(Server):
+    def __init__(self, id_, global_data, test_data, clients_ids, clients_test_data_dict, clients):
+        super().__init__(id_, global_data, test_data, clients_ids, clients_test_data_dict)
+        self.clients = clients  # List of Client_pFedCK instances
+
+    def calculate_cosine_similarity(self, delta_w1, delta_w2):
+        """Flatten and compute cosine similarity."""
+        flat1 = torch.cat([v.flatten() for v in delta_w1.values()]).cpu().numpy()
+        flat2 = torch.cat([v.flatten() for v in delta_w2.values()]).cpu().numpy()
+        dot_product = np.dot(flat1, flat2)
+        norm1, norm2 = np.linalg.norm(flat1), np.linalg.norm(flat2)
+        return dot_product / (norm1 * norm2 + 1e-8)
+
+    def cluster_clients(self, delta_ws, num_clusters=5):
+        n = len(delta_ws)
+        similarities = np.zeros((n, n))
+
+        for i in range(n):
+            for j in range(i + 1, n):
+                sim = self.calculate_cosine_similarity(delta_ws[i], delta_ws[j])
+                similarities[i, j] = similarities[j, i] = sim
+
+        kmeans = KMeans(n_clusters=num_clusters)
+        kmeans.fit(similarities)
+        return kmeans.labels_
+
+    def average_parameter_variations(self, delta_ws, cluster_labels):
+        cluster_avg = {}
+        for cluster_id in np.unique(cluster_labels):
+            indices = np.where(cluster_labels == cluster_id)[0]
+            avg_variation = copy.deepcopy(delta_ws[indices[0]])
+            for key in avg_variation:
+                avg_variation[key] = sum(delta_ws[i][key] for i in indices) / len(indices)
+            cluster_avg[cluster_id] = avg_variation
+        return cluster_avg
+
+    def send_avg_delta_to_clients(self, cluster_avg, cluster_labels):
+        for idx, client in enumerate(self.clients):
+            cluster_id = cluster_labels[idx]
+            avg_delta_w = cluster_avg[cluster_id]
+            client.update_interactive_model(avg_delta_w)
+
+    def cluster_and_aggregate(self, delta_ws):
+        cluster_labels = self.cluster_clients(delta_ws, num_clusters=5)
+        cluster_avg = self.average_parameter_variations(delta_ws, cluster_labels)
+        self.send_avg_delta_to_clients(cluster_avg, cluster_labels)
 
 class Client_FedAvg(Client):
     def __init__(self, id_, client_data, global_data, global_test_data, local_test_data):
@@ -1889,52 +1938,6 @@ class Client_PseudoLabelsClusters_with_division(Client):
 
 
 
-class Server_pFedCK(Server):
-    def __init__(self, id_, global_data, test_data, clients_ids, clients_test_data_dict, clients):
-        super().__init__(id_, global_data, test_data, clients_ids, clients_test_data_dict)
-        self.clients = clients  # List of Client_pFedCK instances
-
-    def calculate_cosine_similarity(self, delta_w1, delta_w2):
-        """Flatten and compute cosine similarity."""
-        flat1 = torch.cat([v.flatten() for v in delta_w1.values()]).cpu().numpy()
-        flat2 = torch.cat([v.flatten() for v in delta_w2.values()]).cpu().numpy()
-        dot_product = np.dot(flat1, flat2)
-        norm1, norm2 = np.linalg.norm(flat1), np.linalg.norm(flat2)
-        return dot_product / (norm1 * norm2 + 1e-8)
-
-    def cluster_clients(self, delta_ws, num_clusters=5):
-        n = len(delta_ws)
-        similarities = np.zeros((n, n))
-
-        for i in range(n):
-            for j in range(i + 1, n):
-                sim = self.calculate_cosine_similarity(delta_ws[i], delta_ws[j])
-                similarities[i, j] = similarities[j, i] = sim
-
-        kmeans = KMeans(n_clusters=num_clusters)
-        kmeans.fit(similarities)
-        return kmeans.labels_
-
-    def average_parameter_variations(self, delta_ws, cluster_labels):
-        cluster_avg = {}
-        for cluster_id in np.unique(cluster_labels):
-            indices = np.where(cluster_labels == cluster_id)[0]
-            avg_variation = copy.deepcopy(delta_ws[indices[0]])
-            for key in avg_variation:
-                avg_variation[key] = sum(delta_ws[i][key] for i in indices) / len(indices)
-            cluster_avg[cluster_id] = avg_variation
-        return cluster_avg
-
-    def send_avg_delta_to_clients(self, cluster_avg, cluster_labels):
-        for idx, client in enumerate(self.clients):
-            cluster_id = cluster_labels[idx]
-            avg_delta_w = cluster_avg[cluster_id]
-            client.update_interactive_model(avg_delta_w)
-
-    def cluster_and_aggregate(self, delta_ws):
-        cluster_labels = self.cluster_clients(delta_ws, num_clusters=5)
-        cluster_avg = self.average_parameter_variations(delta_ws, cluster_labels)
-        self.send_avg_delta_to_clients(cluster_avg, cluster_labels)
 
 
 class Server_PseudoLabelsClusters_with_division(Server):
