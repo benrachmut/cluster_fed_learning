@@ -232,6 +232,24 @@ class SqueezeNetServer(nn.Module):
             return self.heads[f"head_{cluster_id}"](x)
         return {f"head_{i}": head(x) for i, head in self.heads.items()}
 
+
+def get_rnd_net(rnd:Random = None):
+    p = rnd.random()
+    if p <= 0.25:
+        print("ResNet18Server")
+        return ResNet18Server(num_classes=experiment_config.num_classes).to(device)
+    if 0.25 < p <= 0.5:
+        print("MobileNetV2Server")
+
+        return MobileNetV2Server(num_classes=experiment_config.num_classes).to(device)
+    if 0.5 < p <= 0.75:
+        print("SqueezeNetServer")
+
+        return SqueezeNetServer(num_classes=experiment_config.num_classes).to(device)
+    else:
+        print("AlexNet")
+
+        return AlexNet(num_classes=experiment_config.num_classes).to(device)
 def get_client_model(rnd:Random = None):
     if experiment_config.client_net_type == NetType.ALEXNET:
         return AlexNet(num_classes=experiment_config.num_classes).to(device)
@@ -241,22 +259,7 @@ def get_client_model(rnd:Random = None):
         return MobileNetV2Server(num_classes=experiment_config.num_classes).to(device)
 
     if experiment_config.client_net_type == NetType.rnd_net:
-        p = rnd.random()
-        if p<=0.25:
-            print("ResNet18Server")
-            return ResNet18Server(num_classes=experiment_config.num_classes).to(device)
-        if 0.25<p<=0.5:
-            print("MobileNetV2Server")
-
-            return MobileNetV2Server(num_classes=experiment_config.num_classes).to(device)
-        if 0.5<p<=0.75:
-            print("SqueezeNetServer")
-
-            return SqueezeNetServer(num_classes=experiment_config.num_classes).to(device)
-        else:
-            print("AlexNet")
-
-            return  AlexNet(num_classes=experiment_config.num_classes).to(device)
+        return get_rnd_net(rnd)
 
 
 
@@ -458,6 +461,7 @@ class Client(LearningEntity):
         self.rnd_net = Random((self.seed + 1) * 17 + 13 + (id_ + 1) * 17)
         self.local_data = client_data
         self.model = get_client_model(self.rnd_net)
+        self.personal_model = self.get_personal_model()
         self.model.apply(self.initialize_weights)
         self.server = None
         self.pseudo_label_L2 = {}
@@ -781,6 +785,19 @@ class Client(LearningEntity):
         print(f"Total gradient elements: {total_elems}")
         print(f"Total gradient size: {total_bytes / 1024 / 1024:.4f} MB\n")
 
+    def get_personal_model(self):
+        if isinstance(self.model,ResNet18Server):
+            return NetType.ResNet
+        if isinstance(self.model,MobileNetV2Server):
+            return NetType.MobileNetV2
+        if isinstance(self.model, SqueezeNetServer ):
+            return NetType.SqueezeNet
+        if isinstance(self.model, AlexNet):
+            return NetType.ALEXNET
+
+
+
+
 
 class Server(LearningEntity):
     def __init__(self, id_, global_data, test_data, clients_ids, clients_test_data_dict):
@@ -1087,12 +1104,12 @@ class Server(LearningEntity):
         print(f"Mean pseudo-labels shape: {mean_pseudo_labels.shape}")
         print(f"*** {self.__str__()} train *** Cluster: {cluster_num} ***")
 
-        if experiment_config.server_net_type == NetType.VGG:
-            loader = DataLoader(self.global_data, batch_size=32,
-                                shuffle=False, num_workers=0, drop_last=False)
-            print("batch_size=32")
-        else:
-            loader = DataLoader(self.global_data, batch_size=experiment_config.batch_size,
+        #if experiment_config.server_net_type == NetType.VGG:
+        #    loader = DataLoader(self.global_data, batch_size=32,
+        #                        shuffle=False, num_workers=0, drop_last=False)
+        #    print("batch_size=32")
+        #else:
+        loader = DataLoader(self.global_data, batch_size=experiment_config.batch_size,
                                 shuffle=False, num_workers=0, drop_last=False)
 
         m = self.model if selected_model is None else selected_model
@@ -1153,12 +1170,12 @@ class Server(LearningEntity):
         print(f"Mean pseudo-labels shape: {mean_pseudo_labels.shape}")
         print(f"*** {self.__str__()} train *** Cluster: {cluster_num} ***")
 
-        if experiment_config.server_net_type == NetType.VGG:
-            loader = DataLoader(self.global_data, batch_size=32,
-                                    shuffle=False, num_workers=0, drop_last=False)
-            print("batch_size=32")
-        else:
-            loader = DataLoader(self.global_data, batch_size=experiment_config.batch_size,
+        #if experiment_config.server_net_type == NetType.VGG:
+        #    loader = DataLoader(self.global_data, batch_size=32,
+        #                            shuffle=False, num_workers=0, drop_last=False)
+        #    print("batch_size=32")
+        #else:
+        loader = DataLoader(self.global_data, batch_size=experiment_config.batch_size,
                                 shuffle=False, num_workers=0, drop_last=False)
 
         m = self.model if selected_model is None else selected_model
@@ -1520,7 +1537,9 @@ class Server(LearningEntity):
 class Client_pFedCK(Client):
     def __init__(self, id_, client_data, global_data, global_test_data, local_test_data):
         super().__init__(id_, client_data, global_data, global_test_data, local_test_data)
-        self.personalized_model = AlexNet(num_classes=experiment_config.num_classes).to(device)
+        self.rnd_net = Random((self.seed + 1) * 17 + 13 + (id_ + 1) * 17)
+
+        self.personalized_model =get_rnd_net(self.rnd_net) #AlexNet(num_classes=experiment_config.num_classes).to(device)
         self.interactive_model = AlexNet(num_classes=experiment_config.num_classes).to(device)
         self.initial_state = None  # To store interactive model's state before training
 

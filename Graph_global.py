@@ -2,6 +2,8 @@ import os
 import pickle
 from pickle import FALSE
 
+from matplotlib.lines import Line2D
+
 from config import *
 import numpy as np
 import matplotlib.pyplot as plt
@@ -121,6 +123,37 @@ def update_data(data, data_type):
         new_xy = {x + 1: y for x, y in xy_dict.items()}  # shift x keys by +1
         new_xy[0.0] = start_point[data_type]             # add new point at x = 0
         data[algo] = dict(sorted(new_xy.items()))        # optional: sort by x if desired
+
+
+def update_data_v3(data, data_type, flag=False):
+    """
+    - If flag is False:
+        * drop entries where x == 1
+        * shift all x > 1 to x-1
+        * keep x < 1 unchanged
+    - If flag is True: leave keys as-is.
+    Then add x=0.0 seeded with start_point[data_type] repeated to match the
+    series length at x=1 (after shifting) or, if missing, any series length.
+    """
+    if not flag:
+        new_xy = {}
+        for x, y in data.items():
+            # remove x == 1
+            if x == 1 or x == 1.0:
+                continue
+            # shift x > 1 down by 1
+            new_x = (x - 1) if (x > 1) else x
+            new_xy[new_x] = y
+    else:
+        new_xy = dict(data)
+
+    # Determine how many seeds to add at x=0.0
+    # Prefer the length at x=1 (after shift), else fallback to any series length, else 0.
+    any_series = next(iter(new_xy.values()), [])
+    series_len = len(new_xy.get(1, any_series))
+
+    new_xy[0.0] = [start_point[data_type]] * series_len
+    return dict(sorted(new_xy.items()))
 
 def update_data_v2(data, data_type, flag = False):
     #for algo, xy_dict in data.items():
@@ -249,7 +282,7 @@ def switch_algo_and_seed_cluster(merged_dict,dich,data_type):
 
 def switch_algo_and_seed(merged_dict,dich,data_type):
     rds = {}
-    for seed in seeds_dict[dich][data_type]:
+    for seed in [1]:
         for algo in merged_dict[seed]:
             algo_name = algo_names[algo]
             if algo == AlgorithmSelected.PseudoLabelsClusters.name:
@@ -535,27 +568,29 @@ def plot_model_server_client_grid(data_dict, x_label="Iterations", y_label="Top-
 
 
 
+
 def plot_model_server_client(data_dict, x_label="Iterations", y_label="Top-1 Accuracy (%)", confidence=0.95):
     assert len(data_dict) == 1, "Expected exactly 1 alpha for this plot."
 
     line_styles = {"Server": "solid", "Clients": "dashed"}
 
-    fig, ax = plt.subplots(figsize=(6, 5))
+    # Give the right side some room for side legends
+    fig, ax = plt.subplots(figsize=(6.5, 5))  # a touch wider helps
+    fig.subplots_adjust(right=0.78)           # reserve space on the right
 
     global_lines = []
     global_labels = []
     seen_labels = set()
 
-    # Compute global ymin and ymax
+    # Compute global ymin and ymax (kept as in your code; not enforced)
     all_vals = []
     for model_data in data_dict.values():
         for role_data in model_data.values():
             for iter_data in role_data.values():
                 for vals in iter_data.values():
                     all_vals.extend(vals)
-
-    ymin = 20
-    ymax = 36
+    xmin = 0
+    xmax = 15
 
     # Plot each model-role curve
     for alpha_name, model_data in data_dict.items():
@@ -569,7 +604,7 @@ def plot_model_server_client(data_dict, x_label="Iterations", y_label="Top-1 Acc
                     vals = np.array(iter_data[it])
                     mean = np.mean(vals)
                     stderr = stats.sem(vals)
-                    h = stderr * stats.norm.ppf((1 + confidence) / 2.)
+                    h = stderr * stats.norm.ppf((1 + confidence) / 2.0)
                     means.append(mean)
                     lower_bounds.append(mean - h)
                     upper_bounds.append(mean + h)
@@ -580,7 +615,7 @@ def plot_model_server_client(data_dict, x_label="Iterations", y_label="Top-1 Acc
                 upper_bounds = np.array(upper_bounds)
 
                 label = f"{model_name}-{role}"
-                line, = ax.plot(x_values, means, label=label, linestyle=linestyle)
+                (line,) = ax.plot(x_values, means, label=label, linestyle=linestyle)
                 ax.fill_between(x_values, lower_bounds, upper_bounds, alpha=0.2)
 
                 if label not in seen_labels:
@@ -591,16 +626,46 @@ def plot_model_server_client(data_dict, x_label="Iterations", y_label="Top-1 Acc
         ax.set_title(f"$\\alpha = {alpha_name}$", fontsize=axes_number_font)
         ax.set_xlabel(x_label, fontsize=axes_titles_font)
         ax.set_ylabel(y_label, fontsize=axes_titles_font)
-        ax.tick_params(axis='both', labelsize=tick_font_size)
-        #ax.set_ylim(ymin, ymax)
+        ax.tick_params(axis="both", labelsize=tick_font_size)
 
-    fig.legend(global_lines, global_labels, loc='upper center', ncol=len(global_labels),
-               fontsize=legend_font_size, frameon=False)
-    plt.tight_layout(rect=[0, 0, 1, 0.92])
-    fig.savefig("figures/client_server_alpha.pdf", format="pdf")
 
-    plt.show()
-    return fig
+    # -------- Side legends --------
+    # Main legend: all model-role curves, on the right side
+    leg_models = fig.legend(
+        global_lines,
+        global_labels,
+        loc="center left",
+        bbox_to_anchor=(1.02, 0.5),
+        frameon=False,
+        fontsize=legend_font_size,
+        title="Model–Role",
+        title_fontsize=legend_font_size,
+    )
+
+    # Line-style legend: explains Server vs Clients
+    role_handles = [
+        Line2D([0], [0], linestyle=line_styles["Server"], linewidth=2, color="k"),
+        Line2D([0], [0], linestyle=line_styles["Clients"], linewidth=2, color="k"),
+    ]
+    leg_styles = fig.legend(
+        role_handles,
+        ["Server", "Clients"],
+        loc="upper left",
+        bbox_to_anchor=(1.02, 0.95),
+        frameon=False,
+        fontsize=max(16 - 2, 8),
+        title="Line Style",
+        title_fontsize=max(16 - 2, 8),
+    )
+    # Ensure both legends render
+    ax.add_artist(leg_models)
+    ax.add_artist(leg_styles)
+    ax.set_xlim(xmin, xmax)
+
+    # --------------------------------
+
+
+    return plt,fig
 
 def get_PseudoLabelsClusters_name(algo,dict_):
     ans = []
@@ -608,13 +673,15 @@ def get_PseudoLabelsClusters_name(algo,dict_):
         if net_type == NetsType.C_alex_S_vgg.name:
             algo_name = "C=AlexNet,S=VGG"
         if net_type == NetsType.C_alex_S_alex.name:
-            algo_name = "C=AlexNet,S=alexNet"
+            algo_name = "C=AlexNet,S=AlexNet"
         if net_type == NetsType.C_MobileNet_S_vgg.name:
             algo_name = "C=MobileNet,S=VGG"
         if net_type == NetsType.C_rnd_S_alex.name:
+            algo_name = "C=Random,S=AlexNet"
+        if net_type == NetsType.C_rnd_S_Vgg.name:
             algo_name = "C=Random,S=VGG"
         if net_type == NetsType.C_MobileNet_S_alex.name:
-            algo_name = "C=random,S=VGG"
+            algo_name = "C=MobileNet,S=VGG"
 
 
         ans.append(algo_name)
@@ -715,11 +782,14 @@ def extract_rd_PseudoLabelsClusters(algo,dict_):
 
         if name == "C=AlexNet,S=VGG":
             dict_1 = dict_[NetsType.C_alex_S_vgg.name]
-        if name == "C=AlexNet,S=alexNet":
+        if name == "C=AlexNet,S=AlexNet":
             dict_1 = dict_[NetsType.C_alex_S_alex.name]
         if name == "C=MobileNet,S=VGG":
             dict_1 = dict_[NetsType.C_MobileNet_S_vgg.name]
         if name == "C=Random,S=VGG":
+            dict_1 = dict_[NetsType.C_rnd_S_Vgg.name]
+
+        if name == "C=Random,S=AlexNet":
             dict_1 = dict_[NetsType.C_rnd_S_alex.name]
         if name == "C=random,S=VGG":
             dict_1 = dict_[NetsType.C_rnd_S_alex.name]
@@ -778,7 +848,7 @@ def collect_data_per_server_client_iteration(merged_dict,top_what,data_type):
                         data_per_iteration_server[iter_] = []
                     data_per_iteration_server[iter_].append(v)
 
-        data_per_iteration_client = update_data_v2(data_per_iteration_client, data_type)
+        data_per_iteration_client = update_data_v3(data_per_iteration_client, data_type)
         data_per_iteration_server = update_data_v2(data_per_iteration_server, data_type, flag=True)
 
         #ans[algo] = data_per_iteration_client

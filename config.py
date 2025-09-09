@@ -71,12 +71,14 @@ class ServerInputTech(Enum):
     mean = 1
     max = 2
 class NetType(Enum):
-    rnd_net = "Random Net"
+    rnd_net = "Random"
     ALEXNET = "AlexNet"
     VGG = "VGG"
     ResNet = "ResNet"
-    DenseNetServer= "DenseNetServer"
-    MobileNetV2 = "MobileNetV2"
+    DenseNet= "DenseNet"
+    MobileNetV2 = "MobileNet"
+    SqueezeNet = "SqueezeNet"
+    rnd_net1 = "Random Net"
 
 class DataSet(Enum):
     CIFAR100 = "CIFAR100"
