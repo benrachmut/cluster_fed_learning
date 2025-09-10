@@ -595,6 +595,147 @@ def plot_model_server_client_grid(data_dict, x_label="Iterations", y_label="Top-
     return fig
 
 
+import numpy as np
+import matplotlib.pyplot as plt
+from scipy import stats
+
+def plot_model_algos(data_dict, x_label="Iterations", y_label="Top-1 Accuracy (%)", confidence=0.95):
+    """
+    Expects:
+      data_dict[alpha][algorithm]["Clients"][iteration] -> list of metric values
+
+    Plots a 1x2 grid (two alphas). Each subplot shows the "Clients" curve for
+    each algorithm; different algorithms = different line colors. Confidence
+    intervals are shaded. Y-limits are shared across subplots based on the
+    selected "Clients" data only.
+    """
+    assert len(data_dict) == 2, "Expected exactly 2 alphas for a 1x2 plot."
+
+    # Build a stable algorithm list across all alphas (order by name for consistency)
+    all_algos = set()
+    for alpha_data in data_dict.values():
+        for algo_name in alpha_data.keys():
+            all_algos.add(algo_name)
+    algo_list = sorted(all_algos)
+
+    # Color map for algorithms (fallback to tab10 cycling)
+    import itertools
+    tab10 = plt.get_cmap("tab10").colors
+    color_cycle = itertools.cycle(tab10)
+    algo_colors = {algo: next(color_cycle) for algo in algo_list}
+
+    # --- Compute global ymin/ymax from the "Clients" series only ---
+    all_vals = []
+    for alpha_data in data_dict.values():
+        for algo_name, role_dict in alpha_data.items():
+            if "Clients" not in role_dict:
+                continue
+            iter_dict = role_dict["Clients"]
+            for vals in iter_dict.values():
+                all_vals.extend(vals)
+
+    if not all_vals:
+        raise ValueError('No values found under key "Clients" to plot.')
+
+    # Use a small pad for nicer aesthetics
+    vmin = np.nanmin(all_vals)
+    vmax = np.nanmax(all_vals)
+    pad = max(1e-6, 0.03 * (vmax - vmin) if vmax > vmin else 1.0)
+    ymin = float(vmin - pad)
+    ymax = float(vmax + pad)
+
+    # --- Create figure and axes ---
+    fig, axs = plt.subplots(1, 2, figsize=(12, 5))
+    axs = axs.flatten()
+
+    global_lines = []
+    global_labels = []
+    seen_labels = set()
+
+    # Ensure deterministic alpha panel order
+    alpha_items = list(data_dict.items())
+    # Sort by the alpha key if sortable; otherwise keep insertion order
+    try:
+        alpha_items.sort(key=lambda kv: float(kv[0]))
+    except Exception:
+        pass
+
+    for i, (alpha_name, alpha_data) in enumerate(alpha_items):
+        ax = axs[i]
+
+        for algo_name in algo_list:
+            role_dict = alpha_data.get(algo_name, {})
+            if "Clients" not in role_dict:
+                # Skip if this alpha lacks Clients data for the algorithm
+                continue
+
+            iter_dict = role_dict["Clients"]
+            x_values = sorted(iter_dict.keys())
+
+            means = []
+            lower_bounds = []
+            upper_bounds = []
+
+            for it in x_values:
+                vals = np.asarray(iter_dict[it], dtype=float)
+                if vals.size == 0 or np.all(np.isnan(vals)):
+                    means.append(np.nan)
+                    lower_bounds.append(np.nan)
+                    upper_bounds.append(np.nan)
+                    continue
+
+                mean = np.nanmean(vals)
+                # Handle SEM safely (n could be 1)
+                n = np.sum(~np.isnan(vals))
+                if n <= 1:
+                    h = 0.0
+                else:
+                    stderr = stats.sem(vals, nan_policy='omit')
+                    h = stderr * stats.norm.ppf((1 + confidence) / 2.0)
+
+                means.append(mean)
+                lower_bounds.append(mean - h)
+                upper_bounds.append(mean + h)
+
+            x_values = np.array(x_values, dtype=float)
+            means = np.array(means, dtype=float)
+            lower_bounds = np.array(lower_bounds, dtype=float)
+            upper_bounds = np.array(upper_bounds, dtype=float)
+
+            # Drop NaNs if any (keeps lines clean)
+            mask = ~np.isnan(means)
+            x_plot = x_values[mask]
+            m_plot = means[mask]
+            lb_plot = lower_bounds[mask]
+            ub_plot = upper_bounds[mask]
+
+            color = algo_colors[algo_name]
+            label = algo_name  # only algorithm name, since all are "Clients"
+
+            if x_plot.size > 0:
+                line, = ax.plot(x_plot, m_plot, label=label, linewidth=2.0, color=color)
+                ax.fill_between(x_plot, lb_plot, ub_plot, alpha=0.2, color=color)
+
+                if label not in seen_labels:
+                    global_lines.append(line)
+                    global_labels.append(label)
+                    seen_labels.add(label)
+
+        # Titles, labels, ticks
+        ax.set_title(f"$\\alpha = {alpha_name}$", fontsize=axes_number_font)
+        ax.set_xlabel(x_label, fontsize=axes_titles_font)
+        ax.set_ylabel(y_label, fontsize=axes_titles_font)
+        ax.tick_params(axis='both', labelsize=tick_font_size)
+        ax.set_ylim(ymin, ymax)
+
+    # Shared legend at the top
+    fig.legend(global_lines, global_labels, loc='upper center',
+               ncol=max(1, len(global_labels)), fontsize=legend_font_size, frameon=False)
+
+    plt.tight_layout(rect=[0, 0, 1, 0.92])
+    fig.savefig("figures/clients_only_alphas.pdf", format="pdf")
+    plt.show()
+    return fig
 
 
 def plot_model_server_client(data_dict, x_label="Iterations", y_label="Top-1 Accuracy (%)", confidence=0.95):

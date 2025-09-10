@@ -105,8 +105,8 @@ if __name__ == '__main__':
     all_data = read_all_pkls("diff_algo")
     merged_dict1 = merge_dicts(all_data)
     top_what_list = [1,5,10]
-    data_types = [DataSet.CIFAR100.name,DataSet.CIFAR10.name]
-    data_type = DataSet.CIFAR10.name
+    data_types = [DataSet.CIFAR100.name]
+    data_type = DataSet.CIFAR100.name
     top_what = 1
     data_for_graph = {}
     for dich in [1,5]:
@@ -120,7 +120,7 @@ if __name__ == '__main__':
 
     # --- usage example with your code ---
     # after you make the plot:
-    plt,the_plot = plot_model_server_client(data_for_graph)
+    plt,the_plot = plot_model_algos(data_for_graph)
 
     # If plot_model_server_client returns an Axes, pass it in; otherwise grab current axes.
     ax = the_plot if hasattr(the_plot, 'get_lines') else plt.gca()
