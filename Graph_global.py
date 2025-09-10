@@ -2,6 +2,7 @@ import os
 import pickle
 from pickle import FALSE
 
+from jinja2.nodes import Break
 from matplotlib.lines import Line2D
 
 from config import *
@@ -278,6 +279,33 @@ def switch_algo_and_seed_cluster(merged_dict,dich,data_type):
             if cluster_correct_num not in rds:
                 rds[cluster_correct_num] = []
             rds[cluster_correct_num].append(rd)
+    return rds
+
+def switch_algo_and_seedV2(merged_dict):
+    rds = {}
+    for seed in [1]:
+        for algo in merged_dict[seed]:
+            algo_name = algo_names[algo]
+            #if algo == AlgorithmSelected.PseudoLabelsClusters.name:
+            rds[algo_name] = []
+                #algo_name_list = get_PseudoLabelsClusters_name(algo,merged_dict[seed][algo])
+                #for name_ in algo_name_list:
+                #    if name_ not in rds.keys() :
+                #        rds[name_] = []
+
+            #elif algo_name not in rds.keys() :
+            #    rds[algo_name] = []
+            rd_output = extract_rd(algo, merged_dict[seed][algo])
+            if isinstance(rd_output,dict):
+                for k,v in rd_output.items():
+                    rds[algo_name].append(v)
+                    break
+            else:
+                rds[algo_name].append(rd_output)
+
+
+
+            #ans[algo].append(merged_dict[seed][algo])
     return rds
 
 def switch_algo_and_seed(merged_dict,dich,data_type):
@@ -831,30 +859,48 @@ def extract_rd(algo,dict_):
 def collect_data_per_server_client_iteration(merged_dict,top_what,data_type):
     ans = {}
     for algo, rd_list in merged_dict.items():
-        data_per_iteration_client = {}
-        data_per_iteration_server = {}
+        if algo == "MAPL":
+            data_per_iteration_client = {}
+            data_per_iteration_server = {}
 
-        for rd in rd_list:
-            data_per_client,data_per_server = get_data_per_client_and_server(rd,algo,top_what,data_type)
-            for client_id, data_dict in data_per_client.items():
-                for iter_, v in data_dict.items():
-                    if iter_ not in data_per_iteration_client.keys():
-                        data_per_iteration_client[iter_] = []
-                    data_per_iteration_client[iter_].append(v)
-            #############################################################
-            for client_id, data_dict in data_per_server.items():
-                for iter_, v in data_dict.items():
-                    if iter_ not in data_per_iteration_server.keys():
-                        data_per_iteration_server[iter_] = []
-                    data_per_iteration_server[iter_].append(v)
+            for rd in rd_list:
+                data_per_client,data_per_server = get_data_per_client_and_server(rd,algo,top_what,data_type)
+                for client_id, data_dict in data_per_client.items():
+                    for iter_, v in data_dict.items():
+                        if iter_ not in data_per_iteration_client.keys():
+                            data_per_iteration_client[iter_] = []
+                        data_per_iteration_client[iter_].append(v)
+                #############################################################
+                for client_id, data_dict in data_per_server.items():
+                    for iter_, v in data_dict.items():
+                        if iter_ not in data_per_iteration_server.keys():
+                            data_per_iteration_server[iter_] = []
+                        data_per_iteration_server[iter_].append(v)
 
-        data_per_iteration_client = update_data_v3(data_per_iteration_client, data_type)
-        data_per_iteration_server = update_data_v2(data_per_iteration_server, data_type, flag=True)
+            data_per_iteration_client = update_data_v3(data_per_iteration_client, data_type)
+            data_per_iteration_server = update_data_v2(data_per_iteration_server, data_type, flag=True)
 
-        #ans[algo] = data_per_iteration_client
-        ans[algo]={"Clients":data_per_iteration_client}
-        ans[algo]["Server"] = data_per_iteration_server
-        print()
+            #ans[algo] = data_per_iteration_client
+            ans[algo]={"Clients":data_per_iteration_client}
+            ans[algo]["Server"] = data_per_iteration_server
+            print()
+        else:
+            data_per_iteration_client = {}
+            for rd in rd_list:
+                data_per_client, data_per_server = get_data_per_client_and_server(rd, algo, top_what, data_type)
+                for client_id, data_dict in data_per_client.items():
+                    for iter_, v in data_dict.items():
+                        if iter_ not in data_per_iteration_client.keys():
+                            data_per_iteration_client[iter_] = []
+                        data_per_iteration_client[iter_].append(v)
+                #############################################################
+
+
+            data_per_iteration_client = update_data_v3(data_per_iteration_client, data_type)
+
+            # ans[algo] = data_per_iteration_client
+            ans[algo] = {"Clients": data_per_iteration_client}
+
 
     return ans
 
