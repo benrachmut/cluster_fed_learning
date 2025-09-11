@@ -120,7 +120,7 @@ if __name__ == '__main__':
 
     # --- usage example with your code ---
     # after you make the plot:
-    plt,the_plot = plot_model_algos_v2(data_for_graph)
+    plt,the_plot = plot_model_algos(data_for_graph)
 
     # If plot_model_server_client returns an Axes, pass it in; otherwise grab current axes.
     ax = the_plot if hasattr(the_plot, 'get_lines') else plt.gca()
