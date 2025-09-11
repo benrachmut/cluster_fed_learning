@@ -599,6 +599,161 @@ import numpy as np
 import matplotlib.pyplot as plt
 from scipy import stats
 
+
+def plot_model_algos_v2(
+    data_dict,
+    x_label="Iterations",
+    y_label="Top-1 Accuracy (%)",
+    confidence=0.95,
+):
+    """
+    Expects:
+      data_dict[alpha][algorithm][role]["iteration"] -> list of metric values
+        where role is usually "Clients" and/or "Server".
+
+    Behavior:
+      - For algorithms whose name contains "MAPL" (case-insensitive), plot the
+        "Server" series.
+      - For all other algorithms, plot the "Clients" series.
+      - Two subplots (one per alpha). Different algorithms = different colors.
+      - Confidence intervals are shaded (normal-approx CI from SEM).
+      - Shared Y-limits computed only from the actually plotted series
+        (MAPL->Server; others->Clients).
+    """
+    assert len(data_dict) == 2, "Expected exactly 2 alphas for a 1x2 plot."
+
+    import itertools
+    import numpy as np
+    from scipy import stats
+    import matplotlib.pyplot as plt
+
+    # ----- collect algorithms (stable, sorted) -----
+    all_algos = set()
+    for alpha_data in data_dict.values():
+        for algo_name in alpha_data.keys():
+            all_algos.add(algo_name)
+    algo_list = sorted(all_algos)
+
+    # color map for algorithms
+    tab10 = plt.get_cmap("tab10").colors
+    color_cycle = itertools.cycle(tab10)
+    algo_colors = {algo: next(color_cycle) for algo in algo_list}
+
+    def desired_role_for_algo(algo_name: str) -> str:
+        return "Server" if "mapl" in algo_name.lower() else "Clients"
+
+    # ----- compute global y-limits from *selected* roles only -----
+    all_vals = []
+    for alpha_data in data_dict.values():
+        for algo_name in algo_list:
+            role_key = desired_role_for_algo(algo_name)
+            role_dict = alpha_data.get(algo_name, {}).get(role_key, None)
+            if not isinstance(role_dict, dict):
+                continue
+            for vals in role_dict.values():
+                all_vals.extend(vals)
+
+    if not all_vals:
+        raise ValueError('No values found in the selected roles (MAPL->"Server", others->"Clients").')
+
+    vmin = np.nanmin(all_vals)
+    vmax = np.nanmax(all_vals)
+    pad = max(1e-6, 0.03 * (vmax - vmin) if vmax > vmin else 1.0)
+    ymin = float(vmin - pad)
+    ymax = float(vmax + pad)
+
+    # ----- figure & alpha ordering -----
+    fig, axs = plt.subplots(1, 2, figsize=(12, 5))
+    axs = axs.flatten()
+
+    alpha_items = list(data_dict.items())
+    try:
+        alpha_items.sort(key=lambda kv: float(kv[0]))
+    except Exception:
+        pass
+
+    global_lines, global_labels, seen_labels = [], [], set()
+
+    for i, (alpha_name, alpha_data) in enumerate(alpha_items):
+        ax = axs[i]
+
+        for algo_name in algo_list:
+            role_key = desired_role_for_algo(algo_name)
+            role_dict = alpha_data.get(algo_name, {}).get(role_key, None)
+            if not isinstance(role_dict, dict):
+                # Nothing to plot for this (alpha, algo) with the chosen role.
+                continue
+
+            # x-values are iterations (keys) sorted numerically
+            x_values = sorted(role_dict.keys(), key=lambda x: float(x))
+            means, lower_bounds, upper_bounds = [], [], []
+
+            for it in x_values:
+                vals = np.asarray(role_dict[it], dtype=float)
+                if vals.size == 0 or np.all(np.isnan(vals)):
+                    means.append(np.nan)
+                    lower_bounds.append(np.nan)
+                    upper_bounds.append(np.nan)
+                    continue
+
+                mean = np.nanmean(vals)
+                n = np.sum(~np.isnan(vals))
+                if n <= 1:
+                    h = 0.0
+                else:
+                    stderr = stats.sem(vals, nan_policy="omit")
+                    h = stderr * stats.norm.ppf((1 + confidence) / 2.0)
+
+                means.append(mean)
+                lower_bounds.append(mean - h)
+                upper_bounds.append(mean + h)
+
+            x_values = np.array(x_values, dtype=float)
+            means = np.array(means, dtype=float)
+            lower_bounds = np.array(lower_bounds, dtype=float)
+            upper_bounds = np.array(upper_bounds, dtype=float)
+
+            mask = ~np.isnan(means)
+            x_plot = x_values[mask]
+            m_plot = means[mask]
+            lb_plot = lower_bounds[mask]
+            ub_plot = upper_bounds[mask]
+
+            if x_plot.size == 0:
+                continue
+
+            color = algo_colors[algo_name]
+            # Make it explicit in the legend when we used Server for MAPL
+            label = f"{algo_name} (Server)" if role_key == "Server" else algo_name
+
+            line, = ax.plot(x_plot, m_plot, label=label, linewidth=2.0, color=color)
+            ax.fill_between(x_plot, lb_plot, ub_plot, alpha=0.2, color=color)
+
+            if label not in seen_labels:
+                global_lines.append(line)
+                global_labels.append(label)
+                seen_labels.add(label)
+
+        ax.set_title(f"$\\alpha = {alpha_name}$", fontsize=axes_number_font)
+        ax.set_xlabel(x_label, fontsize=axes_titles_font)
+        ax.set_ylabel(y_label, fontsize=axes_titles_font)
+        ax.tick_params(axis="both", labelsize=tick_font_size)
+        ax.set_ylim(ymin, ymax)
+
+    fig.legend(
+        global_lines,
+        global_labels,
+        loc="upper center",
+        ncol=max(1, len(global_labels)),
+        fontsize=legend_font_size,
+        frameon=False,
+    )
+
+    plt.tight_layout(rect=[0, 0, 1, 0.92])
+    fig.savefig("figures/algos_mixed_roles_alphas.pdf", format="pdf")
+    plt.show()
+    return fig
+
 def plot_model_algos(data_dict, x_label="Iterations", y_label="Top-1 Accuracy (%)", confidence=0.95):
     """
     Expects:
