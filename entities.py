@@ -674,8 +674,6 @@ class Client(LearningEntity):
             print(f"Epoch [{ep + 1}/{experiment_config.epochs_num_train_client}], Loss: {last:.4f}")
         return last
 
-
-
     # ---------- orchestration ----------
     def iteration_context(self, t):
         self.current_iteration = t
