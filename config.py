@@ -200,7 +200,7 @@ class ExperimentConfig:
 
         # general vars
         self.local_batch = 64
-        self.batch_size = 64#32
+        self.batch_size = 128#32
         self.percent_train_data_use = 1
         self.percent_test_relative_to_train = 1
         self.num_rounds_multi_head = 1
@@ -269,7 +269,7 @@ class ExperimentConfig:
             self.learning_rate_train_s = 0.001
         scale = (self.batch_size / 128.0) if hasattr(self, "batch_size") else 1.0
         LR_FT = 1e-3 * scale  # 5e-4
-        LR_KD_C = 1e-3 * scale#3e-4 * scale  # 1.5e-4
+        LR_KD_C = 3e-4 * scale#3e-4 * scale  # 1.5e-4
         LR_KD_S = 1e-4 * scale  # 5e-5
 
         if net_type == NetsType.C_alex_S_alex:
