@@ -572,7 +572,10 @@ class Client(LearningEntity):
 
         self.local_data = client_data
         self.epoch_count = 0
-        self.model = get_client_model()
+        self.rnd_net = Random((self.seed + 1) * 17 + 13 + (id_ + 1) * 17)
+        self.local_data = client_data
+        self.model = get_client_model(self.rnd_net)
+        self.personal_model = self.get_personal_model()
         self.model.apply(self.initialize_weights)
         #self.train_learning_rate = experiment_config.learning_rate_train_c
         #self.weights = None
@@ -581,6 +584,16 @@ class Client(LearningEntity):
         self.pseudo_label_L2 = {}
         self.global_label_distribution = self.get_label_distribution()
 
+
+    def get_personal_model(self):
+        if isinstance(self.model,ResNet18Server):
+            return NetType.ResNet
+        if isinstance(self.model,MobileNetV2Server):
+            return NetType.MobileNetV2
+        if isinstance(self.model, SqueezeNetServer ):
+            return NetType.SqueezeNet
+        if isinstance(self.model, AlexNet):
+            return NetType.ALEXNET
 
     def get_label_distribution(self):
         label_counts = defaultdict(int)
@@ -1137,97 +1150,6 @@ class Client(LearningEntity):
         print(f"Total gradient elements: {total_grad_elements}")
         print(f"Total gradient size: {total_grad_bytes / 1024 / 1024:.4f} MB")
         print()
-
-class Client_pFedCK(Client):
-    def __init__(self, id_, client_data, global_data, global_test_data, local_test_data):
-        super().__init__(id_, client_data, global_data, global_test_data, local_test_data)
-        self.personalized_model = AlexNet(num_classes=experiment_config.num_classes).to(device)
-        self.interactive_model = AlexNet(num_classes=experiment_config.num_classes).to(device)
-        self.initial_state = None  # To store interactive model's state before training
-
-    def set_models(self, personalized_state, interactive_state):
-        self.personalized_model.load_state_dict(personalized_state)
-        self.interactive_model.load_state_dict(interactive_state)
-
-
-
-
-    def train(self,t):
-        self.current_iteration = t
-
-        # Save initial interactive model state for variation calculation
-        self.initial_state = copy.deepcopy(self.interactive_model.state_dict())
-
-        self.personalized_model.train()
-        self.interactive_model.train()
-
-        optimizer_personalized = torch.optim.Adam(self.personalized_model.parameters(), lr=1e-4)
-        optimizer_interaction = torch.optim.Adam(self.interactive_model.parameters(), lr=1e-4)
-        criterion = nn.CrossEntropyLoss()
-        train_loader = DataLoader(
-            self.local_data,
-            batch_size=experiment_config.batch_size,
-            shuffle=False,
-            num_workers=0,
-            drop_last=True
-        )
-
-        print(f"\nClient {self.id_} begins training\n")
-
-        for epoch in range(5):  # or experiment_config.epochs_num_train_client
-            total_loss_personalized, total_loss_interactive = 0.0, 0.0
-            batch_count = 0
-
-            for x, y in train_loader:
-                x, y = x.to(device), y.to(device)
-                batch_count += 1
-
-                # Train personalized model
-                optimizer_personalized.zero_grad()
-                loss_personalized = criterion(self.personalized_model(x), y)
-                loss_personalized.backward()
-                optimizer_personalized.step()
-                total_loss_personalized += loss_personalized.item()
-
-                # Train interactive model
-                optimizer_interaction.zero_grad()
-                loss_interactive = criterion(self.interactive_model(x), y)
-                loss_interactive.backward()
-                optimizer_interaction.step()
-                total_loss_interactive += loss_interactive.item()
-
-                # Sync personalized model with updated interactive model
-                self.personalized_model.load_state_dict(self.interactive_model.state_dict())
-
-            print(f"Epoch {epoch+1}/5 | Personalized Loss: {total_loss_personalized/batch_count:.4f} "
-                  f"| Interactive Loss: {total_loss_interactive/batch_count:.4f}")
-
-        self.accuracy_per_client_1[t] = self.evaluate_accuracy_single(data_ = self.local_test_set,model=self.personalized_model, k=1)
-        self.accuracy_per_client_5[t] = self.evaluate_accuracy(data_ = self.local_test_set,model=self.personalized_model, k=5)
-        self.accuracy_per_client_10[t] = self.evaluate_accuracy(data_ = self.local_test_set,model=self.personalized_model, k=10)
-        self.accuracy_per_client_100[t] = self.evaluate_accuracy(data_ = self.local_test_set,model=self.personalized_model, k=100)
-
-        print("accuracy_per_client_1",self.accuracy_per_client_1[t])
-        return self.calculate_param_variation()
-
-    def calculate_param_variation(self):
-        if self.initial_state is None:
-            raise ValueError("Initial state not set. Did you call train()?")
-
-        param_variations = {
-            key: self.interactive_model.state_dict()[key] - self.initial_state[key]
-            for key in self.initial_state
-        }
-        return param_variations
-
-    def update_interactive_model(self, avg_param_variations):
-        updated_state = self.interactive_model.state_dict()
-        for key, variation in avg_param_variations.items():
-            if key in updated_state:
-                updated_state[key] += variation
-        self.interactive_model.load_state_dict(updated_state)
-        print(f"Client {self.id_}: Updated interactive model with average parameter variations.")
-
 
 
 class Server(LearningEntity):
@@ -2207,6 +2129,99 @@ class Server(LearningEntity):
                         del other_in_distance_per_client[other]
                 del distance_per_client[other]
         return clusters_client_id_dict
+
+class Client_pFedCK(Client):
+    def __init__(self, id_, client_data, global_data, global_test_data, local_test_data):
+        super().__init__(id_, client_data, global_data, global_test_data, local_test_data)
+        self.personalized_model = AlexNet(num_classes=experiment_config.num_classes).to(device)
+        self.interactive_model = AlexNet(num_classes=experiment_config.num_classes).to(device)
+        self.initial_state = None  # To store interactive model's state before training
+
+    def set_models(self, personalized_state, interactive_state):
+        self.personalized_model.load_state_dict(personalized_state)
+        self.interactive_model.load_state_dict(interactive_state)
+
+
+
+
+    def train(self,t):
+        self.current_iteration = t
+
+        # Save initial interactive model state for variation calculation
+        self.initial_state = copy.deepcopy(self.interactive_model.state_dict())
+
+        self.personalized_model.train()
+        self.interactive_model.train()
+
+        optimizer_personalized = torch.optim.Adam(self.personalized_model.parameters(), lr=1e-4)
+        optimizer_interaction = torch.optim.Adam(self.interactive_model.parameters(), lr=1e-4)
+        criterion = nn.CrossEntropyLoss()
+        train_loader = DataLoader(
+            self.local_data,
+            batch_size=experiment_config.batch_size,
+            shuffle=False,
+            num_workers=0,
+            drop_last=True
+        )
+
+        print(f"\nClient {self.id_} begins training\n")
+
+        for epoch in range(5):  # or experiment_config.epochs_num_train_client
+            total_loss_personalized, total_loss_interactive = 0.0, 0.0
+            batch_count = 0
+
+            for x, y in train_loader:
+                x, y = x.to(device), y.to(device)
+                batch_count += 1
+
+                # Train personalized model
+                optimizer_personalized.zero_grad()
+                loss_personalized = criterion(self.personalized_model(x), y)
+                loss_personalized.backward()
+                optimizer_personalized.step()
+                total_loss_personalized += loss_personalized.item()
+
+                # Train interactive model
+                optimizer_interaction.zero_grad()
+                loss_interactive = criterion(self.interactive_model(x), y)
+                loss_interactive.backward()
+                optimizer_interaction.step()
+                total_loss_interactive += loss_interactive.item()
+
+                # Sync personalized model with updated interactive model
+                self.personalized_model.load_state_dict(self.interactive_model.state_dict())
+
+            print(f"Epoch {epoch+1}/5 | Personalized Loss: {total_loss_personalized/batch_count:.4f} "
+                  f"| Interactive Loss: {total_loss_interactive/batch_count:.4f}")
+
+        self.accuracy_per_client_1[t] = self.evaluate_accuracy_single(data_ = self.local_test_set,model=self.personalized_model, k=1)
+        self.accuracy_per_client_5[t] = self.evaluate_accuracy(data_ = self.local_test_set,model=self.personalized_model, k=5)
+        self.accuracy_per_client_10[t] = self.evaluate_accuracy(data_ = self.local_test_set,model=self.personalized_model, k=10)
+        self.accuracy_per_client_100[t] = self.evaluate_accuracy(data_ = self.local_test_set,model=self.personalized_model, k=100)
+
+        print("accuracy_per_client_1",self.accuracy_per_client_1[t])
+        return self.calculate_param_variation()
+
+    def calculate_param_variation(self):
+        if self.initial_state is None:
+            raise ValueError("Initial state not set. Did you call train()?")
+
+        param_variations = {
+            key: self.interactive_model.state_dict()[key] - self.initial_state[key]
+            for key in self.initial_state
+        }
+        return param_variations
+
+    def update_interactive_model(self, avg_param_variations):
+        updated_state = self.interactive_model.state_dict()
+        for key, variation in avg_param_variations.items():
+            if key in updated_state:
+                updated_state[key] += variation
+        self.interactive_model.load_state_dict(updated_state)
+        print(f"Client {self.id_}: Updated interactive model with average parameter variations.")
+
+
+
 
 
 
