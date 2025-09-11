@@ -161,7 +161,7 @@ def iterate_fl_clusters(clients,server,net_type,net_cluster_technique,server_inp
                 pik_name = data_set.name + "_" + str(num_clients) + "_" + str(
                     num_opt_clusters) + "_" + str(int(10 * (
                     server_amount_data))) + "_" + algorithm_selection.name + "_" + net_type.name + "_" + net_cluster_technique.name + "_" + cluster_technique.name + "_" + str(
-                    num_cluster) + "_" + str(experiment_config.alpha_dich)+"_"+"seed_"+str(experiment_config.seed_num)+str(int(server_amount_data*100))+"_ddd"
+                    num_cluster) + "_" + str(experiment_config.alpha_dich)+"_"+"seed_"+str(experiment_config.seed_num)+str(int(server_amount_data*100))+"_EEE"
             else:
                 data_to_pickle[data_set.name][num_clients][num_opt_clusters][server_amount_data][
                     alpha_dicht][experiment_config.seed_num][algorithm_selection.name][net_type.name][
@@ -173,7 +173,7 @@ def iterate_fl_clusters(clients,server,net_type,net_cluster_technique,server_inp
                 pik_name = data_set.name + "_" + str(num_clients) + "_" + str(
                     num_opt_clusters) + "_" + str(int(10 * (
                     server_amount_data))) + "_" + algorithm_selection.name + "_" + net_type.name + "_" + net_cluster_technique.name + "_" + cluster_technique.name + "_" + str(
-                    num_cluster) +"_"+ str(experiment_config.alpha_dich)+"_"+ str(epsilon)+"_"+str(int(server_amount_data*100))+"seed_"+str(experiment_config.seed_num)+"_ddd"
+                    num_cluster) +"_"+ str(experiment_config.alpha_dich)+"_"+ str(epsilon)+"_"+str(int(server_amount_data*100))+"seed_"+str(experiment_config.seed_num)+"_EEE"
 
 
             pickle_file_path = pik_name + ".pkl"
