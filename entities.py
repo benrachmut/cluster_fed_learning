@@ -247,6 +247,27 @@ def get_rnd_net(rnd:Random = None):
     else:
         print("AlexNet")
         return AlexNet(num_classes=experiment_config.num_classes).to(device)
+
+def get_rnd_net_weak(rnd:Random = None):
+    p = rnd.random()
+    if p <= 0.5:
+        print("MobileNetV2Server")
+        return MobileNetV2Server(num_classes=experiment_config.num_classes).to(device)
+    else:
+        print("SqueezeNetServer")
+        return SqueezeNetServer(num_classes=experiment_config.num_classes).to(device)
+
+
+def get_rnd_net_strong(rnd:Random = None):
+    p = rnd.random()
+    if p <= 0.5:
+        print("ResNet18Server")
+        return ResNet18Server(num_classes=experiment_config.num_classes).to(device)
+    else:
+        print("AlexNet")
+        return AlexNet(num_classes=experiment_config.num_classes).to(device)
+
+
 def get_client_model(rnd:Random = None):
     if experiment_config.client_net_type == NetType.ALEXNET:
         return AlexNet(num_classes=experiment_config.num_classes).to(device)
@@ -257,6 +278,10 @@ def get_client_model(rnd:Random = None):
 
     if experiment_config.client_net_type == NetType.rnd_net:
         return get_rnd_net(rnd)
+    if experiment_config.client_net_type == NetType.rndWeak:
+        return get_rnd_net_weak(rnd)
+    if experiment_config.client_net_type == NetType.rndStrong:
+        return get_rnd_net_strong(rnd)
 
 
 

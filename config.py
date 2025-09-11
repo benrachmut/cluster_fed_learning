@@ -71,6 +71,8 @@ class ServerInputTech(Enum):
     mean = 1
     max = 2
 class NetType(Enum):
+    rndStrong = "Random Strong"
+    rndWeak = "Random Weak"
     rnd_net = "Random"
     ALEXNET = "AlexNet"
     VGG = "VGG"
@@ -102,6 +104,9 @@ class NetsType(Enum):
     C_MobileNet_S_alex = 11
     C_rnd_S_alex = 9
     C_rnd_S_Vgg = 12
+
+    C_rndWeak_S_alex = 13
+    C_rndStrong_S_alex = 14
 
 
     C_alex = 3
@@ -285,6 +290,20 @@ class ExperimentConfig:
             self.learning_rate_fine_tune_c = LR_FT
             self.learning_rate_train_c = LR_KD_C
             self.learning_rate_train_s = LR_KD_S
+
+        elif net_type == NetsType.C_rndWeak_S_alex:
+            self.client_net_type = NetType.rndWeak
+            self.server_net_type = NetType.ALEXNET
+            self.learning_rate_fine_tune_c = LR_FT
+            self.learning_rate_train_c = LR_KD_C
+            self.learning_rate_train_s = LR_KD_S
+        elif net_type == NetsType.C_rndStrong_S_alex:
+            self.client_net_type = NetType.rndStrong
+            self.server_net_type = NetType.ALEXNET
+            self.learning_rate_fine_tune_c = LR_FT
+            self.learning_rate_train_c = LR_KD_C
+            self.learning_rate_train_s = LR_KD_S
+
 
         elif net_type == NetsType.C_rnd_S_Vgg:
             self.client_net_type = NetType.rnd_net
