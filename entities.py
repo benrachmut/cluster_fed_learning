@@ -287,12 +287,15 @@ import os
 # - Keeps the rest of your behavior intact
 # ===============================
 
+
+
+
+
 class LearningEntity(ABC):
     def __init__(self, id_, global_data, test_global_data):
         self.test_global_data = test_global_data
         self.seed = experiment_config.seed_num
         self.global_data = global_data
-        self.eval_global_data = global_data  # <-- shared “evaluation view” (server & clients use the same data view)
         self.pseudo_label_received = {}
         self.pseudo_label_to_send = None
         self.current_iteration = 0
@@ -374,11 +377,9 @@ class LearningEntity(ABC):
         pass
 
     # ---------- evaluation ----------
-    def evaluate(self, model=None, dataset=None):
-        """Return softmax probabilities on the provided dataset (defaults to self.global_data)."""
+    def evaluate(self, model=None):
         model = self.model if model is None else model
-        data = self.global_data if dataset is None else dataset
-        global_loader = DataLoader(data, batch_size=experiment_config.batch_size, shuffle=False)
+        global_loader = DataLoader(self.global_data, batch_size=experiment_config.batch_size, shuffle=False)
         model.eval()
         all_probs = []
         with torch.no_grad():
@@ -457,7 +458,6 @@ class LearningEntity(ABC):
         avg = tot_loss / tot_n if tot_n else float('inf')
         print(f"Iteration [{self.current_iteration}], Test Loss (Cluster {cluster_id}): {avg:.4f}")
         return avg
-
 
 class Client(LearningEntity):
     def __init__(self, id_, client_data, global_data, global_test_data, local_test_data):
@@ -703,13 +703,13 @@ class Client(LearningEntity):
 
                 # Always do local fine-tune each round
                 if t == 0:
-                    self.fine_tune(50)
+                   self.fine_tune(50)
                 else:
                     self.fine_tune()
 
-            # send PLs to server (use the SHARED EVAL VIEW so server & clients agree on indices)
-            self.pseudo_label_to_send = self.evaluate(dataset=getattr(self, "eval_global_data", self.global_data))
-            what_to_send = self.pseudo_label_to_send  # (kept for parity with your original code)
+        # send PLs to server
+            self.pseudo_label_to_send = self.evaluate()
+            what_to_send = self.pseudo_label_to_send
 
             pl = self.pseudo_label_to_send
             self.size_sent[t] = (pl.numel() * pl.element_size()) / (1024 * 1024)
@@ -737,6 +737,8 @@ class Client(LearningEntity):
                     break
                 else:
                     self.model.apply(self.initialize_weights)
+
+
 
         self.accuracy_per_client_1[t] = self.evaluate_accuracy_single(self.local_test_set, k=1)
         self.accuracy_per_client_10[t] = self.evaluate_accuracy(self.local_test_set, k=10)
@@ -792,15 +794,14 @@ class Client(LearningEntity):
         print(f"Total gradient size: {total_bytes / 1024 / 1024:.4f} MB\n")
 
     def get_personal_model(self):
-        if isinstance(self.model, ResNet18Server):
+        if isinstance(self.model,ResNet18Server):
             return NetType.ResNet
-        if isinstance(self.model, MobileNetV2Server):
+        if isinstance(self.model,MobileNetV2Server):
             return NetType.MobileNetV2
-        if isinstance(self.model, SqueezeNetServer):
+        if isinstance(self.model, SqueezeNetServer ):
             return NetType.SqueezeNet
         if isinstance(self.model, AlexNet):
             return NetType.ALEXNET
-
 
 class Server(LearningEntity):
     def __init__(self, id_, global_data, test_data, clients_ids, clients_test_data_dict):
@@ -822,14 +823,14 @@ class Server(LearningEntity):
         for c in range(num_clusters):
             self.previous_centroids_dict[c] = None
 
-        self._pl_ema = {}  # EMA buffer per cluster (smoothed server input PLs)
-
         # models + persistent optimizers
         if experiment_config.net_cluster_technique == NetClusterTechnique.multi_head:
             self.model = get_server_model()
             self.model.apply(self.initialize_weights)
-            self.server_optimizer = self._make_server_optimizer(
-                self.model, experiment_config.learning_rate_train_s
+            self.server_optimizer = torch.optim.AdamW(
+                self.model.parameters(),
+                lr=experiment_config.learning_rate_train_s,
+                weight_decay=5e-4,
             )
         if experiment_config.net_cluster_technique == NetClusterTechnique.multi_model:
             self.multi_model_dict = {}
@@ -837,8 +838,10 @@ class Server(LearningEntity):
                 self.multi_model_dict[c] = get_server_model()
                 self.multi_model_dict[c].apply(self.initialize_weights)
             self.server_optimizers = {
-                c: self._make_server_optimizer(
-                    self.multi_model_dict[c], experiment_config.learning_rate_train_s
+                c: torch.optim.AdamW(
+                    self.multi_model_dict[c].parameters(),
+                    lr=experiment_config.learning_rate_train_s,
+                    weight_decay=5e-4,
                 )
                 for c in self.multi_model_dict
             }
@@ -862,43 +865,41 @@ class Server(LearningEntity):
             self.accuracy_server_test_1[c] = {}
             self.accuracy_global_data_1[c] = {}
 
-    # ---------- small helpers for optimizer grouping ----------
-    def _split_head_backbone(self, model):
-        head_keys = ("head", "classifier", "fc")
-        head, body = [], []
-        for n, p in model.named_parameters():
-            if any(k in n.lower() for k in head_keys):
-                head.append(p)
-            else:
-                body.append(p)
-        if not head:
-            last = None
-            for m in model.modules():
-                if isinstance(m, nn.Linear):
-                    last = m
-            if last is not None:
-                taken = {id(p) for p in last.parameters()}
-                head = list(last.parameters())
-                body = [p for p in model.parameters() if id(p) not in taken]
-        return head, body
-
-    def _make_server_optimizer(self, model, base_lr):
-        lr_mult = getattr(experiment_config, "server_head_lr_mult", 4.0)
-        freeze_rounds = getattr(experiment_config, "server_freeze_backbone_rounds", 0)
-        head, body = self._split_head_backbone(model)
-        if freeze_rounds > 0 and self.current_iteration == 1:
-            for p in body: p.requires_grad = False
-            groups = [{"params": head, "lr": base_lr * lr_mult, "weight_decay": 5e-4}]
-        else:
-            groups = [
-                {"params": body, "lr": base_lr, "weight_decay": 5e-4},
-                {"params": head, "lr": base_lr * lr_mult, "weight_decay": 5e-4},
-            ]
-        return torch.optim.AdamW(groups)
-
     # ---------- comms ----------
     def receive_single_pseudo_label(self, sender, info):
         self.pseudo_label_received[sender] = info
+
+    # --- NEW: helper utilities ---
+
+    def _sharpen(self, p: torch.Tensor, T: float = 0.5) -> torch.Tensor:
+        """Temperature sharpen (T<1.0 → sharper)."""
+        p = p.clamp_min(1e-8)
+        p = p ** (1.0 / max(T, 1e-6))
+        return p / p.sum(dim=1, keepdim=True)
+
+    def _maybe_sharpen(self, pl: torch.Tensor) -> torch.Tensor:
+        T = getattr(experiment_config, "server_input_sharpen_T", 0.5)  # default sharper
+        return self._sharpen(pl, T) if T and T > 0 else pl
+
+    def _class_weights_from_pl(self, pl_all: torch.Tensor) -> torch.Tensor:
+        with torch.no_grad():
+            q = pl_all.clamp_min(1e-8).mean(dim=0)
+            w = 1.0 / (q + 1e-8)
+            return (w / w.mean()).to(pl_all.device)
+
+    def _dynamic_tau(self, pl_all: torch.Tensor, target_keep: float) -> float:
+        """
+        Choose tau so that roughly 'target_keep' fraction are kept by confidence gating.
+        """
+        conf = pl_all.max(dim=1).values.detach().cpu()
+        target_keep = float(min(max(target_keep, 0.0), 1.0))
+        if target_keep <= 0.0:
+            return 1.0  # keep none via gating (effectively disable)
+        if target_keep >= 1.0:
+            return 0.0  # keep all
+        # tau set to (1 - target_keep) quantile → top target_keep are >= tau
+        tau = torch.quantile(conf, 1.0 - target_keep).item()
+        return float(min(max(tau, 0.0), 0.999))
 
     # ---------- PL routing ----------
     def get_pseudo_label_list_after_models_train(self, mean_pseudo_labels_per_cluster):
@@ -990,6 +991,9 @@ class Server(LearningEntity):
                 for client_id in self.clusters_client_id_dict_per_iter[t][cluster_id]:
                     self.pseudo_label_to_send[client_id] = pseudo_labels_for_cluster
 
+
+
+
             if experiment_config.server_feedback_technique == ServerFeedbackTechnique.similar_to_cluster:
                 cluster_pl = self.evaluate_for_cluster(0, selected_model)
                 pl_per_cluster[cluster_id] = cluster_pl
@@ -1079,30 +1083,24 @@ class Server(LearningEntity):
         # Reset ONLY once at t==1 (optimizer state; weights remain as-is unless you reinit elsewhere)
         if t == 1:
             if experiment_config.net_cluster_technique == NetClusterTechnique.multi_head:
-                self.server_optimizer = self._make_server_optimizer(
-                    self.model, experiment_config.learning_rate_train_s
+                self.server_optimizer = torch.optim.AdamW(
+                    self.model.parameters(),
+                    lr=experiment_config.learning_rate_train_s,
+                    weight_decay=5e-4,
                 )
             elif experiment_config.net_cluster_technique == NetClusterTechnique.multi_model:
                 if not hasattr(self, "server_optimizers") or not isinstance(self.server_optimizers, dict):
                     self.server_optimizers = {}
                 for cid, m in self.multi_model_dict.items():
-                    self.server_optimizers[cid] = self._make_server_optimizer(
-                        m, experiment_config.learning_rate_train_s
+                    self.server_optimizers[cid] = torch.optim.AdamW(
+                        m.parameters(),
+                        lr=experiment_config.learning_rate_train_s,
+                        weight_decay=5e-4,
                     )
                 self._model_to_cluster = {id(m): c for c, m in self.multi_model_dict.items()}
 
         mean_pl_per_cluster, self.clusters_client_id_dict_per_iter[t] = \
             self.get_pseudo_labels_input_per_cluster(t)
-
-        # --- EMA smoothing over cluster PLs (optional via beta) ---
-        beta = getattr(experiment_config, "server_pl_ema_beta", 0.0)
-        if beta and beta > 0:
-            for cid, pl in mean_pl_per_cluster.items():
-                if cid in self._pl_ema:
-                    self._pl_ema[cid] = beta * self._pl_ema[cid] + (1.0 - beta) * pl
-                else:
-                    self._pl_ema[cid] = pl.clone()
-            mean_pl_per_cluster = {cid: self._pl_ema[cid] for cid in mean_pl_per_cluster}
 
         self.pseudo_label_before_net_L2[t] = {}
         if t > 0:
@@ -1132,9 +1130,10 @@ class Server(LearningEntity):
                 return self.server_optimizers[cid]
             if isinstance(cluster_hint, int) and cluster_hint in self.server_optimizers:
                 return self.server_optimizers[cluster_hint]
-        return self._make_server_optimizer(
-            (self.model if selected_model is None else selected_model),
-            experiment_config.learning_rate_train_s
+        return torch.optim.AdamW(
+            (self.model.parameters() if selected_model is None else selected_model.parameters()),
+            lr=experiment_config.learning_rate_train_s,
+            weight_decay=5e-4,
         )
 
     def train_with_consistency(self, mean_pseudo_labels, cluster_num="0", selected_model=None):
@@ -1455,38 +1454,6 @@ class Server(LearningEntity):
             clusters = self.get_clusters_centers_dict()
         return clusters
 
-    # --- NEW: helper utilities ---
-
-    def _sharpen(self, p: torch.Tensor, T: float = 0.5) -> torch.Tensor:
-        """Temperature sharpen (T<1.0 → sharper)."""
-        p = p.clamp_min(1e-8)
-        p = p ** (1.0 / max(T, 1e-6))
-        return p / p.sum(dim=1, keepdim=True)
-
-    def _maybe_sharpen(self, pl: torch.Tensor) -> torch.Tensor:
-        T = getattr(experiment_config, "server_input_sharpen_T", 0.5)  # default sharper
-        return self._sharpen(pl, T) if T and T > 0 else pl
-
-    def _class_weights_from_pl(self, pl_all: torch.Tensor) -> torch.Tensor:
-        with torch.no_grad():
-            q = pl_all.clamp_min(1e-8).mean(dim=0)
-            w = 1.0 / (q + 1e-8)
-            return (w / w.mean()).to(pl_all.device)
-
-    def _dynamic_tau(self, pl_all: torch.Tensor, target_keep: float) -> float:
-        """
-        Choose tau so that roughly 'target_keep' fraction are kept by confidence gating.
-        """
-        conf = pl_all.max(dim=1).values.detach().cpu()
-        target_keep = float(min(max(target_keep, 0.0), 1.0))
-        if target_keep <= 0.0:
-            return 1.0  # keep none via gating (effectively disable)
-        if target_keep >= 1.0:
-            return 0.0  # keep all
-        # tau set to (1 - target_keep) quantile → top target_keep are >= tau
-        tau = torch.quantile(conf, 1.0 - target_keep).item()
-        return float(min(max(tau, 0.0), 0.999))
-
     def get_pseudo_labels_input_per_cluster(self, timestamp):
         mean_per_cluster = {}
         flag = False
@@ -1528,8 +1495,7 @@ class Server(LearningEntity):
         model = self.model if model is None else model
         print(f"*** Evaluating Cluster {cluster_id} Head ***")
         model.eval()
-        data = getattr(self, "eval_global_data", self.global_data)
-        loader = DataLoader(data, batch_size=experiment_config.batch_size, shuffle=False)
+        loader = DataLoader(self.global_data, batch_size=experiment_config.batch_size, shuffle=False)
         all_probs = []
         with torch.no_grad():
             for x, _ in loader:
@@ -1662,7 +1628,6 @@ class Server(LearningEntity):
                     if u in d: del d[u]
                 del distance_per_client[u]
         return clusters
-
 
 
 class LearningEntityV2(ABC):
