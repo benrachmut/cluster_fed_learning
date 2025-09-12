@@ -309,11 +309,21 @@ class ExperimentConfig:
 
 
         elif net_type == NetsType.C_rnd_S_Vgg:
+            self.batch_size = 32
+            scale = (self.batch_size / 128.0) if hasattr(self, "batch_size") else 1.0
+
+            LR_FT = 1e-3 * scale  # 5e-4
+            LR_KD_C = 3e-4 * scale  # 3e-4 * scale  # 1.5e-4
+            LR_KD_S = 1e-4 * scale  # 5e-5
+
+
             self.client_net_type = NetType.rnd_net
             self.server_net_type = NetType.VGG
             self.learning_rate_fine_tune_c = LR_FT
             self.learning_rate_train_c = LR_KD_C
             self.learning_rate_train_s = LR_KD_S
+
+
 
         elif net_type == NetsType.C_MobileNet_S_vgg:
             self.client_net_type = NetType.MobileNetV2
