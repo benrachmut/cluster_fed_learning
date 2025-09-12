@@ -703,7 +703,7 @@ class Client(LearningEntity):
     def iteration_context(self, t):
         self.current_iteration = t
         for _ in range(10):
-            if experiment_config.algorithm_selection == AlgorithmSelected.COMET:
+            if experiment_config.algorithm_selection == AlgorithmSelected.COMET or experiment_config.algorithm_selection == AlgorithmSelected.PseudoLabelsNoServerModel:
                 self.fine_tune()
             else:
                 # Reset ONLY at the beginning of round t==1
@@ -2042,7 +2042,7 @@ class ClientV2(LearningEntity):
     def iteration_context(self, t):
         self.current_iteration = t
         for _ in range(10):
-            if experiment_config.algorithm_selection == AlgorithmSelected.COMET:
+            if experiment_config.algorithm_selection == AlgorithmSelected.COMET or experiment_config.algorithm_selection == AlgorithmSelected.PseudoLabelsNoServerModel:
                 self.fine_tune()
             else:
                 # Reset ONLY at the beginning of round t==1

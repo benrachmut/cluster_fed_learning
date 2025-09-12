@@ -96,6 +96,9 @@ class DataType(Enum):
     NonIID = 2
 
 class NetsType(Enum):
+    C_rnd_strong = 20
+    C_rnd_weak = 21
+    c_rnd = 22
     C_alex_S_vgg = 1
     C_alex_S_alex = 2
     C_alex_S_ResNet = 6
