@@ -110,6 +110,8 @@ class NetsType(Enum):
 
     C_rndWeak_S_alex = 13
     C_rndStrong_S_alex = 14
+    C_rndWeak_S_Vgg = 15
+    C_rndStrong_S_Vgg = 16
 
 
     C_alex = 3
@@ -308,7 +310,7 @@ class ExperimentConfig:
             self.learning_rate_train_s = LR_KD_S
 
 
-        elif net_type == NetsType.C_rnd_S_Vgg:
+        elif net_type == NetsType.C_rnd_S_Vgg or net_type ==NetsType.C_rndWeak_S_Vgg or  net_type ==NetsType.C_rndStrong_S_Vgg :
             self.batch_size = 32
             scale = (self.batch_size / 128.0) if hasattr(self, "batch_size") else 1.0
 
@@ -316,8 +318,13 @@ class ExperimentConfig:
             LR_KD_C = 3e-4 * scale  # 3e-4 * scale  # 1.5e-4
             LR_KD_S = 1e-4 * scale  # 5e-5
 
+            if net_type == NetsType.C_rnd_S_Vgg:
+                self.client_net_type = NetType.rnd_net
+            elif net_type ==NetsType.C_rndWeak_S_Vgg:
+                self.client_net_type = NetType.rndWeak
+            elif net_type ==NetsType.C_rndStrong_S_Vgg:
+                self.client_net_type = NetType.rndStrong
 
-            self.client_net_type = NetType.rnd_net
             self.server_net_type = NetType.VGG
             self.learning_rate_fine_tune_c = LR_FT
             self.learning_rate_train_c = LR_KD_C

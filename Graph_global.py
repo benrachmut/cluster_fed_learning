@@ -281,6 +281,25 @@ def switch_algo_and_seed_cluster(merged_dict,dich,data_type):
             rds[cluster_correct_num].append(rd)
     return rds
 
+def switch_algo_and_seedV3(merged_dict):
+    rds = {}
+    for seed in [2]:
+        for algo in merged_dict[seed]:
+            algo_name = algo_names[algo]
+            rds[algo_name] = {}
+            rd_output = extract_rd(algo, merged_dict[seed][algo])
+            for k,v in rd_output.items():
+                if k not in rds[algo_name]:
+                    rds[algo_name][k]=[]
+                rds[algo_name][k].append(v)
+
+
+
+
+
+            #ans[algo].append(merged_dict[seed][algo])
+    return rds
+
 def switch_algo_and_seedV2(merged_dict):
     rds = {}
     for seed in [1]:
@@ -1007,6 +1026,12 @@ def get_PseudoLabelsClusters_name(algo,dict_):
         if net_type == NetsType.C_MobileNet_S_alex.name:
             algo_name = "C=MobileNet,S=VGG"
 
+        if net_type == NetsType.C_rndStrong_S_alex.name:
+            algo_name = "C=rndStrong,S=AlexNet"
+        if net_type == NetsType.C_rndWeak_S_alex.name:
+            algo_name = "C=rndWeak,S=AlexNet"
+
+
 
         ans.append(algo_name)
     return ans
@@ -1039,6 +1064,15 @@ def get_data_per_client_server(rd,top_what):
         return  rd.server_accuracy_per_client_5_max
     if top_what == 10:
         return  rd.server_accuracy_per_client_10_max
+
+
+
+def get_data_per_client_and_serverV2(rd,algo,top_what,data_type):
+    data_per_server = get_data_per_client_server(rd, top_what)
+    data_per_client = get_data_per_client_client(rd, top_what)
+    return data_per_client,data_per_server
+
+
 
 def get_data_per_client_and_server(rd,algo,top_what,data_type):
     data_per_server = get_data_per_client_server(rd, top_what)
@@ -1100,10 +1134,6 @@ def extract_rd_PseudoLabelsClusters(algo,dict_):
     names = get_PseudoLabelsClusters_name(algo, dict_)
 
     for name in names:
-
-
-
-
         if name == "C=AlexNet,S=VGG":
             dict_1 = dict_[NetsType.C_alex_S_vgg.name]
         if name == "C=AlexNet,S=AlexNet":
@@ -1112,11 +1142,15 @@ def extract_rd_PseudoLabelsClusters(algo,dict_):
             dict_1 = dict_[NetsType.C_MobileNet_S_vgg.name]
         if name == "C=Random,S=VGG":
             dict_1 = dict_[NetsType.C_rnd_S_Vgg.name]
-
         if name == "C=Random,S=AlexNet":
             dict_1 = dict_[NetsType.C_rnd_S_alex.name]
         if name == "C=random,S=VGG":
             dict_1 = dict_[NetsType.C_rnd_S_alex.name]
+
+        if name == "C=rndStrong,S=AlexNet":
+            dict_1 =dict_[NetsType.C_rndStrong_S_alex.name]
+        if name == "C=rndWeak,S=AlexNet":
+            dict_1 = dict_[NetsType.C_rndWeak_S_alex.name]
 
         try:
             rd = dict_1["multi_model"]["max"][ClusterTechnique.greedy_elimination_L2.name]["similar_to_cluster"][0][
@@ -1130,8 +1164,29 @@ def extract_rd_PseudoLabelsClusters(algo,dict_):
     return ans
 
 def extract_rd_PseudoLabelsNoServerModel(algo,dict_):
+    names = get_PseudoLabelsClusters_name(algo, dict_)
+    ans = {}
+    for name in names:
+        if name == "C=AlexNet,S=VGG":
+            dict_1 = dict_[NetsType.C_alex_S_vgg.name]
+        if name == "C=AlexNet,S=AlexNet":
+            dict_1 = dict_[NetsType.C_alex_S_alex.name]
+        if name == "C=MobileNet,S=VGG":
+            dict_1 = dict_[NetsType.C_MobileNet_S_vgg.name]
+        if name == "C=Random,S=VGG":
+            dict_1 = dict_[NetsType.C_rnd_S_Vgg.name]
+        if name == "C=Random,S=AlexNet":
+            dict_1 = dict_[NetsType.C_rnd_S_alex.name]
+        if name == "C=random,S=VGG":
+            dict_1 = dict_[NetsType.C_rnd_S_alex.name]
 
-    return dict_["C_alex"]["no_model"]["mean"]["kmeans"]["similar_to_client"][1]
+        if name == "C=rndStrong,S=AlexNet":
+            dict_1 =dict_[NetsType.C_rndStrong_S_alex.name]
+        if name == "C=rndWeak,S=AlexNet":
+            dict_1 = dict_[NetsType.C_rndWeak_S_alex.name]
+
+        ans[name] = dict_1["no_model"]["mean"]["kmeans"]["similar_to_client"][1]
+    return ans
 
 
 
@@ -1151,6 +1206,62 @@ def extract_rd(algo,dict_):
         return extract_rd_FedAvg(algo,dict_)
     if algo == AlgorithmSelected.pFedCK.name:
         return extract_rd_pFedCK(algo,dict_)
+
+
+def collect_data_per_server_client_iterationV2(merged_dict,top_what,data_type):
+    ans = {}
+    for algo, rd_list in merged_dict.items():
+        ans[algo] = {}
+        if algo == "MAPL":
+            data_per_iteration_client = {}
+            data_per_iteration_server = {}
+
+            for nets,rd in rd_list.items():
+                if nets not in ans[algo]:
+                    ans[algo][nets] = {}
+                data_per_client,data_per_server = get_data_per_client_and_serverV2(rd[0],algo,top_what,data_type)
+                for client_id, data_dict in data_per_client.items():
+                    for iter_, v in data_dict.items():
+                        if iter_ not in data_per_iteration_client.keys():
+                            data_per_iteration_client[iter_] = []
+                        data_per_iteration_client[iter_].append(v)
+                #############################################################
+                for client_id, data_dict in data_per_server.items():
+                    for iter_, v in data_dict.items():
+                        if iter_ not in data_per_iteration_server.keys():
+                            data_per_iteration_server[iter_] = []
+                        data_per_iteration_server[iter_].append(v)
+
+                data_per_iteration_client = update_data_v3(data_per_iteration_client, data_type)
+                data_per_iteration_server = update_data_v2(data_per_iteration_server, data_type, flag=True)
+
+                #ans[algo] = data_per_iteration_client
+                ans[algo][nets] ={"Clients":data_per_iteration_client}
+                ans[algo][nets]["Server"] = data_per_iteration_server
+            print()
+        else:
+            data_per_iteration_client = {}
+
+            for nets, rd in rd_list.items():
+                if nets not in ans[algo]:
+                    ans[algo][nets] = {}
+                data_per_client =  get_data_per_client_client(rd[0], top_what)
+
+                for client_id, data_dict in data_per_client.items():
+                    for iter_, v in data_dict.items():
+                        if iter_ not in data_per_iteration_client.keys():
+                            data_per_iteration_client[iter_] = []
+                        data_per_iteration_client[iter_].append(v)
+
+
+                data_per_iteration_client = update_data_v3(data_per_iteration_client, data_type)
+
+            # ans[algo] = data_per_iteration_client
+                ans[algo][nets] = {"Clients": data_per_iteration_client}
+
+
+
+    return ans
 
 def collect_data_per_server_client_iteration(merged_dict,top_what,data_type):
     ans = {}

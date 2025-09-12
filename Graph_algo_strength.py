@@ -1,135 +1,249 @@
 from Graph_global import *
 from main_ import *
 
-
-def switch_algo_and_seed_client_server(merged_dict, dich):
-    rds = {}
-    for seed in seeds_dict[dich][data_type]:
-        for algo in merged_dict[seed]:
-            algo_name = algo_names[algo]
-
-            algo_name_list = get_PseudoLabelsClusters_name(algo,merged_dict[seed][algo])
-            for name_ in algo_name_list:
-                if name_ not in rds.keys() :
-                    name_to_place = ""
-                    if name_ == "MAPL,VGG":
-                        name_to_place = "VGG"
-                    else:
-                        name_to_place = "AlexNet"
-
-                    rds[name_to_place] = []
-                rd_output = extract_rd_PseudoLabelsClusters_server_client(algo,merged_dict[seed][algo])#extract_rd(algo, )
-                for k,v in rd_output.items():
-                    if k not in rds:
-                        rds[k]=[]
-                    rds[k].append(v)
-    return rds
-
-
-
+import numpy as np
+import itertools
 import matplotlib.pyplot as plt
+from scipy import stats
 from matplotlib.lines import Line2D
-from matplotlib.patches import Patch
-from matplotlib.font_manager import FontProperties
 
-def build_grouped_legend(ax=None, *,
-                         group_by="linestyle",   # "linestyle" or "label"
-                         label_groups=("Server", "Client"),
-                         where=("upper center", (0.5, -0.05)),
-                         ncols=2,
-                         frameon=False):
+# ------- font fallbacks if your constants aren't defined -------
+try:
+    _AX_NUM = axes_number_font
+    _AX_TITLE = axes_titles_font
+    _TICK = tick_font_size
+    _LEG = legend_font_size
+except NameError:
+    _AX_NUM = 12
+    _AX_TITLE = 12
+    _TICK = 10
+    _LEG = 10
+
+
+def _roles_for_algo(algo_name: str):
+    """For MAPL: plot Clients + Server, else Clients only."""
+    return ["Clients", "Server"] if "mapl" in algo_name.lower() else ["Clients"]
+
+
+def _linestyle_for(role: str):
+    """Solid for Clients, dashed for Server."""
+    return "-" if role == "Clients" else "--"
+
+
+def _series_mean_ci(vals, confidence=0.95):
+    """Mean ± normal CI; ignore NaNs."""
+    arr = np.asarray(vals, dtype=float)
+    arr = arr[~np.isnan(arr)]
+    if arr.size == 0:
+        return np.nan, np.nan, np.nan
+    mean = float(np.nanmean(arr))
+    if arr.size <= 1:
+        return mean, mean, mean
+    stderr = stats.sem(arr, nan_policy="omit")
+    h = stderr * stats.norm.ppf((1 + confidence) / 2.0)
+    return mean, mean - h, mean + h
+
+
+def plot_algos_by_dich_and_net(
+    data_for_graph: dict,
+    *,
+    x_label="Iterations",
+    y_label="Top-1 Accuracy (%)",
+    confidence=0.95,
+    figsize=(16, 6),
+    savepath=None
+):
     """
-    Build a grouped legend with two headings (e.g., Server / Client).
-    - group_by="linestyle": maps solid->label_groups[0], dashed->label_groups[1]
-    - group_by="label":     groups by substring match of label_groups in line labels
+    Expects:
+      data_for_graph[dich][algorithm][net_type][entity]["iteration"] -> list[float]
+      where entity ∈ {"Clients","Server"}.
+
+    Subplots:
+      rows = sorted dich values
+      cols = sorted net_type values
+
+    Curves:
+      - MAPL: Clients (solid) + Server (dashed)
+      - Others: Clients only (solid)
     """
-    if ax is None:
-        ax = plt.gca()
+    if not data_for_graph:
+        raise ValueError("data_for_graph is empty.")
 
-    lines = [l for l in ax.get_lines() if l.get_label() and not l.get_label().startswith('_')]
+    # Row order: dich
+    dich_keys = list(data_for_graph.keys())
+    try:
+        dich_keys = sorted(dich_keys, key=lambda x: float(x))
+    except Exception:
+        dich_keys = sorted(dich_keys, key=str)
 
-    def classify(line):
-        if group_by == "linestyle":
-            ls = (line.get_linestyle() or "-")
-            # map common linestyles to the two buckets
-            return label_groups[0] if ls in ("-", "solid") else label_groups[1]
-        elif group_by == "label":
-            lab = line.get_label().lower()
-            if label_groups[0].lower() in lab:
-                return label_groups[0]
-            if label_groups[1].lower() in lab:
-                return label_groups[1]
-            # default bucket if neither found
-            return label_groups[0]
-        else:
-            raise ValueError("group_by must be 'linestyle' or 'label'")
+    # Column order: net types across all dich
+    net_types = set()
+    for d in data_for_graph:
+        for algo in data_for_graph[d]:
+            for net in data_for_graph[d][algo]:
+                net_types.add(net)
+    net_types = sorted(net_types, key=str)
 
-    buckets = {label_groups[0]: [], label_groups[1]: []}
-    for ln in lines:
-        buckets[classify(ln)].append(ln)
+    # Algorithms (for colors)
+    algos = set()
+    for d in data_for_graph:
+        for algo in data_for_graph[d]:
+            algos.add(algo)
+    algo_list = sorted(algos, key=str)
 
-    # Build legend entries with bold headers as proxy artists
-    header_fp = FontProperties(weight='bold')
-    handles, labels = [], []
-    for header in label_groups:
-        # header row
-        handles.append(Patch(alpha=0, linewidth=0))  # invisible patch as header proxy
-        labels.append(header)
-        # items under header
-        for ln in buckets[header]:
-            # create a proxy line that matches style/color/marker but short for legend
-            proxy = Line2D([0], [0],
-                           linestyle=ln.get_linestyle(),
-                           linewidth=ln.get_linewidth(),
-                           marker=ln.get_marker(),
-                           markersize=ln.get_markersize(),
-                           color=ln.get_color())
-            handles.append(proxy)
-            labels.append(ln.get_label())
+    # Colors per algorithm
+    tab10 = plt.get_cmap("tab10").colors
+    color_cycle = itertools.cycle(tab10)
+    algo_colors = {algo: next(color_cycle) for algo in algo_list}
 
-    leg = ax.legend(handles, labels,
-                    loc=where[0], bbox_to_anchor=where[1],
-                    ncol=ncols, frameon=frameon, handlelength=2.5,
-                    columnspacing=1.2, borderaxespad=0.0)
+    # Pre-scan for global y-lims from actually plotted series
+    all_vals = []
+    for d in dich_keys:
+        for net in net_types:
+            for algo in algo_list:
+                for role in _roles_for_algo(algo):
+                    role_dict = (
+                        data_for_graph.get(d, {})
+                                       .get(algo, {})
+                                       .get(net, {})
+                                       .get(role, {})
+                    )
+                    if not isinstance(role_dict, dict):
+                        continue
+                    for _, vals in role_dict.items():
+                        if isinstance(vals, (list, tuple, np.ndarray)):
+                            for v in vals:
+                                if v is not None and not (isinstance(v, float) and np.isnan(v)):
+                                    all_vals.append(v)
 
-    # Style the header rows in bold
-    for text, lab in zip(leg.get_texts(), labels):
-        if lab in label_groups:
-            text.set_fontproperties(header_fp)
+    if not all_vals:
+        raise ValueError("No numeric values found to plot.")
 
-    return leg
+    vmin, vmax = np.nanmin(all_vals), np.nanmax(all_vals)
+    pad = max(1e-6, 0.03 * (vmax - vmin) if vmax > vmin else 1.0)
+    ymin, ymax = float(vmin - pad), float(vmax + pad)
 
-if __name__ == '__main__':
+    # Figure
+    nrows, ncols = len(dich_keys), len(net_types)
+    fig, axs = plt.subplots(nrows, ncols, figsize=figsize, squeeze=False)
+
+    # Legend handles (one per algorithm color)
+    algo_handles = {}
+    # Role style legend (Clients/Server key)
+    role_proxies = [
+        Line2D([0], [0], linestyle="-", linewidth=2.0, color="black", label="Clients"),
+        Line2D([0], [0], linestyle="--", linewidth=2.0, color="black", label="Server"),
+    ]
+
+    for r, d in enumerate(dich_keys):
+        for c, net in enumerate(net_types):
+            ax = axs[r, c]
+
+            for algo in algo_list:
+                roles = _roles_for_algo(algo)
+                for role in roles:
+                    role_dict = (
+                        data_for_graph.get(d, {})
+                                       .get(algo, {})
+                                       .get(net, {})
+                                       .get(role, {})
+                    )
+                    if not isinstance(role_dict, dict) or not role_dict:
+                        continue
+
+                    # Iterations as sorted numeric if possible
+                    try:
+                        iters = sorted(role_dict.keys(), key=lambda x: float(x))
+                    except Exception:
+                        iters = sorted(role_dict.keys(), key=str)
+
+                    xs, means, lbs, ubs = [], [], [], []
+                    for it in iters:
+                        m, lb, ub = _series_mean_ci(role_dict[it], confidence=confidence)
+                        xs.append(float(it))
+                        means.append(m)
+                        lbs.append(lb)
+                        ubs.append(ub)
+
+                    xs = np.asarray(xs, dtype=float)
+                    means = np.asarray(means, dtype=float)
+                    lbs = np.asarray(lbs, dtype=float)
+                    ubs = np.asarray(ubs, dtype=float)
+                    mask = ~np.isnan(means)
+                    if not np.any(mask):
+                        continue
+                    xs, means, lbs, ubs = xs[mask], means[mask], lbs[mask], ubs[mask]
+
+                    color = algo_colors[algo]
+                    ls = _linestyle_for(role)
+                    label = f"{algo} (Server)" if role == "Server" else algo
+
+                    line, = ax.plot(xs, means, linestyle=ls, linewidth=2.0, color=color, label=label)
+                    ax.fill_between(xs, lbs, ubs, alpha=0.2, color=color)
+
+                    # Capture one handle per algorithm (Clients) for the color legend
+                    if role == "Clients" and algo not in algo_handles:
+                        algo_handles[algo] = line
+
+            ax.set_title(f"dich={d} | net={net}", fontsize=_AX_TITLE)
+            ax.set_xlabel(x_label, fontsize=_AX_TITLE)
+            if c == 0:
+                ax.set_ylabel(y_label, fontsize=_AX_TITLE)
+            ax.tick_params(axis="both", labelsize=_TICK)
+            ax.set_ylim(ymin, ymax)
+            ax.grid(True, alpha=0.15, linestyle=":")
+
+    # Figure-level legends
+    if algo_handles:
+        fig.legend(
+            list(algo_handles.values()),
+            list(algo_handles.keys()),
+            loc="upper center",
+            ncol=max(1, min(len(algo_handles), 5)),
+            frameon=False,
+            fontsize=_LEG,
+            bbox_to_anchor=(0.5, 1.02),
+        )
+    fig.legend(
+        role_proxies,
+        [h.get_label() for h in role_proxies],
+        loc="upper right",
+        frameon=False,
+        fontsize=_LEG,
+        bbox_to_anchor=(0.98, 0.98),
+    )
+
+    plt.tight_layout(rect=[0, 0, 1, 0.92])
+
+    if savepath:
+        fig.savefig(savepath, dpi=300, bbox_inches="tight")
+    return fig, axs
 
 
+if __name__ == "__main__":
+    # --- load & reshape like your current script ---
     all_data = read_all_pkls("diff_algo")
     merged_dict1 = merge_dicts(all_data)
-    top_what_list = [1,5,10]
-    data_types = [DataSet.CIFAR100.name]
+
     data_type = DataSet.CIFAR100.name
     top_what = 1
     data_for_graph = {}
-    for dich in [1,5]:
+
+    for dich in [1, 5]:
         merged_dict = merged_dict1[data_type][25][5][1][dich]
-        merged_dict = switch_algo_and_seedV2(merged_dict)
-        new_name_dict = {}
-        for k,v in merged_dict.items():
-            new_name_dict[k]=v
-        data_for_graph[dich]= collect_data_per_server_client_iteration(new_name_dict,top_what,data_type)
-    print()
+        merged_dict = switch_algo_and_seedV3(merged_dict)
+        # Collect into: data_for_graph[dich][algorithm][net_type][entity]["iteration"] -> list[float]
+        data_for_graph[dich] = collect_data_per_server_client_iterationV2(
+            merged_dict, top_what, data_type
+        )
 
-    # --- usage example with your code ---
-    # after you make the plot:
-    plt,the_plot = plot_model_algos_v2(data_for_graph)
-
-    # If plot_model_server_client returns an Axes, pass it in; otherwise grab current axes.
-    ax = the_plot if hasattr(the_plot, 'get_lines') else plt.gca()
-
-    # Option A: group by linestyle (solid = Server, dashed = Client)
-    build_grouped_legend(ax, group_by="linestyle", label_groups=("Server", "Client"),
-                         where=("upper center", (0.5, -0.15)), ncols=2, frameon=False)
-    plt.tight_layout()
-    the_plot.savefig("figures/client_server_alpha.pdf", format="pdf")
+    # --- plot ---
+    fig, axs = plot_algos_by_dich_and_net(
+        data_for_graph,
+        x_label="Iterations",
+        y_label="Top-1 Accuracy (%)",
+        confidence=0.95,
+        figsize=(16, 6),
+        savepath="figures/client_server_alpha.pdf",
+    )
     plt.show()
-    # Option B: group by label keywords (if your line labels contain 'server'/'client')
-    # build_grouped_legend(ax, group_by="label", label_groups=("Server", "Client"))
