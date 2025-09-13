@@ -311,7 +311,7 @@ class ExperimentConfig:
 
 
         elif net_type == NetsType.C_rnd_S_Vgg or net_type ==NetsType.C_rndWeak_S_Vgg or  net_type ==NetsType.C_rndStrong_S_Vgg :
-            self.batch_size = 32
+            self.batch_size = 64
             scale = (self.batch_size / 128.0) if hasattr(self, "batch_size") else 1.0
 
             LR_FT = 1e-3 * scale  # 5e-4

@@ -1025,11 +1025,15 @@ def get_PseudoLabelsClusters_name(algo,dict_):
             algo_name = "C=Random,S=VGG"
         if net_type == NetsType.C_MobileNet_S_alex.name:
             algo_name = "C=MobileNet,S=VGG"
-
         if net_type == NetsType.C_rndStrong_S_alex.name:
             algo_name = "C=rndStrong,S=AlexNet"
         if net_type == NetsType.C_rndWeak_S_alex.name:
             algo_name = "C=rndWeak,S=AlexNet"
+
+        if net_type == NetsType.C_rndStrong_S_Vgg.name:
+            algo_name = "C=rndStrong,S=VGG"
+        if net_type == NetsType.C_rndWeak_S_Vgg.name:
+            algo_name = "C=rndWeak,S=VGG"
 
 
 
@@ -1152,6 +1156,11 @@ def extract_rd_PseudoLabelsClusters(algo,dict_):
         if name == "C=rndWeak,S=AlexNet":
             dict_1 = dict_[NetsType.C_rndWeak_S_alex.name]
 
+        if name == "C=rndStrong,S=VGG":
+            dict_1 =dict_[NetsType.C_rndStrong_S_Vgg.name]
+        if name == "C=rndWeak,S=VGG":
+            dict_1 = dict_[NetsType.C_rndWeak_S_Vgg.name]
+
         try:
             rd = dict_1["multi_model"]["max"][ClusterTechnique.greedy_elimination_L2.name]["similar_to_cluster"][0][
                     WeightForPS.withWeights.name][InputConsistency.withInputConsistency.name]
@@ -1189,6 +1198,35 @@ def extract_rd_PseudoLabelsNoServerModel(algo,dict_):
     return ans
 
 
+def extract_rd_COMET(algo, dict_):
+    names = get_PseudoLabelsClusters_name(algo, dict_)
+    ans = {}
+    for name in names:
+        if name == "C=AlexNet,S=VGG":
+            dict_1 = dict_[NetsType.C_alex_S_vgg.name]
+        if name == "C=AlexNet,S=AlexNet":
+            dict_1 = dict_[NetsType.C_alex_S_alex.name]
+        if name == "C=MobileNet,S=VGG":
+            dict_1 = dict_[NetsType.C_MobileNet_S_vgg.name]
+        if name == "C=Random,S=VGG":
+            dict_1 = dict_[NetsType.C_rnd_S_Vgg.name]
+        if name == "C=Random,S=AlexNet":
+            dict_1 = dict_[NetsType.C_rnd_S_alex.name]
+        if name == "C=random,S=VGG":
+            dict_1 = dict_[NetsType.C_rnd_S_alex.name]
+
+        if name == "C=rndStrong,S=AlexNet":
+            dict_1 = dict_[NetsType.C_rndStrong_S_alex.name]
+        if name == "C=rndWeak,S=AlexNet":
+            dict_1 = dict_[NetsType.C_rndWeak_S_alex.name]
+
+        if name == "C=rndStrong,S=VGG":
+            dict_1 =dict_[NetsType.C_rndStrong_S_Vgg.name]
+        if name == "C=rndWeak,S=VGG":
+            dict_1 = dict_[NetsType.C_rndWeak_S_Vgg.name]
+
+        ans[name] = dict_1["no_model"]["mean"]["kmeans"]["similar_to_client"][5]
+    return ans
 
 
 def extract_rd(algo,dict_):
@@ -1197,9 +1235,9 @@ def extract_rd(algo,dict_):
     if algo == AlgorithmSelected.PseudoLabelsNoServerModel.name:
         return extract_rd_PseudoLabelsNoServerModel(algo,dict_)
     if algo == AlgorithmSelected.COMET.name :
-        try:
-            return  dict_[NetsType.C_alex_S_vgg.name]["multi_model"]["max"]["kmeans"]["similar_to_client"][5]
-        except: return dict_["C_alex"]["no_model"]["mean"]["kmeans"]["similar_to_client"][5]
+
+            return extract_rd_COMET(algo, dict_)
+
     if algo == AlgorithmSelected.NoFederatedLearning.name:
         return dict_["C_alex_S_alex"]
     if algo == AlgorithmSelected.FedAvg.name:
