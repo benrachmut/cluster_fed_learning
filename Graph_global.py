@@ -283,7 +283,7 @@ def switch_algo_and_seed_cluster(merged_dict,dich,data_type):
 
 def switch_algo_and_seedV3(merged_dict):
     rds = {}
-    for seed in [2]:
+    for seed in [1]:
         for algo in merged_dict[seed]:
             algo_name = algo_names[algo]
             rds[algo_name] = {}
@@ -1162,10 +1162,10 @@ def extract_rd_PseudoLabelsClusters(algo,dict_):
             dict_1 = dict_[NetsType.C_rndWeak_S_Vgg.name]
 
         try:
-            rd = dict_1["multi_model"]["max"][ClusterTechnique.greedy_elimination_L2.name]["similar_to_cluster"][0][
+            rd = dict_1["multi_model"]["mean"][ClusterTechnique.greedy_elimination_L2.name]["similar_to_cluster"][0][
                     WeightForPS.withWeights.name][InputConsistency.withInputConsistency.name]
         except:
-            rd = dict_1["multi_model"]["max"][ClusterTechnique.greedy_elimination_L2.name]["similar_to_cluster"][
+            rd = dict_1["multi_model"]["mean"][ClusterTechnique.greedy_elimination_L2.name]["similar_to_cluster"][
                 WeightForPS.withWeights.name][InputConsistency.withInputConsistency.name][0]
 
         ans[name] = rd

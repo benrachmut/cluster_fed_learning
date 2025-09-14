@@ -229,7 +229,7 @@ if __name__ == "__main__":
     top_what = 1
     data_for_graph = {}
 
-    for dich in [1, 5]:
+    for dich in [5]:
         merged_dict = merged_dict1[data_type][25][5][1][dich]
         merged_dict = switch_algo_and_seedV3(merged_dict)
         # Collect into: data_for_graph[dich][algorithm][net_type][entity]["iteration"] -> list[float]
