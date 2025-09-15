@@ -1094,9 +1094,20 @@ class Server(LearningEntity):
             if l3: self.accuracy_per_client_100_max[client_id][t] = max(l3)
             if l4: self.accuracy_per_client_5_max[client_id][t]   = max(l4)
 
+    def _server_hparams_schedule(self, t):
+        if t < 3:
+            experiment_config.server_conf_target_keep = 0.75
+            experiment_config.server_conf_tau_min = 0.15
+        elif t < 7:
+            experiment_config.server_conf_target_keep = 0.60
+            experiment_config.server_conf_tau_min = 0.18
+        else:
+            experiment_config.server_conf_target_keep = 0.45
+            experiment_config.server_conf_tau_min = 0.20
     # ---------- round orchestration ----------
     def iteration_context(self, t):
         self.current_iteration = t
+        self._server_hparams_schedule(t)
 
         # Reset server outbox every round
         self.pseudo_label_to_send = {}
@@ -1163,7 +1174,7 @@ class Server(LearningEntity):
 
         data = getattr(self, "eval_global_data", self.global_data)
         loader = DataLoader(data, batch_size=experiment_config.batch_size,
-                            shuffle=True, num_workers=0, drop_last=False)
+                            shuffle=False, num_workers=0, drop_last=False)
 
         m = self.model if selected_model is None else selected_model
         m.train()
@@ -1263,7 +1274,7 @@ class Server(LearningEntity):
 
         data = getattr(self, "eval_global_data", self.global_data)
         loader = DataLoader(data, batch_size=experiment_config.batch_size,
-                            shuffle=True, num_workers=0, drop_last=False)
+                            shuffle=False, num_workers=0, drop_last=False)
 
         m = self.model if selected_model is None else selected_model
         m.train()
