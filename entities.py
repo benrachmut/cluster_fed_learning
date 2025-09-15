@@ -1107,7 +1107,7 @@ class Server(LearningEntity):
     # ---------- round orchestration ----------
     def iteration_context(self, t):
         self.current_iteration = t
-        #self._server_hparams_schedule(t)
+        self._server_hparams_schedule(t)
 
         # Reset server outbox every round
         self.pseudo_label_to_send = {}
