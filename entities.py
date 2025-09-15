@@ -898,18 +898,8 @@ class Server(LearningEntity):
         p = p ** (1.0 / max(T, 1e-6))
         return p / p.sum(dim=1, keepdim=True)
 
-    def _server_hparams_schedule(self, t):
-        if t < 3:
-            experiment_config.server_conf_target_keep = 0.75
-            experiment_config.server_conf_tau_min = 0.15
-        elif t < 7:
-            experiment_config.server_conf_target_keep = 0.60
-            experiment_config.server_conf_tau_min = 0.18
-        else:
-            experiment_config.server_conf_target_keep = 0.45
-            experiment_config.server_conf_tau_min = 0.20
     def _maybe_sharpen(self, pl: torch.Tensor) -> torch.Tensor:
-        T = getattr(experiment_config, "server_input_sharpen_T", 0.3)  # default sharper
+        T = getattr(experiment_config, "server_input_sharpen_T", 0.5)  # default sharper
         return self._sharpen(pl, T) if T and T > 0 else pl
 
     def _class_weights_from_pl(self, pl_all: torch.Tensor) -> torch.Tensor:
@@ -1110,7 +1100,7 @@ class Server(LearningEntity):
 
         # Reset server outbox every round
         self.pseudo_label_to_send = {}
-        self._server_hparams_schedule(t)
+
         # Reset ONLY once at t==1 (optimizer state; weights remain as-is unless you reinit elsewhere)
         if t == 1:
             if experiment_config.net_cluster_technique == NetClusterTechnique.multi_head:
@@ -1173,7 +1163,7 @@ class Server(LearningEntity):
 
         data = getattr(self, "eval_global_data", self.global_data)
         loader = DataLoader(data, batch_size=experiment_config.batch_size,
-                            shuffle=True, num_workers=0, drop_last=False)
+                            shuffle=False, num_workers=0, drop_last=False)
 
         m = self.model if selected_model is None else selected_model
         m.train()
@@ -1182,7 +1172,7 @@ class Server(LearningEntity):
         T = float(getattr(experiment_config, "T_server", 2.0))
 
         lam = float(getattr(experiment_config, "lambda_consistency_server",
-                            getattr(experiment_config, "lambda_consistency", 0.5)))
+                            getattr(experiment_config, "lambda_consistency", 0.0)))
         optimizer = self._server_optimizer_for(selected_model=m,
                                                cluster_hint=(cluster_num if isinstance(cluster_num, int) else None))
 
@@ -1659,7 +1649,6 @@ class Server(LearningEntity):
                     if u in d: del d[u]
                 del distance_per_client[u]
         return clusters
-
 
 
 class LearningEntityV3(ABC):
