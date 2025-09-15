@@ -1163,7 +1163,7 @@ class Server(LearningEntity):
 
         data = getattr(self, "eval_global_data", self.global_data)
         loader = DataLoader(data, batch_size=experiment_config.batch_size,
-                            shuffle=False, num_workers=0, drop_last=False)
+                            shuffle=True, num_workers=0, drop_last=False)
 
         m = self.model if selected_model is None else selected_model
         m.train()
@@ -1263,7 +1263,7 @@ class Server(LearningEntity):
 
         data = getattr(self, "eval_global_data", self.global_data)
         loader = DataLoader(data, batch_size=experiment_config.batch_size,
-                            shuffle=False, num_workers=0, drop_last=False)
+                            shuffle=True, num_workers=0, drop_last=False)
 
         m = self.model if selected_model is None else selected_model
         m.train()
