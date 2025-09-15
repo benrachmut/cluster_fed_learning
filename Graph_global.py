@@ -1190,11 +1190,17 @@ def extract_rd_PseudoLabelsNoServerModel(algo,dict_):
             dict_1 = dict_[NetsType.C_rnd_S_alex.name]
 
         if name == "C=rndStrong,S=AlexNet":
-            dict_1 =dict_[NetsType.C_rndStrong_S_alex.name]
+            dict_1 = dict_[NetsType.C_rndStrong_S_alex.name]
         if name == "C=rndWeak,S=AlexNet":
             dict_1 = dict_[NetsType.C_rndWeak_S_alex.name]
 
+        if name == "C=rndStrong,S=VGG":
+            dict_1 = dict_[NetsType.C_rndStrong_S_Vgg.name]
+        if name == "C=rndWeak,S=VGG":
+            dict_1 = dict_[NetsType.C_rndWeak_S_Vgg.name]
+
         ans[name] = dict_1["no_model"]["mean"]["kmeans"]["similar_to_client"][1]
+
     return ans
 
 
