@@ -1252,58 +1252,68 @@ def extract_rd(algo,dict_):
         return extract_rd_pFedCK(algo,dict_)
 
 
-def collect_data_per_server_client_iterationV2(merged_dict,top_what,data_type):
+import copy
+
+def _norm_net(k):
+    # keep keys consistent across Enum / str
+    return getattr(k, "name", str(k))
+
+def collect_data_per_server_client_iterationV2(merged_dict, top_what, data_type):
     ans = {}
+
     for algo, rd_list in merged_dict.items():
         ans[algo] = {}
+
         if algo == "MAPL":
-            data_per_iteration_client = {}
-            data_per_iteration_server = {}
+            # ----- per NET -----
+            for nets, rd in rd_list.items():
+                net_key = _norm_net(nets)
 
-            for nets,rd in rd_list.items():
-                if nets not in ans[algo]:
-                    ans[algo][nets] = {}
-                data_per_client,data_per_server = get_data_per_client_and_serverV2(rd[0],algo,top_what,data_type)
-                for client_id, data_dict in data_per_client.items():
-                    for iter_, v in data_dict.items():
-                        if iter_ not in data_per_iteration_client.keys():
-                            data_per_iteration_client[iter_] = []
-                        data_per_iteration_client[iter_].append(v)
-                #############################################################
-                for client_id, data_dict in data_per_server.items():
-                    for iter_, v in data_dict.items():
-                        if iter_ not in data_per_iteration_server.keys():
-                            data_per_iteration_server[iter_] = []
-                        data_per_iteration_server[iter_].append(v)
+                # fresh accumulators for THIS net only
+                data_per_iteration_client = {}
+                data_per_iteration_server = {}
 
+                data_per_client, data_per_server = get_data_per_client_and_serverV2(
+                    rd[0], algo, top_what, data_type
+                )
+
+                # aggregate CLIENTS for this net
+                for _, data_dict in data_per_client.items():
+                    for iter_, v in data_dict.items():
+                        data_per_iteration_client.setdefault(iter_, []).append(v)
+
+                # aggregate SERVER for this net
+                for _, data_dict in data_per_server.items():
+                    for iter_, v in data_dict.items():
+                        data_per_iteration_server.setdefault(iter_, []).append(v)
+
+                # these likely mutate in-place; keep per-net results
                 data_per_iteration_client = update_data_v3(data_per_iteration_client, data_type)
                 data_per_iteration_server = update_data_v2(data_per_iteration_server, data_type, flag=True)
 
-                #ans[algo] = data_per_iteration_client
-                ans[algo][nets] ={"Clients":data_per_iteration_client}
-                ans[algo][nets]["Server"] = data_per_iteration_server
-            print()
+                # store COPIES so later nets can’t alias these dicts
+                ans[algo][net_key] = {
+                    "Clients": copy.deepcopy(data_per_iteration_client),
+                    "Server":  copy.deepcopy(data_per_iteration_server),
+                }
+
         else:
-            data_per_iteration_client = {}
-
+            # ----- per NET -----
             for nets, rd in rd_list.items():
-                if nets not in ans[algo]:
-                    ans[algo][nets] = {}
-                data_per_client =  get_data_per_client_client(rd[0], top_what)
+                net_key = _norm_net(nets)
 
-                for client_id, data_dict in data_per_client.items():
+                data_per_iteration_client = {}
+
+                data_per_client = get_data_per_client_client(rd[0], top_what)
+                for _, data_dict in data_per_client.items():
                     for iter_, v in data_dict.items():
-                        if iter_ not in data_per_iteration_client.keys():
-                            data_per_iteration_client[iter_] = []
-                        data_per_iteration_client[iter_].append(v)
-
+                        data_per_iteration_client.setdefault(iter_, []).append(v)
 
                 data_per_iteration_client = update_data_v3(data_per_iteration_client, data_type)
 
-            # ans[algo] = data_per_iteration_client
-                ans[algo][nets] = {"Clients": data_per_iteration_client}
-
-
+                ans[algo][net_key] = {
+                    "Clients": copy.deepcopy(data_per_iteration_client)
+                }
 
     return ans
 
