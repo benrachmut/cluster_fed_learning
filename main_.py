@@ -677,7 +677,7 @@ if __name__ == '__main__':
     cluster_additions = [0]
     print("epsilons:", cluster_additions)
     print(("alpha_dichts", alpha_dichts))
-    algorithm_selection_list =[AlgorithmSelected.COMET]
+    algorithm_selection_list =[AlgorithmSelected.PseudoLabelsNoServerModel]
     #AlgorithmSelected.FedAvg,AlgorithmSelected.NoFederatedLearning,AlgorithmSelected.pFedCK,AlgorithmSelected.SCAFFOLD
     #AlgorithmSelected.PseudoLabelsClusters
     #AlgorithmSelected.COMET,AlgorithmSelected.PseudoLabelsNoServerModel
