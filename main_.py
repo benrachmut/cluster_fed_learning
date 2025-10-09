@@ -697,7 +697,7 @@ if __name__ == '__main__':
     net_cluster_technique_Centralized_list = [NetClusterTechnique.multi_model]#,NetClusterTechnique.multi_head]
 
     #NoFederatedLearning
-    nets_types_list_NoFederatedLearning  = [NetsType.C_alex_S_alex]#,NetsType.C_alex_S_vgg]#,NetsType.C_alex_S_vgg]
+    nets_types_list_NoFederatedLearning  = [NetsType.C_alex_S_alex, Client_pFedCK]#,NetsType.C_alex_S_vgg]#,NetsType.C_alex_S_vgg]
 
 
 
