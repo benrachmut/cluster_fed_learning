@@ -1,3 +1,4 @@
+import copy
 import os
 import shutil
 import tarfile
@@ -6,7 +7,9 @@ import zipfile
 from urllib.request import urlretrieve
 
 import pandas as pd
-
+from scipy.stats import ansari
+from sympy.core.random import shuffle
+from sympy.physics.units import percent
 from torch.utils.data import TensorDataset, random_split, Subset, Dataset
 from torchvision.datasets import ImageFolder, EMNIST
 from torchvision.transforms import transforms
@@ -15,7 +18,6 @@ from entities import *
 from collections import defaultdict
 import random as rnd
 
-from typing import Dict, List, Tuple, Optional
 
 
 #### ----------------- IMPORT DATA ----------------- ####
@@ -31,25 +33,6 @@ def get_data_by_classification(data_set):
     for image in data_set:
     #for image, label in data_set:
         data_by_classification[image[1]].append(image)
-    return data_by_classification
-
-def get_data_by_classification_memory_efficient(data_set):
-    """
-    Memory-efficient version that stores indices instead of actual data.
-    This prevents loading all images into memory at once.
-    """
-    data_by_classification = defaultdict(list)
-    
-    # Store indices instead of actual data
-    for idx in range(len(data_set)):
-        sample = data_set[idx]
-        if isinstance(sample, tuple) and len(sample) == 2:
-            _, label = sample
-        else:
-            label = sample[1]
-        
-        data_by_classification[label].append(idx)
-    
     return data_by_classification
 
 
@@ -591,116 +574,6 @@ def reorganize_tiny_imagenet_val(val_dir, root_dir):
     shutil.rmtree(val_images_dir)
     os.remove(val_annotations_file)
 
-import random
-from typing import Dict, List, Tuple, Optional
-import torch
-from torch.utils.data import TensorDataset
-from torchvision import transforms
-
-def default_augmentation_pipeline(img_size: Optional[Tuple[int, int]] = None):
-    return transforms.Compose([
-        transforms.ConvertImageDtype(torch.float32),
-        transforms.RandomHorizontalFlip(p=0.5),
-        transforms.RandomAffine(degrees=15, translate=(0.1, 0.1), scale=(0.9, 1.1)),
-        transforms.ColorJitter(brightness=0.15, contrast=0.15, saturation=0.15, hue=0.02),
-    ])
-
-def _gather_tensors_from_donors(datasets: List[TensorDataset], exclude_idx: int):
-    donor_xs, donor_ys = [], []
-    for j, ds in enumerate(datasets):
-        if j == exclude_idx:
-            continue
-        xj, yj = ds.tensors
-        donor_xs.append(xj)
-        donor_ys.append(yj)
-    if donor_xs:
-        return torch.cat(donor_xs, dim=0), torch.cat(donor_ys, dim=0)
-    return torch.empty((0,), dtype=torch.float32), torch.empty((0,), dtype=torch.long)
-
-@torch.no_grad()
-def _augment_from_base(base_x, base_y, n_needed, aug, gen: torch.Generator):
-    if base_x.numel() == 0 or n_needed <= 0:
-        return torch.empty((0,), dtype=torch.float32), torch.empty((0,), dtype=base_y.dtype)
-
-    C, H, W = base_x.shape[1:]
-    out_x = torch.empty((n_needed, C, H, W), dtype=torch.float32)
-    out_y = torch.empty((n_needed,), dtype=base_y.dtype)
-
-    idxs = torch.randint(0, base_x.shape[0], (n_needed,), generator=gen)
-    for i, idx in enumerate(idxs):
-        xi = aug(base_x[int(idx)])
-        out_x[i] = xi
-        out_y[i] = base_y[int(idx)]
-    return out_x, out_y
-
-def ensure_min_k_per_client(
-    clients_data_dict: Dict[str, List[TensorDataset]],
-    k: int,
-    augmentation: Optional[transforms.Compose] = None,
-    seed: Optional[int] = None
-) -> Dict[str, List[TensorDataset]]:
-
-    if augmentation is None:
-        augmentation = default_augmentation_pipeline()
-
-    # Local RNGs
-    py_rng = random.Random(seed) if seed is not None else random.Random()
-    gen = torch.Generator()
-    if seed is not None:
-        gen.manual_seed(int(seed))
-
-    balanced = {}
-
-    for group_key, datasets in clients_data_dict.items():
-        new_list = []
-        for i, ds in enumerate(datasets):
-            xi, yi = ds.tensors
-            xi, yi = xi.clone(), yi.clone()
-
-            n = int(xi.shape[0])
-            target_k = int(k)
-
-            if n >= target_k:
-                if n > target_k:
-                    keep = torch.randperm(n, generator=gen)[:target_k]
-                    xi, yi = xi[keep], yi[keep]
-                new_list.append(TensorDataset(xi, yi))
-                continue
-
-            needed = int(target_k - n)
-            donor_x, donor_y = _gather_tensors_from_donors(datasets, i)
-            donor_n = int(donor_x.shape[0])
-
-            # Borrow from donors
-            if needed > 0 and donor_n > 0:
-                take = int(min(needed, donor_n))
-                donor_idxs = list(range(donor_n))
-                py_rng.shuffle(donor_idxs)
-                pick = donor_idxs[:take]                 # <- take is a plain int now
-                xi = torch.cat([xi, donor_x[pick]], dim=0)
-                yi = torch.cat([yi, donor_y[pick]], dim=0)
-                needed -= take
-
-            # Augmentation if still needed
-            if needed > 0:
-                base_x, base_y = ds.tensors
-                X_aug, Y_aug = _augment_from_base(base_x, base_y, int(needed), augmentation, gen)
-                xi = torch.cat([xi, X_aug], dim=0)
-                yi = torch.cat([yi, Y_aug], dim=0)
-                needed = 0
-
-            # Final truncate to exactly k
-            cur_n = int(xi.shape[0])
-            if cur_n > target_k:
-                keep = torch.randperm(cur_n, generator=gen)[:target_k]
-                xi, yi = xi[keep], yi[keep]
-
-            new_list.append(TensorDataset(xi, yi))
-
-        balanced[group_key] = new_list
-
-    return balanced
-
 
 def download_and_extract_caltech256(destination_path='./data'):
     dataset_url = 'http://www.vision.caltech.edu/Image_Datasets/Caltech256/256_ObjectCategories.tar'
@@ -726,12 +599,40 @@ def download_and_extract_caltech256(destination_path='./data'):
 
     return extract_path
 
+
+def random_subset(dataset, ratio: float, seed: int | None = None) -> Subset:
+    """
+    Return a random subset of `dataset` of size floor(len(dataset) * ratio).
+    Selection is uniform without replacement. If `seed` is provided, it is reproducible.
+    """
+    if not (0.0 <= ratio <= 1.0):
+        raise ValueError(f"ratio must be in [0, 1], got {ratio}")
+
+    n = len(dataset)
+    k = int(n * ratio)  # e.g., 100 * 0.6 -> 60
+
+    if k == 0:
+        return Subset(dataset, [])
+    if k == n:
+        return Subset(dataset, list(range(n)))  # same as full dataset
+
+    g = torch.Generator()
+    if seed is not None:
+        g.manual_seed(seed)
+    idx = torch.randperm(n, generator=g)[:k].tolist()
+    return Subset(dataset, idx)
+
+
 def get_data_set(is_train ):
     dataset = experiment_config.data_set_selected
     print(f"Loading dataset: {dataset}")
 
     if dataset == DataSet.EMNIST_balanced:
-
+        #print("Using grayscale transform for EMNIST")
+        #transform = transforms.Compose([
+        #    transforms.Grayscale(num_output_channels=3),
+        #    transforms.ToTensor(),
+        #])
 
         transform = transforms.Compose([
             transforms.Resize((32, 32)),
@@ -739,23 +640,6 @@ def get_data_set(is_train ):
             transforms.ToTensor(),
             transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))  # Use RGB normalization
         ])
-    elif dataset == DataSet.IMAGENET:
-        if is_train:
-            transform = transforms.Compose([
-            transforms.RandomResizedCrop(224),
-            transforms.RandomHorizontalFlip(),
-            transforms.ToTensor(),
-            transforms.Normalize(mean=[0.485, 0.456, 0.406],
-                                std =[0.229, 0.224, 0.225])
-            ])
-        else:
-            transform = transforms.Compose([
-            transforms.Resize(256),
-            transforms.CenterCrop(224),
-            transforms.ToTensor(),
-            transforms.Normalize(mean=[0.485, 0.456, 0.406],
-                                std =[0.229, 0.224, 0.225])
-            ])
     else:
         print("Using RGB transform for dataset")
         transform = transforms.Compose([
@@ -766,14 +650,7 @@ def get_data_set(is_train ):
         ])
 
     if experiment_config.data_set_selected == DataSet.CIFAR100:
-        train_set = torchvision.datasets.CIFAR100(
-            root='./data/cifar100',  # dedicated subdir
-            train=is_train, download=True, transform=transform
-        )
-        experiment_config.target_k = 40000/25
-    if experiment_config.data_set_selected == DataSet.IMAGENET:
-        imagenet_dir = '/mnt/myssd/Ben/imagenet/train' if is_train else '/mnt/myssd/Ben/imagenet/val'
-        train_set = torchvision.datasets.ImageFolder(root=imagenet_dir, transform=transform)
+        train_set = torchvision.datasets.CIFAR100(root='./data', train=is_train, download=True, transform=transform)
 
     if experiment_config.data_set_selected == DataSet.CIFAR10:
         train_set = torchvision.datasets.CIFAR10(root='./data', train=is_train, download=True, transform=transform)
@@ -801,34 +678,14 @@ def get_data_set(is_train ):
 
     if experiment_config.data_set_selected == DataSet.EMNIST_balanced:
         train_set = EMNIST(root='./data', split='balanced', train=is_train, download=True,
-           transform=transform)
+           transform=transform)#EMNIST(root='./data', split='balanced', train=is_train, download=True, transform=transform)
 
-    # Use memory-efficient classification for ImageNet to prevent memory explosion
-    if experiment_config.data_set_selected == DataSet.IMAGENET:
-        print("Using memory-efficient data classification for ImageNet...")
-        data_by_classification_dict = get_data_by_classification_memory_efficient(train_set)
-        selected_classes_list = sorted(data_by_classification_dict.keys())[:experiment_config.num_classes]
-        
-        # Use memory-efficient splitting
-        clients_data_dict, server_data = split_clients_server_data_memory_efficient(
-            data_by_classification_dict, selected_classes_list, train_set
-        )
-    else:
-        # Use original method for other datasets
-        data_by_classification_dict = get_data_by_classification(train_set)
-        selected_classes_list = sorted(data_by_classification_dict.keys())[:experiment_config.num_classes]
-        clients_data_dict, server_data = split_clients_server_data_Non_IID(data_by_classification_dict, selected_classes_list)
+    data_by_classification_dict = get_data_by_classification(train_set)
+    selected_classes_list = sorted(data_by_classification_dict.keys())[:experiment_config.num_classes]
 
 
-
-    if experiment_config.num_clients > 25:
-        balanced = ensure_min_k_per_client(
-            clients_data_dict,
-            k= (40000/25),
-            seed=experiment_config.seed_num  # reproducible donor sampling & augmentation
-
-        )
-        clients_data_dict = balanced
+    clients_data_dict, server_data = split_clients_server_data_Non_IID(data_by_classification_dict, selected_classes_list)
+    server_data = random_subset(dataset = server_data,ratio = experiment_config.server_data_ratio, seed = experiment_config.seed_num)
 
     return selected_classes_list, clients_data_dict, server_data
 
@@ -1028,11 +885,11 @@ def create_clients(client_data_dict,server_data,test_set,server_test_data):
         for data_ in data_list:
             ids_list.append(id_)
             known_clusters[cluster_num].append(id_)
-            if experiment_config.algorithm_selection ==AlgorithmSelected.PseudoLabelsClusters:
+            if experiment_config.algorithm_selection ==AlgorithmSelected.MAPL:
                 c = Client(id_=id_, client_data=data_, global_data=server_data, global_test_data=server_test_data,
                               local_test_data=test_set[group_name][data_index])
 
-            if  experiment_config.algorithm_selection == AlgorithmSelected.PseudoLabelsNoServerModel or experiment_config.algorithm_selection == AlgorithmSelected.COMET:
+            if  experiment_config.algorithm_selection == AlgorithmSelected.FedMD or experiment_config.algorithm_selection == AlgorithmSelected.COMET:
                 c = Client(id_=id_, client_data=data_, global_data=server_data, global_test_data=server_test_data,
                            local_test_data=test_set[group_name][data_index])
             if experiment_config.algorithm_selection ==AlgorithmSelected.NoFederatedLearning:
@@ -1049,9 +906,6 @@ def create_clients(client_data_dict,server_data,test_set,server_test_data):
                                                               local_test_data=test_set[group_name][data_index])
             if experiment_config.algorithm_selection == AlgorithmSelected.pFedCK:
                 c = Client_pFedCK(id_=id_, client_data=data_, global_data=server_data, global_test_data=server_test_data,
-                           local_test_data=test_set[group_name][data_index])
-            if experiment_config.algorithm_selection == AlgorithmSelected.SCAFFOLD:
-                c = Client_SCAFFOLD(id_=id_, client_data=data_, global_data=server_data, global_test_data=server_test_data,
                            local_test_data=test_set[group_name][data_index])
 
             ans.append(c)
@@ -1104,64 +958,251 @@ def create_mean_df(clients, file_name):
 
     return average_loss_df
 
-def create_tensor_dataset_from_indices(dataset, indices, batch_size=None):
-    """
-    Create TensorDataset from indices in batches to avoid memory overflow.
-    """
-    if batch_size is None:
-        batch_size = getattr(experiment_config, 'tensor_creation_batch_size', 1000)
-    
-    images = []
-    targets = []
-    
-    for i in range(0, len(indices), batch_size):
-        batch_indices = indices[i:i + batch_size]
-        batch_data = [dataset[idx] for idx in batch_indices]
-        
-        batch_images = [item[0] for item in batch_data]
-        batch_targets = [item[1] for item in batch_data]
-        
-        images.extend(batch_images)
-        targets.extend(batch_targets)
-    
-    images_tensor = torch.stack(images)
-    targets_tensor = torch.tensor(targets)
-    
-    return TensorDataset(images_tensor, targets_tensor)
 
-def split_clients_server_data_memory_efficient(data_by_classification_dict, selected_classes, dataset):
+# helpers_json.py
+from pathlib import Path
+from typing import Union
+import json
+import re
+
+# --- Optional: support numpy / torch if present ---
+try:
+    import numpy as np
+except Exception:
+    np = None
+
+try:
+    import torch
+except Exception:
+    torch = None
+
+
+def _to_serializable(x):
+    """Recursively convert objects to JSON-safe types."""
+    # Primitives
+    if x is None or isinstance(x, (bool, int, float, str)):
+        return x
+
+    # Dicts (force string keys)
+    if isinstance(x, dict):
+        out = {}
+        for k, v in x.items():
+            key = k if isinstance(k, str) else str(k)
+            out[key] = _to_serializable(v)
+        return out
+
+    # Iterables
+    if isinstance(x, (list, tuple, set)):
+        return [_to_serializable(v) for v in x]
+
+    # NumPy
+    if np is not None:
+        if isinstance(x, np.generic):   # e.g., np.int64
+            return x.item()
+        if isinstance(x, np.ndarray):
+            return x.tolist()
+
+    # PyTorch
+    if torch is not None:
+        if isinstance(x, torch.Tensor):
+            return x.detach().cpu().tolist()
+
+    # Objects with __dict__
+    if hasattr(x, "__dict__"):
+        return _to_serializable(vars(x))
+
+    # Fallback
+    return repr(x)
+
+
+def to_json_dict(obj) -> dict:
+    """Return a deep, JSON-safe dict for any object with attributes."""
+    base = obj if isinstance(obj, dict) else vars(obj)
+    return _to_serializable(base)
+
+
+from pathlib import Path
+from typing import Union
+import json
+import time
+
+def _name_or_str(x):
+    """Return x.name if it exists, else str(x); handles None cleanly."""
+    if x is None:
+        return "None"
+    return getattr(x, "name", str(x))
+
+def _unique_path(p: Path) -> Path:
+    """Return a non-colliding path by adding __1, __2, ... before suffix."""
+    if not p.exists():
+        return p
+    stem, suf = p.stem, p.suffix
+    i = 1
+    while True:
+        candidate = p.with_name(f"{stem}__{i}{suf}")
+        if not candidate.exists():
+            return candidate
+        i += 1
+
+def _normalize_target(path: Union[str, Path]) -> Path:
     """
-    Memory-efficient version that works with indices instead of full data.
+    If `path` looks like a directory (no suffix), place a timestamped file inside it.
+    Otherwise return as-is.
     """
-    clients_data_dict = {}
-    server_data_dict = {}
-    
-    for class_name in selected_classes:
-        indices = data_by_classification_dict[class_name]
-        
-        # Split indices for clients and server
-        total_size = len(indices)
-        server_size = int(total_size * experiment_config.server_split_ratio)
-        client_size = total_size - server_size
-        
-        # Shuffle indices
-        torch.Generator().manual_seed(experiment_config.seed_num * (999 + hash(class_name)))
-        shuffled_indices = torch.randperm(total_size).tolist()
-        shuffled_indices = [indices[i] for i in shuffled_indices]
-        
-        # Split indices
-        client_indices = shuffled_indices[:client_size]
-        server_indices = shuffled_indices[client_size:]
-        
-        # Create datasets from indices
-        clients_data_dict[class_name] = create_tensor_dataset_from_indices(dataset, client_indices)
-        server_data_dict[class_name] = create_tensor_dataset_from_indices(dataset, server_indices)
-    
-    # Combine server data
-    all_server_indices = []
-    for indices in server_data_dict.values():
-        all_server_indices.extend(indices)
-    
-    server_data = create_tensor_dataset_from_indices(dataset, all_server_indices)
-    
-    return clients_data_dict, server_data
+    p = Path(path)
+    if p.suffix == "":  # treat as directory
+        ts = time.strftime("%Y%m%d_%H%M%S")
+        p = p / f"data_{ts}.json"
+    return p
+
+from pathlib import Path
+from typing import Union
+import json, time, os
+
+
+
+# ============ path helpers for results/seed/alg/alpha ============
+def _slugify(v) -> str:
+    """Filesystem-safe string: keep letters, digits, _, -, ."""
+    s = str(v).strip().replace(" ", "_")
+    s = re.sub(r"[^A-Za-z0-9._-]", "", s)
+    s = re.sub(r"[_-]{2,}", "_", s)
+    return s or "unknown"
+
+
+def _fmt_alpha(v):
+    """Format alpha for filenames/paths, e.g. 0.5 -> 0p5."""
+    try:
+        f = float(v)
+        s = f"{f:.6g}"      # compact, trims trailing zeros
+        return s.replace(".", "p")
+    except Exception:
+        return _slugify(v)
+
+
+from pathlib import Path
+
+def save_record_to_results(record, *, filename: str | None = None, indent: int = 2) -> Path:
+    """
+    Save under:
+      results/
+        data_set{data_set}_alg{alg}_clusters{clusters}_server{server}_clients{clients}_client{client}_alpha{alpha}_seed{seed}/
+          data_set{data_set}_alg{alg}_clusters{clusters}_server{server}_clients{clients}_client{client}_alpha{alpha}_seed{seed}.json
+    """
+    if not hasattr(record, "summary"):
+        raise ValueError("record has no 'summary' attribute")
+
+    summary = record.summary or {}
+
+    # Pull raw values from summary
+    seed               = summary.get("seed_num", "unknown_seed")
+    alg_val            = summary.get("algorithm_selection", "unknown_alg")
+    alpha              = summary.get("alpha_dich", "unknown_alpha")
+    clients            = summary.get("num_clients", "unknown_num_clients")
+    num_opt_clusters   = summary.get("cluster_addition", "unknown_cluster_addition")
+    data_set_selected  = summary.get("data_set_selected", "unknown_dataset")
+    server_net_type    = summary.get("server_net_type", None)
+    client_net_type    = summary.get("client_net_type", "unknown_client_net")
+    server_data_ratio = int(summary.get("server_data_ratio", "unknown_server_data_ratio")*10)
+    # Normalize values to strings (use .name when present)
+    alg_str     = _name_or_str(alg_val)
+    data_set_str= _name_or_str(data_set_selected)
+    server_str  = _name_or_str(server_net_type)
+    client_str  = _name_or_str(client_net_type)
+
+    # Sanitize for filesystem
+    seed_s     = _slugify(seed)
+    alg_s      = _slugify(alg_str)
+    data_set_s = _slugify(data_set_str)
+    alpha_s    = _fmt_alpha(alpha)       # nice for floats (0.5 -> 0p5)
+    clients_s  = _slugify(clients)
+    server_data_ratio_s = _slugify(server_data_ratio)
+    clusters_s = _slugify(num_opt_clusters)
+    server_s   = _slugify(server_str)
+    client_s   = _slugify(client_str)
+
+    # Base folder (exactly as you requested: "results/<ONE subfolder>/file.json")
+    out_dir = Path("results")
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    folder_ = (
+        f"data_set{data_set_s}_alg{alg_s}_clusters{clusters_s}"
+        f"_server{server_s}_clients{clients_s}_client{client_s}"
+        f"_alpha{alpha_s}_seed{seed_s}_ratio{server_data_ratio_s}"
+    )
+    name_ =         (f"data_set{data_set_s}_alg{alg_s}_clusters{clusters_s}"
+        f"_server{server_s}_clients{clients_s}_client{client_s}"
+        f"_alpha{alpha_s}_ratio{server_data_ratio_s}")
+    sub_dir = out_dir / folder_
+    sub_dir.mkdir(parents=True, exist_ok=True)
+
+    # Filename—default to the folder name with .json (your original intent)
+    if filename is None:
+        filename = f"{name_}.json"
+
+    out_path = sub_dir / filename
+
+    # Write (your save_json already mkdirs parents; harmless duplicate)
+    save_json(record, out_path, indent=indent)
+    return out_path
+
+# ---------------- Example usage ----------------
+# record = RecordData(clients=clients, server=server)
+# path = save_record_to_results(record)  # writes under results/<seed>/<alg>/<alpha>/...
+# print("Saved to:", path)
+from pathlib import Path
+from typing import Union
+import json
+import os
+import time
+
+def save_json(obj, path: Union[str, Path], *, indent: int = 2, overwrite: bool = True):
+    """
+    Serialize `obj` to JSON at `path`.
+
+    - Creates all missing parent folders.
+    - If `path` is a directory (no filename/suffix), writes to data_YYYYmmdd_HHMMSS.json inside it.
+    - If file exists and overwrite=False, appends __N before the suffix.
+    - Uses to_json_dict(obj) if available; otherwise dumps obj directly.
+
+    Returns:
+        Path to the written file.
+    """
+    # Build JSON-safe payload if helper exists
+    try:
+        payload = to_json_dict(obj)
+    except NameError:
+        payload = obj
+
+    p = Path(path)
+
+    # If given a directory, create a timestamped filename inside it
+    if p.suffix == "":
+        ts = time.strftime("%Y%m%d_%H%M%S")
+        p = p / f"data_{ts}.json"
+
+    # Ensure parent folders exist (double-safe on Windows)
+    try:
+        p.parent.mkdir(parents=True, exist_ok=True)
+    except Exception:
+        os.makedirs(p.parent, exist_ok=True)
+
+    if not p.parent.exists():
+        raise FileNotFoundError(f"Parent directory could not be created: {p.parent}")
+
+    # Handle collisions if not overwriting
+    if p.exists() and not overwrite:
+        stem, suf = p.stem, p.suffix
+        i = 1
+        while True:
+            cand = p.with_name(f"{stem}__{i}{suf}")
+            if not cand.exists():
+                p = cand
+                break
+            i += 1
+
+    # Write directly to the final file (avoid .tmp to keep path short)
+    with p.open("w", encoding="utf-8") as f:
+        json.dump(payload, f, ensure_ascii=False, indent=indent)
+
+    return p

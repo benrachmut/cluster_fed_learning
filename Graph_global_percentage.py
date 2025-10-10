@@ -182,7 +182,7 @@ if __name__ == '__main__':
 
             for seed_, dict3 in seeds_dict.items():
                 try:
-                    rd = (dict3[AlgorithmSelected.PseudoLabelsClusters.name]
+                    rd = (dict3[AlgorithmSelected.MAPL.name]
                               [NetsType.C_alex_S_vgg.name]["multi_model"]["max"]
                               ["greedy_elimination_L2"]["similar_to_cluster"][0]
                               ["withWeights"]["withInputConsistency"])

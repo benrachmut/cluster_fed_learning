@@ -10,8 +10,8 @@ import numpy as np
 import matplotlib.pyplot as plt
 from scipy import stats
 
-algo_names={AlgorithmSelected.PseudoLabelsClusters.name:"MAPL"
-        ,AlgorithmSelected.PseudoLabelsNoServerModel.name:"FedMd",
+algo_names={AlgorithmSelected.MAPL.name: "MAPL"
+        ,AlgorithmSelected.FedMD.name: "FedMd",
         AlgorithmSelected.NoFederatedLearning.name:"No FL",
         AlgorithmSelected.Centralized.name:"Centralized",
                 AlgorithmSelected.FedAvg.name:"FedAvg",
@@ -272,7 +272,7 @@ from scipy import stats
 def switch_algo_and_seed_cluster(merged_dict,dich,data_type):
     rds = {}
     for seed in seeds_dict[dich][data_type]:
-        temp_dict = merged_dict[seed][AlgorithmSelected.PseudoLabelsClusters.name][NetsType.C_alex_S_vgg.name]["multi_model"]["max"][ClusterTechnique.greedy_elimination_L2.name]["similar_to_cluster"]
+        temp_dict = merged_dict[seed][AlgorithmSelected.MAPL.name][NetsType.C_alex_S_vgg.name]["multi_model"]["max"][ClusterTechnique.greedy_elimination_L2.name]["similar_to_cluster"]
         for cluster_num,d2 in temp_dict.items():
             cluster_correct_num = cluster_num+5
             rd = d2[WeightForPS.withWeights.name][InputConsistency.withInputConsistency.name]
@@ -332,7 +332,7 @@ def switch_algo_and_seed(merged_dict,dich,data_type):
     for seed in [1]:
         for algo in merged_dict[seed]:
             algo_name = algo_names[algo]
-            if algo == AlgorithmSelected.PseudoLabelsClusters.name:
+            if algo == AlgorithmSelected.MAPL.name:
                 algo_name_list = get_PseudoLabelsClusters_name(algo,merged_dict[seed][algo])
                 for name_ in algo_name_list:
                     if name_ not in rds.keys() :
@@ -1087,9 +1087,9 @@ def get_data_per_client(rd,algo,top_what,data_type):
         data_per_client = get_data_per_client_client(rd,top_what)
         data_per_client = fix_data_NoFederatedLearning(data_per_client)
     if algo == algo_names[AlgorithmSelected.pFedCK.name] or algo == algo_names[
-        AlgorithmSelected.PseudoLabelsNoServerModel.name]  or algo == algo_names[AlgorithmSelected.FedAvg.name]  or algo == algo_names[AlgorithmSelected.COMET.name]:
+        AlgorithmSelected.FedMD.name]  or algo == algo_names[AlgorithmSelected.FedAvg.name]  or algo == algo_names[AlgorithmSelected.COMET.name]:
         data_per_client = get_data_per_client_client(rd,top_what)
-    if algo ==algo_names[AlgorithmSelected.PseudoLabelsClusters.name]+",VGG" or algo ==algo_names[AlgorithmSelected.PseudoLabelsClusters.name]+",AlexNet":
+    if algo ==algo_names[AlgorithmSelected.MAPL.name]+ ",VGG" or algo ==algo_names[AlgorithmSelected.MAPL.name]+ ",AlexNet":
         data_per_client = get_data_per_client_server(rd,top_what)
     update_data(data_per_client, data_type)
     return data_per_client
@@ -1236,9 +1236,9 @@ def extract_rd_COMET(algo, dict_):
 
 
 def extract_rd(algo,dict_):
-    if algo == AlgorithmSelected.PseudoLabelsClusters.name:
+    if algo == AlgorithmSelected.MAPL.name:
         return extract_rd_PseudoLabelsClusters(algo,dict_)
-    if algo == AlgorithmSelected.PseudoLabelsNoServerModel.name:
+    if algo == AlgorithmSelected.FedMD.name:
         return extract_rd_PseudoLabelsNoServerModel(algo,dict_)
     if algo == AlgorithmSelected.COMET.name :
 

@@ -71,16 +71,10 @@ class ServerInputTech(Enum):
     mean = 1
     max = 2
 class NetType(Enum):
-    rndStrong = "Random Strong"
-    rndWeak = "Random Weak"
-    rnd_net = "Random"
     ALEXNET = "AlexNet"
     VGG = "VGG"
     ResNet = "ResNet"
-    DenseNet= "DenseNet"
-    MobileNetV2 = "MobileNet"
-    SqueezeNet = "SqueezeNet"
-    rnd_net1 = "Random Net"
+    DenseNetServer= "DenseNetServer"
 
 class DataSet(Enum):
     CIFAR100 = "CIFAR100"
@@ -88,7 +82,6 @@ class DataSet(Enum):
     TinyImageNet = "TinyImageNet"
     EMNIST_balanced = "EMNIST_balanced"
     SVHN = "SVHN"
-    IMAGENET = "ImageNet"
 
 
 class DataType(Enum):
@@ -96,23 +89,10 @@ class DataType(Enum):
     NonIID = 2
 
 class NetsType(Enum):
-    C_rnd_strong = 20
-    C_rnd_weak = 21
-    c_rnd = 22
     C_alex_S_vgg = 1
     C_alex_S_alex = 2
     C_alex_S_ResNet = 6
     C_alex_S_DenseNet = 7
-    C_MobileNet_S_vgg = 10
-    C_MobileNet_S_alex = 11
-    C_rnd_S_alex = 9
-    C_rnd_S_Vgg = 12
-
-    C_rndWeak_S_alex = 13
-    C_rndStrong_S_alex = 14
-    C_rndWeak_S_Vgg = 15
-    C_rndStrong_S_Vgg = 16
-
 
     C_alex = 3
     S_alex = 4
@@ -145,25 +125,23 @@ class InputConsistency(Enum):
     withInputConsistency = 1
     withoutInputConsistency = 2
 class AlgorithmSelected(Enum):
-    PseudoLabelsClusters = 1
-    PseudoLabelsNoServerModel = 2
+    MAPL = 1
+    FedMD = 2
     NoFederatedLearning = 3
     PseudoLabelsClusters_with_division = 4
     Centralized = 5
     FedAvg = 6
     pFedCK = 7
     COMET = 8
-    SCAFFOLD = 9
 class DataDistTypes(Enum):
     NaiveNonIID = 1
     Dirichlet1 = 2
 
 class ExperimentConfig:
     def __init__(self):
-        self.is_with_memory_load=None
         self.weights_for_ps = None
         self.input_consistency = None
-        self.server_amount_data = None
+
         self.which_net_arch = None
         self.seed_num = 1
         self.iterations = 20
@@ -178,7 +156,7 @@ class ExperimentConfig:
         self.identical_clients = None # num_clients / number_of_optimal_clusters
         self.mix_percentage = None
         self.server_split_ratio = 0.2
-
+        self.server_data_ratio = None
 
         # net types:
         self.client_net_type = None
@@ -210,12 +188,13 @@ class ExperimentConfig:
 
         # general vars
         self.local_batch = 64
-        self.batch_size = 128#32
+        self.batch_size = 32#32
         self.percent_train_data_use = 1
         self.percent_test_relative_to_train = 1
         self.num_rounds_multi_head = 1
         self.known_clusters = None
-
+        self.server_net_type_name = None
+        self.client_net_type_name = None
 
         #
 
@@ -227,9 +206,6 @@ class ExperimentConfig:
         self.percent_test_relative_to_train = 1
 
         self.cluster_addition = None
-
-        # Memory-efficient tensor creation batch size (for ImageNet)
-        self.tensor_creation_batch_size = 1000  # Batch size for creating tensor datasets
 
 
     def update_num_classes(self,data_set):
@@ -247,10 +223,6 @@ class ExperimentConfig:
 
         if data_set == DataSet.SVHN:
             self.num_classes = 10
-        
-        if data_set == DataSet.IMAGENET:
-            self.num_classes = 1000
-            self.batch_size = 64
 
     def to_dict(self):
         """Returns a dictionary of attribute names and their values."""
@@ -259,99 +231,46 @@ class ExperimentConfig:
 
 
     def update_net_type(self,net_type):
-        # Common defaults (Adam). Optionally scale by batch size vs 128.
-        scale = (self.batch_size / 128.0) if hasattr(self, "batch_size") else 1.0
-        LR_FT = 1e-3 * scale  # local CE fine-tune (higher)
-        LR_KD_C = 3e-4 * scale  # client KD / KD+consistency
-        LR_KD_S = 1e-4 * scale  # server KD / KD+consistency (lower than client)
-
-        if  net_type == NetsType.C_alex or net_type==NetsType.S_alex or net_type==NetsType.S_vgg:
+        if net_type == NetsType.C_alex_S_alex or net_type == NetsType.C_alex or net_type==NetsType.S_alex or net_type==NetsType.S_vgg:
             self.client_net_type = NetType.ALEXNET
             self.server_net_type = NetType.ALEXNET
             if self.algorithm_selection == AlgorithmSelected.COMET:
                 self.learning_rate_train_c = 0.0008
-            elif self.algorithm_selection == AlgorithmSelected.PseudoLabelsNoServerModel:
+            elif self.algorithm_selection == AlgorithmSelected.FedMD:
                 self.learning_rate_train_c = 0.002
             else:
                 self.learning_rate_train_c = 0.0001
 
             self.learning_rate_fine_tune_c = 0.001
             self.learning_rate_train_s = 0.001
-        scale = (self.batch_size / 128.0) if hasattr(self, "batch_size") else 1.0
-        LR_FT = 1e-3 * scale  # 5e-4
-        LR_KD_C = 3e-4 * scale#3e-4 * scale  # 1.5e-4
-        LR_KD_S = 1e-4 * scale  # 5e-5
-
-        if net_type == NetsType.C_alex_S_alex:
-            self.client_net_type = NetType.ALEXNET
-            self.server_net_type = NetType.ALEXNET
-            self.learning_rate_fine_tune_c = LR_FT
-            self.learning_rate_train_c = LR_KD_C
-            self.learning_rate_train_s = LR_KD_S
-
-        elif net_type == NetsType.C_rnd_S_alex:
-            self.client_net_type = NetType.rnd_net
-            self.server_net_type = NetType.ALEXNET
-            self.learning_rate_fine_tune_c = LR_FT
-            self.learning_rate_train_c = LR_KD_C
-            self.learning_rate_train_s = LR_KD_S
-
-        elif net_type == NetsType.C_rndWeak_S_alex:
-            self.client_net_type = NetType.rndWeak
-            self.server_net_type = NetType.ALEXNET
-            self.learning_rate_fine_tune_c = LR_FT
-            self.learning_rate_train_c = LR_KD_C
-            self.learning_rate_train_s = LR_KD_S
-        elif net_type == NetsType.C_rndStrong_S_alex:
-            self.client_net_type = NetType.rndStrong
-            self.server_net_type = NetType.ALEXNET
-            self.learning_rate_fine_tune_c = LR_FT
-            self.learning_rate_train_c = LR_KD_C
-            self.learning_rate_train_s = LR_KD_S
-
-
-        elif net_type == NetsType.C_rnd_S_Vgg or net_type ==NetsType.C_rndWeak_S_Vgg or  net_type ==NetsType.C_rndStrong_S_Vgg :
-            self.batch_size = 64
-            scale = (self.batch_size / 128.0) if hasattr(self, "batch_size") else 1.0
-
-            LR_FT = 1e-3 * scale  # 5e-4
-            LR_KD_C = 3e-4 * scale  # 3e-4 * scale  # 1.5e-4
-            LR_KD_S = 1e-4 * scale  # 5e-5
-
-            if net_type == NetsType.C_rnd_S_Vgg:
-                self.client_net_type = NetType.rnd_net
-            elif net_type ==NetsType.C_rndWeak_S_Vgg:
-                self.client_net_type = NetType.rndWeak
-            elif net_type ==NetsType.C_rndStrong_S_Vgg:
-                self.client_net_type = NetType.rndStrong
-
-            self.server_net_type = NetType.VGG
-            self.learning_rate_fine_tune_c = LR_FT
-            self.learning_rate_train_c = LR_KD_C
-            self.learning_rate_train_s = LR_KD_S
 
 
 
-        elif net_type == NetsType.C_MobileNet_S_vgg:
-            self.client_net_type = NetType.MobileNetV2
-            self.server_net_type = NetType.VGG
-            self.learning_rate_fine_tune_c = LR_FT
-            self.learning_rate_train_c = LR_KD_C
-            self.learning_rate_train_s = LR_KD_S
 
-        elif net_type == NetsType.C_MobileNet_S_alex:
-            self.client_net_type = NetType.MobileNetV2
-            self.server_net_type = NetType.ALEXNET
-            self.learning_rate_fine_tune_c = LR_FT
-            self.learning_rate_train_c = LR_KD_C
-            self.learning_rate_train_s = LR_KD_S
 
-        elif net_type in (NetsType.C_alex_S_vgg, NetsType.S_vgg):
+
+
+        if net_type == NetsType.C_alex_S_vgg or net_type == NetsType.S_vgg :
             self.client_net_type = NetType.ALEXNET
             self.server_net_type = NetType.VGG
-            self.learning_rate_fine_tune_c = LR_FT
-            self.learning_rate_train_c = LR_KD_C
+            self.learning_rate_train_c = 0.0001
+            self.learning_rate_fine_tune_c = 0.001
             self.learning_rate_train_s = 0.0001
+        if  net_type ==NetsType.C_alex_S_DenseNet:
+            self.client_net_type = NetType.ALEXNET
+            self.server_net_type = NetType.DenseNetServer
+            self.learning_rate_train_c = 0.0001
+            self.learning_rate_fine_tune_c = 0.001
+            self.learning_rate_train_s = 0.0001
+        if  self.server_net_type is not None:
+            self.server_net_type_name = ""
+        else:
+            self.server_net_type_name = self.server_net_type.name
+
+        self.client_net_type_name = self.client_net_type.name
+        self.client_net_type = NetType.ALEXNET
+        self.server_net_type = NetType.ALEXNET
+
 
 
 
@@ -367,7 +286,6 @@ class ExperimentConfig:
 
 
 experiment_config = ExperimentConfig()
-
 
 
 
