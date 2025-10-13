@@ -600,7 +600,7 @@ def download_and_extract_caltech256(destination_path='./data'):
     return extract_path
 
 
-def random_subset(dataset, ratio: float, seed: int | None = None) -> Subset:
+def random_subset(dataset, ratio, seed=None):
     """
     Return a random subset of `dataset` of size floor(len(dataset) * ratio).
     Selection is uniform without replacement. If `seed` is provided, it is reproducible.
@@ -609,19 +609,26 @@ def random_subset(dataset, ratio: float, seed: int | None = None) -> Subset:
         raise ValueError(f"ratio must be in [0, 1], got {ratio}")
 
     n = len(dataset)
-    k = int(n * ratio)  # e.g., 100 * 0.6 -> 60
+    k = max(0, min(n, int(n * ratio)))
 
     if k == 0:
         return Subset(dataset, [])
     if k == n:
-        return Subset(dataset, list(range(n)))  # same as full dataset
+        return Subset(dataset, list(range(n)))
 
-    g = torch.Generator()
-    if seed is not None:
-        g.manual_seed(seed)
-    idx = torch.randperm(n, generator=g)[:k].tolist()
+    # Prefer per-call generator if your torch supports it
+    try:
+        g = torch.Generator()
+        if seed is not None:
+            g.manual_seed(int(seed))
+        idx = torch.randperm(n, generator=g)[:k].tolist()
+    except TypeError:
+        # Fallback for older torch without `generator=`
+        if seed is not None:
+            torch.manual_seed(int(seed))
+        idx = torch.randperm(n)[:k].tolist()
+
     return Subset(dataset, idx)
-
 
 def get_data_set(is_train ):
     dataset = experiment_config.data_set_selected
@@ -1076,12 +1083,10 @@ def _fmt_alpha(v):
         return _slugify(v)
 
 
-from pathlib import Path
 
 import re
-from pathlib import Path
 
-def save_record_to_results(record, *, filename: str | None = None, indent: int = 2) -> Path:
+def save_record_to_results(record, *, filename= None, indent = 2) :
     """
     Save under:
       results/
@@ -1152,12 +1157,11 @@ def save_record_to_results(record, *, filename: str | None = None, indent: int =
 # path = save_record_to_results(record)  # writes under results/<seed>/<alg>/<alpha>/...
 # print("Saved to:", path)
 from pathlib import Path
-from typing import Union
 import json
 import os
 import time
 
-def save_json(obj, path: Union[str, Path], *, indent: int = 2, overwrite: bool = True):
+def save_json(obj, path, *, indent= 2, overwrite = True):
     """
     Serialize `obj` to JSON at `path`.
 
