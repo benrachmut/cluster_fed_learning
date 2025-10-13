@@ -1023,8 +1023,7 @@ def to_json_dict(obj) -> dict:
 
 from pathlib import Path
 from typing import Union
-import json
-import time
+
 
 def _name_or_str(x):
     """Return x.name if it exists, else str(x); handles None cleanly."""
@@ -1055,9 +1054,6 @@ def _normalize_target(path: Union[str, Path]) -> Path:
         p = p / f"data_{ts}.json"
     return p
 
-from pathlib import Path
-from typing import Union
-import json, time, os
 
 
 
@@ -1082,19 +1078,27 @@ def _fmt_alpha(v):
 
 from pathlib import Path
 
+import re
+from pathlib import Path
+
 def save_record_to_results(record, *, filename: str | None = None, indent: int = 2) -> Path:
     """
     Save under:
       results/
-        data_set{data_set}_alg{alg}_clusters{clusters}_server{server}_clients{clients}_client{client}_alpha{alpha}_seed{seed}/
-          data_set{data_set}_alg{alg}_clusters{clusters}_server{server}_clients{clients}_client{client}_alpha{alpha}_seed{seed}.json
+        data_set{data_set}_alg{alg}_clusters{clusters}_server{server}_clients{clients}_client{client}_alpha{alpha}_ratio{ratio}/
+          data_set{data_set}_alg{alg}_clusters{clusters}_server{server}_clients{clients}_client{client}_alpha{alpha}_ratio{ratio}_seed{seed}.json
+    (i.e., seed appears only in the FILENAME, not in the folder)
     """
     if not hasattr(record, "summary"):
         raise ValueError("record has no 'summary' attribute")
 
     summary = record.summary or {}
 
-    # Pull raw values from summary
+    # Helpers
+    def _name_or_str(x):
+        return "None" if x is None else getattr(x, "name", str(x))
+
+    # Extract
     seed               = summary.get("seed_num", "unknown_seed")
     alg_val            = summary.get("algorithm_selection", "unknown_alg")
     alpha              = summary.get("alpha_dich", "unknown_alpha")
@@ -1103,47 +1107,44 @@ def save_record_to_results(record, *, filename: str | None = None, indent: int =
     data_set_selected  = summary.get("data_set_selected", "unknown_dataset")
     server_net_type    = summary.get("server_net_type", None)
     client_net_type    = summary.get("client_net_type", "unknown_client_net")
-    server_data_ratio = int(summary.get("server_data_ratio", "unknown_server_data_ratio")*10)
-    # Normalize values to strings (use .name when present)
-    alg_str     = _name_or_str(alg_val)
-    data_set_str= _name_or_str(data_set_selected)
-    server_str  = _name_or_str(server_net_type)
-    client_str  = _name_or_str(client_net_type)
+    server_data_ratio  = summary.get("server_data_ratio", None)
+    server_ratio_scaled = int(server_data_ratio * 10) if isinstance(server_data_ratio, (int, float)) else server_data_ratio
 
-    # Sanitize for filesystem
-    seed_s     = _slugify(seed)
-    alg_s      = _slugify(alg_str)
-    data_set_s = _slugify(data_set_str)
-    alpha_s    = _fmt_alpha(alpha)       # nice for floats (0.5 -> 0p5)
-    clients_s  = _slugify(clients)
-    server_data_ratio_s = _slugify(server_data_ratio)
-    clusters_s = _slugify(num_opt_clusters)
-    server_s   = _slugify(server_str)
-    client_s   = _slugify(client_str)
+    # Normalize to strings
+    alg_str      = _name_or_str(alg_val)
+    data_set_str = _name_or_str(data_set_selected)
+    server_str   = _name_or_str(server_net_type)
+    client_str   = _name_or_str(client_net_type)
 
-    # Base folder (exactly as you requested: "results/<ONE subfolder>/file.json")
-    out_dir = Path("results")
-    out_dir.mkdir(parents=True, exist_ok=True)
+    # Slugify
+    seed_s      = _slugify(seed)
+    alg_s       = _slugify(alg_str)
+    data_set_s  = _slugify(data_set_str)
+    alpha_s     = _fmt_alpha(alpha)
+    clients_s   = _slugify(clients)
+    clusters_s  = _slugify(num_opt_clusters)
+    server_s    = _slugify(server_str)
+    client_s    = _slugify(client_str)
+    ratio_s     = _slugify(server_ratio_scaled)
 
+    # Folder WITHOUT seed
     folder_ = (
         f"data_set{data_set_s}_alg{alg_s}_clusters{clusters_s}"
         f"_server{server_s}_clients{clients_s}_client{client_s}"
-        f"_alpha{alpha_s}_seed{seed_s}_ratio{server_data_ratio_s}"
+        f"_alpha{alpha_s}_ratio{ratio_s}"
     )
-    name_ =         (f"data_set{data_set_s}_alg{alg_s}_clusters{clusters_s}"
-        f"_server{server_s}_clients{clients_s}_client{client_s}"
-        f"_alpha{alpha_s}_ratio{server_data_ratio_s}")
-    sub_dir = out_dir / folder_
-    sub_dir.mkdir(parents=True, exist_ok=True)
 
-    # Filename—default to the folder name with .json (your original intent)
+    out_dir = Path("results") / folder_
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    # Filename WITH seed (default)
     if filename is None:
-        filename = f"{name_}.json"
+        filename = f"{folder_}_seed{seed_s}.json"
 
-    out_path = sub_dir / filename
+    out_path = out_dir / filename
 
-    # Write (your save_json already mkdirs parents; harmless duplicate)
-    save_json(record, out_path, indent=indent)
+    # Write (your save_json creates parents too; overwrite to avoid __1, __2 suffixes)
+    save_json(record, out_path, indent=indent, overwrite=True)
     return out_path
 
 # ---------------- Example usage ----------------

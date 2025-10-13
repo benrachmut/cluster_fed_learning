@@ -268,8 +268,9 @@ class ExperimentConfig:
             self.server_net_type_name = self.server_net_type.name
 
         self.client_net_type_name = self.client_net_type.name
-        self.client_net_type = NetType.ALEXNET
-        self.server_net_type = NetType.ALEXNET
+        self.server_net_type_name = self.server_net_type.name
+
+
 
 
 
