@@ -256,6 +256,7 @@ class ExperimentConfig:
             self.learning_rate_train_c = 0.0001
             self.learning_rate_fine_tune_c = 0.001
             self.learning_rate_train_s = 0.0001
+            print("self.learning_rate_train_s",self.learning_rate_train_s )
 
         if  self.server_net_type is not None:
             self.server_net_type_name = ""
