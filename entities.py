@@ -752,71 +752,6 @@ class Client(LearningEntity):
 
         self.accuracy_per_client_5[t] = self.evaluate_accuracy(self.local_test_set, k=5)
 
-    def train__(self, mean_pseudo_labels, data_):
-
-        print(f"*** {self.__str__()} train ***")
-        server_loader = DataLoader(data_, batch_size=experiment_config.batch_size, shuffle=False, num_workers=0,
-                                   drop_last=True)
-
-        self.model.train()
-        criterion = nn.KLDivLoss(reduction='batchmean')
-        optimizer = torch.optim.Adam(self.model.parameters(), lr=experiment_config.learning_rate_train_c)
-
-        pseudo_targets_all = mean_pseudo_labels.to(device)
-
-        for epoch in range(experiment_config.epochs_num_train_client):
-            self.epoch_count += 1
-            epoch_loss = 0
-
-            for batch_idx, (inputs, _) in enumerate(server_loader):
-                inputs = inputs.to(device)
-                optimizer.zero_grad()
-
-                outputs = self.model(inputs)
-                # Check for NaN or Inf in outputs
-
-                # Convert model outputs to log probabilities
-                outputs_prob = F.log_softmax(outputs, dim=1)
-                # Slice pseudo_targets to match the input batch size
-                start_idx = batch_idx * experiment_config.batch_size
-                end_idx = start_idx + inputs.size(0)
-                pseudo_targets = pseudo_targets_all[start_idx:end_idx].to(device)
-
-                # Check if pseudo_targets size matches the input batch size
-                if pseudo_targets.size(0) != inputs.size(0):
-                    print(
-                        f"Skipping batch {batch_idx}: Expected pseudo target size {inputs.size(0)}, got {pseudo_targets.size(0)}")
-                    continue  # Skip the rest of the loop for this batch
-
-                # Check for NaN or Inf in pseudo targets
-                if torch.isnan(pseudo_targets).any() or torch.isinf(pseudo_targets).any():
-                    print(f"NaN or Inf found in pseudo targets at batch {batch_idx}: {pseudo_targets}")
-                    continue
-
-                # Normalize pseudo targets to sum to 1
-                pseudo_targets = F.softmax(pseudo_targets, dim=1)
-
-                # Calculate the loss
-                loss = criterion(outputs_prob, pseudo_targets)
-
-                # Check if the loss is NaN or Inf
-                if torch.isnan(loss) or torch.isinf(loss):
-                    print(f"NaN or Inf loss encountered at batch {batch_idx}: {loss}")
-                    continue
-
-                loss.backward()
-
-                # Clip gradients
-                torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
-
-                optimizer.step()
-                epoch_loss += loss.item()
-
-            avg_loss = epoch_loss / len(server_loader)
-            print(f"Epoch [{epoch + 1}/{experiment_config.epochs_num_train_client}], Loss: {avg_loss:.4f}")
-
-        self.weights = self.model.state_dict()
-        return avg_loss
 
     def train_with_consistency(self, mean_pseudo_labels):
         print(f"Mean pseudo-labels shape: {mean_pseudo_labels.shape}")
@@ -965,8 +900,23 @@ class Client(LearningEntity):
 
         return avg_loss
 
-    def train(self,mean_pseudo_labels):
 
+    def reinit_last_linear(self):
+        last_linear = None
+        for m in self.model.modules():
+            if isinstance(m, nn.Linear):
+                last_linear = m
+        if last_linear is None:
+            print("[warn] No nn.Linear layer found to reinit.")
+            return
+
+        nn.init.normal_(last_linear.weight, mean=0.0, std=0.02)
+        if last_linear.bias is not None:
+            nn.init.zeros_(last_linear.bias)
+        print(f"[info] Reinitialized layer: {last_linear}")
+
+    def train(self,mean_pseudo_labels):
+        #self.reinit_last_linear()
         print(f"Mean pseudo-labels shape: {mean_pseudo_labels.shape}")  # Should be (num_data_points, num_classes)
 
         print(f"*** {self.__str__()} train ***")
@@ -1041,6 +991,142 @@ class Client(LearningEntity):
         #self.weights =self.model.state_dict()
         return avg_loss
 
+
+    def train__(self, mean_pseudo_labels):
+        print(f"bbbbbbbbbbbbbbbb*** {self.__str__()} train ***")
+        print(f"Mean pseudo-labels shape: {tuple(mean_pseudo_labels.shape)}")
+
+        server_loader = DataLoader(
+            self.global_data,
+            batch_size=experiment_config.batch_size,
+            shuffle=False,
+            num_workers=0,
+            drop_last=True
+        )
+
+        self.model.train()
+        criterion = nn.KLDivLoss(reduction='batchmean')
+        optimizer = torch.optim.Adam(self.model.parameters(),
+                                     lr=experiment_config.learning_rate_train_c)
+
+        pseudo_targets_all = mean_pseudo_labels.to(device)
+
+        # ---- One-time diagnostics ----
+        with torch.no_grad():
+            pmin = pseudo_targets_all.min().item()
+            pmax = pseudo_targets_all.max().item()
+            row_sums = pseudo_targets_all.sum(dim=1)
+            print(f"[diag] pseudo_labels min/max: {pmin:.6f}/{pmax:.6f}")
+            print(f"[diag] row_sums (first 5): {[float(x) for x in row_sums[:5]]}")
+            pt = torch.clamp(pseudo_targets_all, 1e-8, None)
+            pt = pt / pt.sum(dim=1, keepdim=True)
+            ent = -(pt * torch.log(pt)).sum(dim=1).mean().item()
+            print(f"[diag] mean target entropy (safe-renormed): {ent:.6f}")
+
+            # Optional: measure pre-update agreement to confirm trivial KL
+            try:
+                probe_inputs, _ = next(iter(server_loader))
+                probe_inputs = probe_inputs.to(device)
+                logits0 = self.model(probe_inputs)
+                logprob0 = F.log_softmax(logits0, dim=1)
+                prob0 = logprob0.exp()
+                bs = probe_inputs.size(0)
+                pt0 = pseudo_targets_all[:bs]
+                sums = pt0.sum(dim=1)
+                if torch.allclose(sums.mean(), torch.tensor(1.0, device=device), atol=1e-3):
+                    pt0 = torch.clamp(pt0, 1e-8);
+                    pt0 = pt0 / pt0.sum(dim=1, keepdim=True)
+                else:
+                    pt0 = F.softmax(pt0, dim=1)
+                kl0 = F.kl_div(logprob0, pt0, reduction="batchmean").item()
+                agree0 = (prob0.argmax(dim=1) == pt0.argmax(dim=1)).float().mean().item()
+                print(f"[pre] KL(student||pseudo): {kl0:.6f}  agree: {agree0:.3f}")
+            except StopIteration:
+                pass
+
+        num_epochs = experiment_config.epochs_num_train_client
+        last_avg_loss = float('nan')
+
+        for epoch in range(num_epochs):
+            self.epoch_count += 1
+            epoch_loss = 0.0
+            processed = 0
+
+            cursor = 0
+            total_rows = pseudo_targets_all.size(0)
+
+            for batch_idx, (inputs, _) in enumerate(server_loader):
+                inputs = inputs.to(device)
+                bs = inputs.size(0)
+
+                start_idx = cursor
+                end_idx = min(cursor + bs, total_rows)
+                cursor = end_idx
+
+                if end_idx - start_idx != bs:
+                    print(f"[warn] batch {batch_idx}: pseudo targets short "
+                          f"({end_idx - start_idx} vs {bs}). Skipping.")
+                    continue
+
+                pseudo_targets = pseudo_targets_all[start_idx:end_idx]
+
+                # Decide if targets are probabilities or logits
+                with torch.no_grad():
+                    sums = pseudo_targets.sum(dim=1)
+                    already_probs = torch.allclose(
+                        sums.mean(),
+                        torch.tensor(1.0, device=sums.device),
+                        atol=1e-3
+                    )
+
+                if already_probs:
+                    pseudo_targets = torch.clamp(pseudo_targets, min=1e-8)
+                    pseudo_targets = pseudo_targets / pseudo_targets.sum(dim=1, keepdim=True)
+                else:
+                    pseudo_targets = F.softmax(pseudo_targets, dim=1)
+
+                # ---- Make targets informative: sharpen + light smoothing ----
+                T = 0.5
+                pseudo_targets = pseudo_targets.clamp_min(1e-8).pow(1.0 / T)
+                pseudo_targets = pseudo_targets / pseudo_targets.sum(dim=1, keepdim=True)
+                alpha = 0.05
+                num_classes = pseudo_targets.size(1)
+                uniform = torch.full_like(pseudo_targets, 1.0 / num_classes)
+                pseudo_targets = (1 - alpha) * pseudo_targets + alpha * uniform
+
+                if torch.isnan(pseudo_targets).any() or torch.isinf(pseudo_targets).any():
+                    print(f"[warn] NaN/Inf in pseudo targets (batch {batch_idx}). Skipping.")
+                    continue
+
+                optimizer.zero_grad()
+                outputs = self.model(inputs)
+                outputs_logprob = F.log_softmax(outputs, dim=1)
+
+                loss = criterion(outputs_logprob, pseudo_targets)
+
+                if torch.isnan(loss) or torch.isinf(loss):
+                    print(f"[warn] NaN/Inf loss (batch {batch_idx}). Skipping.")
+                    continue
+
+                loss.backward()
+                torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
+                optimizer.step()
+
+                epoch_loss += float(loss.item())
+                processed += 1
+
+            if processed == 0:
+                print("[error] No batches processed this epoch — check alignment between "
+                      "`global_data` and `mean_pseudo_labels` (sizes/order).")
+                last_avg_loss = float('nan')
+            else:
+                last_avg_loss = epoch_loss / processed
+
+            print(f"Epoch [{epoch + 1}/{num_epochs}] "
+                  f"Processed {processed}/{len(server_loader)} batches, "
+                  f"Loss: {last_avg_loss:.6f}")
+
+        return last_avg_loss
 
     def __str__(self):
         return "Client " + str(self.id_)
