@@ -1823,10 +1823,7 @@ class Server(LearningEntity):
         # Take min L2 error for each data point → shape: (N,)
         #min_errors = np.min(l2_errors, axis=0)
 
-        self.pseudo_label_after_net_L2[t] = 0#np.mean(min_errors)
-        #print("PL after net",self.pseudo_label_after_net_L2[t])
-        # Return mean L2 error over all data points
-        #return np.mean(min_errors)
+        self.pseudo_label_after_net_L2[t] = 0
 
         self.evaluate_results(t)
         self.reset_clients_received_pl()
