@@ -75,6 +75,7 @@ class NetType(Enum):
     VGG = "VGG"
     ResNet = "ResNet"
     DenseNetServer= "DenseNetServer"
+    rndNet = "rndNet"
 
 class DataSet(Enum):
     CIFAR100 = "CIFAR100"
@@ -92,6 +93,9 @@ class NetsType(Enum):
     C_alex_S_vgg = 1
     C_alex_S_alex = 2
     C_alex_S_ResNet = 6
+    C_rnd_S_alex = 10
+    C_rnd_S_VGG = 11
+
     C_alex_S_DenseNet = 7
 
     C_alex = 3
@@ -231,8 +235,11 @@ class ExperimentConfig:
 
 
     def update_net_type(self,net_type):
-        if net_type == NetsType.C_alex_S_alex or net_type == NetsType.C_alex or net_type==NetsType.S_alex or net_type==NetsType.S_vgg:
-            self.client_net_type = NetType.ALEXNET
+        if net_type == NetsType.C_alex_S_alex or net_type == NetsType.C_alex or net_type==NetsType.S_alex or net_type==NetsType.S_vgg or  net_type == NetsType.C_rnd_S_alex:
+            if net_type == NetsType.C_rnd_S_alex:
+                self.client_net_type = NetType.rndNet
+            else:
+                self.client_net_type = NetType.ALEXNET
             self.server_net_type = NetType.ALEXNET
             if self.algorithm_selection == AlgorithmSelected.COMET:
                 self.learning_rate_train_c = 0.0008
@@ -246,12 +253,11 @@ class ExperimentConfig:
 
 
 
-
-
-
-
-        if net_type == NetsType.C_alex_S_vgg or net_type == NetsType.S_vgg :
-            self.client_net_type = NetType.ALEXNET
+        if net_type == NetsType.C_alex_S_vgg or net_type == NetsType.S_vgg or net_type == NetsType.C_rnd_S_VGG :
+            if net_type == NetsType.C_rnd_S_VGG:
+                self.client_net_type = NetType.rndNet
+            else:
+                self.client_net_type = NetType.ALEXNET
             self.server_net_type = NetType.VGG
             self.learning_rate_train_c = 0.0001
             self.learning_rate_fine_tune_c = 0.001

@@ -256,15 +256,15 @@ class SqueezeNetServer(nn.Module):
 
 def get_rnd_net(rnd:Random = None):
     p = rnd.random()
-    if p <= 0.25:
+    if p <= 0.5:
         print("ResNet18Server")
         return ResNet18Server(num_classes=experiment_config.num_classes).to(device)
-    if 0.25 < p <= 0.5:
-        print("MobileNetV2Server")
-        return MobileNetV2Server(num_classes=experiment_config.num_classes).to(device)
-    if 0.5 < p <= 0.75:
-        print("SqueezeNetServer")
-        return SqueezeNetServer(num_classes=experiment_config.num_classes).to(device)
+    # if 0.25 < p <= 0.5:
+    #     print("MobileNetV2Server")
+    #     return MobileNetV2Server(num_classes=experiment_config.num_classes).to(device)
+    # if 0.5 < p <= 0.75:
+    #     print("SqueezeNetServer")
+    #     return SqueezeNetServer(num_classes=experiment_config.num_classes).to(device)
     else:
         print("AlexNet")
         return AlexNet(num_classes=experiment_config.num_classes).to(device)
@@ -279,11 +279,7 @@ def get_rnd_net_weak(rnd:Random = None):
         return SqueezeNetServer(num_classes=experiment_config.num_classes).to(device)
 
 
-def get_client_model():
-    if experiment_config.client_net_type == NetType.ALEXNET:
-        return AlexNet(num_classes=experiment_config.num_classes).to(device)
-    if experiment_config.client_net_type == NetType.VGG:
-        return VGGServer(num_classes=experiment_config.num_classes).to(device)
+
 
 
 
@@ -589,7 +585,10 @@ class Client(LearningEntity):
 
         self.local_data = client_data
         self.epoch_count = 0
-        self.model = get_client_model()
+        self.seed_client =experiment_config.seed_num + (self.num+1)*17
+        self.rand_client =Random(self.seed_client)
+
+        self.model = self.get_client_model()
         self.model.apply(self.initialize_weights)
         #self.train_learning_rate = experiment_config.learning_rate_train_c
         #self.weights = None
@@ -598,7 +597,13 @@ class Client(LearningEntity):
         self.pseudo_label_L2 = {}
         self.global_label_distribution = self.get_label_distribution()
 
-
+    def get_client_model(self):
+        if experiment_config.client_net_type == NetType.ALEXNET:
+            return AlexNet(num_classes=experiment_config.num_classes).to(device)
+        if experiment_config.client_net_type == NetType.VGG:
+            return VGGServer(num_classes=experiment_config.num_classes).to(device)
+        if experiment_config.client_net_type == NetType.rndNet:
+            return get_rnd_net(self.rand_client)
     def get_label_distribution(self):
         label_counts = defaultdict(int)
 
@@ -1737,6 +1742,7 @@ class Server(LearningEntity):
         pl_per_cluster = {}
 
         for cluster_id, mean_pseudo_label_for_cluster in mean_pseudo_labels_per_cluster.items():
+            print("cluster_id",cluster_id)
             selected_model = self.multi_model_dict[cluster_id]
             for _ in range(5):
 
