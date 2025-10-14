@@ -165,8 +165,11 @@ def run_PseudoLabelsClusters():
 
                     for server_feedback_technique in server_feedback_technique_list:
                         experiment_config.server_feedback_technique = server_feedback_technique
+                        if len(num_cluster_list)==0:
+                            experiment_config.num_clusters = -1
+                        else:
+                            experiment_config.num_clusters = num_cluster_list[0]
 
-                        experiment_config.num_clusters = -1
 
 
                         for epsilon in cluster_additions:
@@ -400,7 +403,7 @@ if __name__ == '__main__':
     server_input_tech_list = [ServerInputTech.max]
     cluster_technique_list = [ClusterTechnique.greedy_elimination_L2]#[ClusterTechnique.greedy_elimination_cross_entropy]#[ClusterTechnique.manual_single_iter,ClusterTechnique.manual,ClusterTechnique.kmeans]
     server_feedback_technique_list = [ServerFeedbackTechnique.similar_to_cluster]#[ServerFeedbackTechnique.similar_to_cluster,ServerFeedbackTechnique.similar_to_client]
-    #num_cluster_list = [1]#[1,"Optimal"]
+    num_cluster_list = ["Optimal"]
     weights_for_ps_list = [WeightForPS.withWeights]#,WeightForPS.withoutWeights ]
     input_consistency_list = [InputConsistency.withInputConsistency]#,InputConsistency.withoutInputConsistency]
     # centralized

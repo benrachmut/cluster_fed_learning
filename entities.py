@@ -259,10 +259,10 @@ def get_rnd_net(rnd:Random = None):
     if p <= 0.5:
         print("ResNet18Server")
         return ResNet18Server(num_classes=experiment_config.num_classes).to(device)
-    # if 0.25 < p <= 0.5:
+    # if p <= 0.33:
     #     print("MobileNetV2Server")
     #     return MobileNetV2Server(num_classes=experiment_config.num_classes).to(device)
-    # if 0.5 < p <= 0.75:
+    # if 0.33 < p <= 0.66:
     #     print("SqueezeNetServer")
     #     return SqueezeNetServer(num_classes=experiment_config.num_classes).to(device)
     else:
