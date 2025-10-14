@@ -255,7 +255,7 @@ class ExperimentConfig:
             self.server_net_type = NetType.VGG
             self.learning_rate_train_c = 0.0001
             self.learning_rate_fine_tune_c = 0.001
-            self.learning_rate_train_s = 0.0005
+            self.learning_rate_train_s = 0.0001
 
         if  self.server_net_type is not None:
             self.server_net_type_name = ""
