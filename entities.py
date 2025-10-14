@@ -917,7 +917,7 @@ class Client(LearningEntity):
 
     def train(self,mean_pseudo_labels):
         #self.reinit_last_linear()
-        print(f"bbbbbbbbbbMean pseudo-labels shape: {mean_pseudo_labels.shape}")  # Should be (num_data_points, num_classes)
+        print(f"cccccccccccc_Mean pseudo-labels shape: {mean_pseudo_labels.shape}")  # Should be (num_data_points, num_classes)
 
         print(f"*** {self.__str__()} train ***")
         server_loader = DataLoader(self.global_data, batch_size=experiment_config.batch_size, shuffle=False, num_workers=0,
