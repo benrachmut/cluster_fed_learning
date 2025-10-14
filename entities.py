@@ -1,5 +1,6 @@
 import copy
 from collections import defaultdict
+from random import Random
 
 import torchvision
 from sympy.abc import epsilon
@@ -152,62 +153,131 @@ class DenseNetServer(nn.Module):
         return {f"head_{i}": head(x) for i, head in self.heads.items()}
 
 
-class ResNetServer(nn.Module):
+class ResNet18Server(nn.Module):
     def __init__(self, num_classes, num_clusters=1):
-        super(ResNetServer, self).__init__()
-        base_model = models.resnet152(weights=None)  # No pretraining
-        self.backbone = nn.Sequential(*list(base_model.children())[:-1])  # Exclude the final FC layer
-        self.feature_dim = base_model.fc.in_features  # Usually 2048
+        super().__init__()
+        self.net = torchvision.models.resnet18(weights=None)
+        self.net.fc = nn.Linear(self.net.fc.in_features, num_classes)
 
         self.num_clusters = num_clusters
-
         if num_clusters == 1:
-            self.head = nn.Linear(self.feature_dim, num_classes)
+            self.head = nn.Linear(num_classes, num_classes)
         else:
             self.heads = nn.ModuleDict({
                 f"head_{i}": nn.Sequential(
-                    nn.Linear(self.feature_dim, 1024), nn.ReLU(),
-                    nn.Linear(1024, 512), nn.ReLU(),
-                    nn.Linear(512, num_classes)
+                    nn.Linear(num_classes, 512), nn.ReLU(),
+                    nn.Linear(512, 256), nn.ReLU(),
+                    nn.Linear(256, num_classes)
                 ) for i in range(num_clusters)
             })
 
     def forward(self, x, cluster_id=None):
-        # Resize input to match expected size
         x = nn.functional.interpolate(x, size=(224, 224), mode='bilinear', align_corners=False)
-        x = self.backbone(x).squeeze()  # (B, 2048, 1, 1) -> (B, 2048)
+        x = self.net(x)
+        if self.num_clusters == 1:
+            return self.head(x)
+        if cluster_id is not None:
+            return self.heads[f"head_{cluster_id}"](x)
+        return {f"head_{i}": head(x) for i, head in self.heads.items()}
+
+
+# -----------------------
+# MobileNetV2 (very lightweight/mobile)
+# -----------------------
+class MobileNetV2Server(nn.Module):
+    def __init__(self, num_classes, num_clusters=1):
+        super().__init__()
+        self.net = torchvision.models.mobilenet_v2(weights=None)
+        # Replace final classifier layer
+        in_feats = self.net.classifier[1].in_features
+        self.net.classifier[1] = nn.Linear(in_feats, num_classes)
+
+        self.num_clusters = num_clusters
+        if num_clusters == 1:
+            self.head = nn.Linear(num_classes, num_classes)
+        else:
+            self.heads = nn.ModuleDict({
+                f"head_{i}": nn.Sequential(
+                    nn.Linear(num_classes, 512), nn.ReLU(),
+                    nn.Linear(512, 256), nn.ReLU(),
+                    nn.Linear(256, num_classes)
+                ) for i in range(num_clusters)
+            })
+
+    def forward(self, x, cluster_id=None):
+        x = nn.functional.interpolate(x, size=(224, 224), mode='bilinear', align_corners=False)
+        x = self.net(x)
+        if self.num_clusters == 1:
+            return self.head(x)
+        if cluster_id is not None:
+            return self.heads[f"head_{cluster_id}"](x)
+        return {f"head_{i}": head(x) for i, head in self.heads.items()}
+
+
+# -----------------------
+# SqueezeNet 1.1 (tiny params)
+# -----------------------
+class SqueezeNetServer(nn.Module):
+    def __init__(self, num_classes, num_clusters=1):
+        super().__init__()
+        self.net = torchvision.models.squeezenet1_1(weights=None)
+        # SqueezeNet uses a conv classifier head
+        self.net.classifier[1] = nn.Conv2d(512, num_classes, kernel_size=1)
+        self.net.num_classes = num_classes
+
+        self.avgpool = nn.AdaptiveAvgPool2d((1, 1))  # ensure flat logits
+
+        self.num_clusters = num_clusters
+        if num_clusters == 1:
+            self.head = nn.Linear(num_classes, num_classes)
+        else:
+            self.heads = nn.ModuleDict({
+                f"head_{i}": nn.Sequential(
+                    nn.Linear(num_classes, 512), nn.ReLU(),
+                    nn.Linear(512, 256), nn.ReLU(),
+                    nn.Linear(256, num_classes)
+                ) for i in range(num_clusters)
+            })
+
+    def forward(self, x, cluster_id=None):
+        x = nn.functional.interpolate(x, size=(224, 224), mode='bilinear', align_corners=False)
+        # SqueezeNet forward produces N x C x 13 x 13 before final pooling; make it flat
+        x = self.net.features(x)
+        x = self.net.classifier(x)              # N x num_classes x H x W
+        x = self.avgpool(x)                     # N x num_classes x 1 x 1
+        x = torch.flatten(x, 1)                 # N x num_classes
 
         if self.num_clusters == 1:
             return self.head(x)
-
         if cluster_id is not None:
             return self.heads[f"head_{cluster_id}"](x)
-
         return {f"head_{i}": head(x) for i, head in self.heads.items()}
 
-# Lightweight CNN (Teacher Model)
-class SmallCNN(nn.Module):
-    def __init__(self, num_classes=10):
-        super(SmallCNN, self).__init__()
-        self.feature_extractor = nn.Sequential(
-            nn.Conv2d(3, 32, kernel_size=3, padding=1),
-            nn.ReLU(),
-            nn.MaxPool2d(2, 2),
-            nn.Conv2d(32, 64, kernel_size=3, padding=1),
-            nn.ReLU(),
-            nn.MaxPool2d(2, 2)
-        )
-        self.classifier = nn.Sequential(
-            nn.Linear(64 * 8 * 8, 128),
-            nn.ReLU(),
-            nn.Linear(128, num_classes)
-        )
 
-    def forward(self, x):
-        features = self.feature_extractor(x)
-        features = features.view(features.size(0), -1)
-        logits = self.classifier(features)
-        return logits, features
+def get_rnd_net(rnd:Random = None):
+    p = rnd.random()
+    if p <= 0.25:
+        print("ResNet18Server")
+        return ResNet18Server(num_classes=experiment_config.num_classes).to(device)
+    if 0.25 < p <= 0.5:
+        print("MobileNetV2Server")
+        return MobileNetV2Server(num_classes=experiment_config.num_classes).to(device)
+    if 0.5 < p <= 0.75:
+        print("SqueezeNetServer")
+        return SqueezeNetServer(num_classes=experiment_config.num_classes).to(device)
+    else:
+        print("AlexNet")
+        return AlexNet(num_classes=experiment_config.num_classes).to(device)
+
+def get_rnd_net_weak(rnd:Random = None):
+    p = rnd.random()
+    if p <= 0.5:
+        print("MobileNetV2Server")
+        return MobileNetV2Server(num_classes=experiment_config.num_classes).to(device)
+    else:
+        print("SqueezeNetServer")
+        return SqueezeNetServer(num_classes=experiment_config.num_classes).to(device)
+
 
 def get_client_model():
     if experiment_config.client_net_type == NetType.ALEXNET:
