@@ -71,11 +71,13 @@ class ServerInputTech(Enum):
     mean = 1
     max = 2
 class NetType(Enum):
+    rndNet = "rndNet"
     ALEXNET = "AlexNet"
     VGG = "VGG"
     ResNet = "ResNet"
     DenseNetServer= "DenseNetServer"
-    rndNet = "rndNet"
+    rndStrong = "rndStrong"
+    rndWeak = "rndWeak"
 
 class DataSet(Enum):
     CIFAR100 = "CIFAR100"
@@ -90,11 +92,19 @@ class DataType(Enum):
     NonIID = 2
 
 class NetsType(Enum):
+    C_rnd_S_VGG = 14
+    C_rnd_S_alex = 15
+
     C_alex_S_vgg = 1
     C_alex_S_alex = 2
     C_alex_S_ResNet = 6
-    C_rnd_S_alex = 10
-    C_rnd_S_VGG = 11
+    C_rndStrong_S_alex = 10
+    C_rndStrong_S_VGG = 11
+
+    C_rndWeak_S_alex = 12
+    C_rndWeak_S_VGG = 13
+
+
 
     C_alex_S_DenseNet = 7
 
@@ -235,8 +245,14 @@ class ExperimentConfig:
 
 
     def update_net_type(self,net_type):
-        if net_type == NetsType.C_alex_S_alex or net_type == NetsType.C_alex or net_type==NetsType.S_alex or net_type==NetsType.S_vgg or  net_type == NetsType.C_rnd_S_alex:
-            if net_type == NetsType.C_rnd_S_alex:
+
+
+        if net_type == NetsType.C_alex_S_alex or net_type == NetsType.C_alex or net_type==NetsType.S_alex or net_type==NetsType.S_vgg or  net_type == NetsType.C_rndStrong_S_alex or net_type == NetsType.C_rndWeak_S_alex or net_type == NetsType.C_rnd_S_alex:
+            if net_type == NetsType.C_rndStrong_S_alex:
+                self.client_net_type = NetType.rndStrong
+            elif net_type == NetsType.C_rndWeak_S_alex:
+                self.client_net_type = NetType.rndWeak
+            elif net_type == NetsType.C_rnd_S_alex:
                 self.client_net_type = NetType.rndNet
             else:
                 self.client_net_type = NetType.ALEXNET
@@ -253,8 +269,12 @@ class ExperimentConfig:
 
 
 
-        if net_type == NetsType.C_alex_S_vgg or net_type == NetsType.S_vgg or net_type == NetsType.C_rnd_S_VGG :
-            if net_type == NetsType.C_rnd_S_VGG:
+        if net_type == NetsType.C_alex_S_vgg or net_type == NetsType.S_vgg or net_type == NetsType.C_rndStrong_S_VGG or net_type == NetsType.C_rndWeak_S_VGG or net_type == NetsType.C_rnd_S_VGG:
+            if net_type == NetsType.C_rndStrong_S_VGG:
+                self.client_net_type = NetType.rndStrong
+            elif net_type == NetsType.C_rndWeak_S_VGG:
+                self.client_net_type = NetType.rndWeak
+            elif net_type == NetsType.C_rnd_S_VGG:
                 self.client_net_type = NetType.rndNet
             else:
                 self.client_net_type = NetType.ALEXNET

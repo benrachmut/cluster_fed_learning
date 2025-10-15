@@ -1019,7 +1019,7 @@ def get_PseudoLabelsClusters_name(algo,dict_):
             algo_name = "C=AlexNet,S=AlexNet"
         if net_type == NetsType.C_MobileNet_S_vgg.name:
             algo_name = "C=MobileNet,S=VGG"
-        if net_type == NetsType.C_rnd_S_alex.name:
+        if net_type == NetsType.C_rndStrong_S_alex.name:
             algo_name = "C=Random,S=AlexNet"
         if net_type == NetsType.C_rnd_S_Vgg.name:
             algo_name = "C=Random,S=VGG"
@@ -1147,9 +1147,9 @@ def extract_rd_PseudoLabelsClusters(algo,dict_):
         if name == "C=Random,S=VGG":
             dict_1 = dict_[NetsType.C_rnd_S_Vgg.name]
         if name == "C=Random,S=AlexNet":
-            dict_1 = dict_[NetsType.C_rnd_S_alex.name]
+            dict_1 = dict_[NetsType.C_rndStrong_S_alex.name]
         if name == "C=random,S=VGG":
-            dict_1 = dict_[NetsType.C_rnd_S_alex.name]
+            dict_1 = dict_[NetsType.C_rndStrong_S_alex.name]
 
         if name == "C=rndStrong,S=AlexNet":
             dict_1 =dict_[NetsType.C_rndStrong_S_alex.name]
@@ -1185,9 +1185,9 @@ def extract_rd_PseudoLabelsNoServerModel(algo,dict_):
         if name == "C=Random,S=VGG":
             dict_1 = dict_[NetsType.C_rnd_S_Vgg.name]
         if name == "C=Random,S=AlexNet":
-            dict_1 = dict_[NetsType.C_rnd_S_alex.name]
+            dict_1 = dict_[NetsType.C_rndStrong_S_alex.name]
         if name == "C=random,S=VGG":
-            dict_1 = dict_[NetsType.C_rnd_S_alex.name]
+            dict_1 = dict_[NetsType.C_rndStrong_S_alex.name]
 
         if name == "C=rndStrong,S=AlexNet":
             dict_1 = dict_[NetsType.C_rndStrong_S_alex.name]
@@ -1217,9 +1217,9 @@ def extract_rd_COMET(algo, dict_):
         if name == "C=Random,S=VGG":
             dict_1 = dict_[NetsType.C_rnd_S_Vgg.name]
         if name == "C=Random,S=AlexNet":
-            dict_1 = dict_[NetsType.C_rnd_S_alex.name]
+            dict_1 = dict_[NetsType.C_rndStrong_S_alex.name]
         if name == "C=random,S=VGG":
-            dict_1 = dict_[NetsType.C_rnd_S_alex.name]
+            dict_1 = dict_[NetsType.C_rndStrong_S_alex.name]
 
         if name == "C=rndStrong,S=AlexNet":
             dict_1 = dict_[NetsType.C_rndStrong_S_alex.name]

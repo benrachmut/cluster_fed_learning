@@ -1,18 +1,20 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-make_fig_algorithms_avg_accuracy.py  (MAPL_C-X + MAPL_S-X with shared colors by X)
+make_fig_algorithms_avg_accuracy.py
+Faceted by client_net_type_name + MAPL_C/S styling & shared colors by X.
 
-Figure:
-- x-axis: iteration
-- y-axis: average accuracy across ALL clients & ALL seeds
-- one line per displayed label:
-    * Non-MAPL: algorithm name (solid)
-    * MAPL:
-        - MAPL_C-<X>  (client_accuracy_per_client_1)  -> dashed
-        - MAPL_S-<X>  (server_accuracy_per_client_1_max) -> solid
-      where <X> = summary.server_net_type._value_
-    * MAPL_C-X and MAPL_S-X share the **same color** for the same X.
+Figure(s):
+1) algorithms_avg_accuracy_by_client_net_type.pdf
+   - Facets (subplots) by client_net_type_name (from summary.client_net_type_name)
+   - x-axis: iteration
+   - y-axis: mean accuracy across ALL clients & ALL seeds
+   - Lines: per displayed label
+       * Non-MAPL: algorithm name (solid)
+       * MAPL:
+           - MAPL_C-<X>  (client_accuracy_per_client_1)  -> dashed
+           - MAPL_S-<X>  (server_accuracy_per_client_1_max) -> solid
+         where <X> = summary.server_net_type._value_
 
 Usage:
   python make_fig_algorithms_avg_accuracy.py --root results --inspect
@@ -23,6 +25,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import re
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Union
@@ -136,7 +139,7 @@ def find_server_accuracy_map(root: Json) -> Tuple[Optional[Dict[str, Dict[str, A
     v, p = find_exact_key_map(root, "server_accuracy_per_client_1_max")
     if v is not None:
         return v, p
-    # Heuristic fallback
+    # Heuristic fallback (server-ish)
     candidates: List[Tuple[Tuple[str, ...], Any]] = []
     for p, v in walk(root):
         if looks_like_client_accuracy_map(v) and any("server" in seg.lower() for seg in p):
@@ -179,6 +182,14 @@ def find_server_net_type_value(root: Json) -> Tuple[Optional[str], Optional[Tupl
         return best[1], best[0]
     return None, None
 
+def find_client_net_type_name(root: Json) -> Tuple[Optional[str], Optional[Tuple[str, ...]]]:
+    # Exact preferred key: summary.client_net_type_name
+    for p, v in walk(root):
+        if p and p[-1] == "client_net_type_name":
+            # accept basic types; stringify
+            return (str(v) if v is not None else None), p
+    return None, None
+
 # ---------- Loading ----------
 def load_rows(root: Path, inspect: bool = False) -> pd.DataFrame:
     rows: List[Dict[str, Any]] = []
@@ -201,6 +212,7 @@ def load_rows(root: Path, inspect: bool = False) -> pd.DataFrame:
         client_map, client_path = find_client_accuracy_map_anywhere(raw)
         server_map, server_path = find_server_accuracy_map(raw)
         server_net_val, server_net_path = find_server_net_type_value(raw)
+        client_net_name, client_net_path = find_client_net_type_name(raw)
 
         if inspect:
             print(f"\n--- Inspect: {p}")
@@ -209,6 +221,7 @@ def load_rows(root: Path, inspect: bool = False) -> pd.DataFrame:
             print(f"  client_accuracy_per_client_1: @ {path_str(client_path)}")
             print(f"  server_accuracy_per_client_1_max: @ {path_str(server_path)}")
             print(f"  server_net_type._value_: {server_net_val} @ {path_str(server_net_path)}")
+            print(f"  client_net_type_name: {client_net_name} @ {path_str(client_net_path)}")
 
         is_mapl = bool(alg_name and "mapl" in alg_name.lower())
         used_any = False
@@ -240,11 +253,12 @@ def load_rows(root: Path, inspect: bool = False) -> pd.DataFrame:
                             "_path": str(p),
                             "algorithm": alg_name or "unknown_alg",
                             "algorithm_display": display_label,
-                            "measure": "client",  # client-side measure
+                            "measure": "client",
                             "seed": seed_num,
                             "client_id": str(client_id),
                             "iteration": iteration,
                             "accuracy": acc,
+                            "client_net_type_name": client_net_name or "unknown_client_net",
                         }
                     )
                     used_any = True
@@ -274,11 +288,12 @@ def load_rows(root: Path, inspect: bool = False) -> pd.DataFrame:
                             "_path": str(p),
                             "algorithm": alg_name or "unknown_alg",
                             "algorithm_display": display_label,
-                            "measure": "server",  # server-side measure
+                            "measure": "server",
                             "seed": seed_num,
                             "client_id": str(client_id),
                             "iteration": iteration,
                             "accuracy": acc,
+                            "client_net_type_name": client_net_name or "unknown_client_net",
                         }
                     )
                     used_any = True
@@ -290,10 +305,10 @@ def load_rows(root: Path, inspect: bool = False) -> pd.DataFrame:
         print(f"\nScanned {files_scanned} JSON files; usable for plot: {files_used}")
 
     if not rows:
-        return pd.DataFrame(columns=["algorithm_display", "measure", "seed", "client_id", "iteration", "accuracy"])
+        return pd.DataFrame(columns=["algorithm_display", "measure", "seed", "client_id", "iteration", "accuracy", "client_net_type_name"])
     return pd.DataFrame(rows)
 
-# ---------- Plotting (shared colors for X; styles by C/S) ----------
+# ---------- Color/linestyle utilities ----------
 _mapl_label_re = re.compile(r"^MAPL_(?P<variant>[CS])-(?P<x>.+)$")
 
 def _extract_mapl_x(label: str) -> Optional[str]:
@@ -304,21 +319,9 @@ def _extract_mapl_variant(label: str) -> Optional[str]:
     m = _mapl_label_re.match(label)
     return m.group("variant") if m else None
 
-def plot_algorithms_avg_accuracy(df: pd.DataFrame, outdir: Path):
-    if df.empty:
-        print("[WARN] No usable rows to plot.")
-        return
-
-    # Average across clients & seeds per (display label, iteration)
-    grp = (
-        df.groupby(["algorithm_display", "iteration"], dropna=False)["accuracy"]
-        .mean()
-        .reset_index()
-        .rename(columns={"accuracy": "avg_accuracy"})
-    )
-
-    # Build color map: same X => same color (for MAPL_*), others get their own colors
-    labels = sorted(grp["algorithm_display"].unique())
+def _build_color_map(labels: List[str]):
+    """Assign colors so that MAPL_* with the same X share a color; others get distinct colors."""
+    cmap = plt.get_cmap("tab10")
     mapl_x_values = []
     non_mapl_labels = []
     for lab in labels:
@@ -329,52 +332,105 @@ def plot_algorithms_avg_accuracy(df: pd.DataFrame, outdir: Path):
             non_mapl_labels.append(lab)
     unique_x = list(dict.fromkeys(mapl_x_values))  # preserve order
 
-    cmap = plt.get_cmap("tab10")
     color_by_x: Dict[str, Any] = {x: cmap(i % 10) for i, x in enumerate(unique_x)}
-
-    # Assign colors: MAPL_* -> by X; others -> from remaining cycle positions
     color_by_label: Dict[str, Any] = {}
-    next_color_idx = 0
+
+    # First map all MAPL labels by their X
     for lab in labels:
         x = _extract_mapl_x(lab)
         if x is not None:
             color_by_label[lab] = color_by_x[x]
-        else:
-            color_by_label[lab] = cmap((next_color_idx + len(unique_x)) % 10)
+
+    # Then assign remaining colors to non-MAPL labels
+    next_color_idx = len(unique_x)
+    for lab in labels:
+        if lab not in color_by_label:
+            color_by_label[lab] = cmap(next_color_idx % 10)
             next_color_idx += 1
 
-    # Line styles: S=solid, C=dashed, others=solid
-    def linestyle_for(label: str) -> str:
-        v = _extract_mapl_variant(label)
-        if v == "S":
-            return "-"   # solid
-        if v == "C":
-            return "--"  # not solid
-        return "-"       # default solid for non-MAPL
+    return color_by_label
 
-    # Plot
-    plt.figure()
-    for lab in labels:
-        sub = grp[grp["algorithm_display"] == lab].sort_values("iteration")
-        plt.plot(
-            sub["iteration"],
-            sub["avg_accuracy"],
-            marker="o",
-            label=str(lab),
-            color=color_by_label[lab],
-            linestyle=linestyle_for(lab),
-        )
+def _linestyle_for(label: str) -> str:
+    v = _extract_mapl_variant(label)
+    if v == "S":
+        return "-"   # solid
+    if v == "C":
+        return "--"  # dashed
+    return "-"       # default solid for non-MAPL
 
-    plt.xlabel("Iteration")
-    plt.ylabel("Average Accuracy (across clients & seeds)")
-    plt.title("Algorithms: Average Accuracy vs Iteration (MAPL_C/S share colors by X)")
-    plt.legend()
-    plt.tight_layout()
+# ---------- Plotting (faceted by client_net_type_name) ----------
+def plot_faceted_by_client_net(df: pd.DataFrame, outdir: Path):
+    if df.empty:
+        print("[WARN] No usable rows to plot.")
+        return
+
+    if "client_net_type_name" not in df.columns:
+        print("[WARN] No 'client_net_type_name' field found; skipping faceted figure.")
+        return
+
+    # Precompute per-label colors globally so they stay consistent across facets
+    all_labels = sorted(df["algorithm_display"].unique())
+    color_by_label = _build_color_map(all_labels)
+
+    # Aggregate: mean across clients & seeds per (label, iteration, client_net_type_name)
+    grp = (
+        df.groupby(["client_net_type_name", "algorithm_display", "iteration"], dropna=False)["accuracy"]
+        .mean()
+        .reset_index()
+        .rename(columns={"accuracy": "avg_accuracy"})
+    )
+
+    nets = sorted(grp["client_net_type_name"].unique(), key=lambda x: (str(x).lower() if x is not None else ""))
+    n = len(nets)
+    ncols = 2 if n >= 2 else 1
+    nrows = math.ceil(n / ncols)
+
+    fig, axes = plt.subplots(nrows=nrows, ncols=ncols, figsize=(6 * ncols, 4 * nrows), squeeze=False)
+    axes_flat = axes.flatten()
+
+    for ax, net in zip(axes_flat, nets):
+        sub = grp[grp["client_net_type_name"] == net]
+        labels_here = sorted(sub["algorithm_display"].unique())
+
+        for lab in labels_here:
+            sub_lab = sub[sub["algorithm_display"] == lab].sort_values("iteration")
+            ax.plot(
+                sub_lab["iteration"],
+                sub_lab["avg_accuracy"],
+                marker="o",
+                label=str(lab),
+                color=color_by_label.get(lab, None),
+                linestyle=_linestyle_for(lab),
+            )
+        ax.set_title(f"client_net_type_name = {net}")
+        ax.set_xlabel("Iteration")
+        ax.set_ylabel("Average Accuracy (across clients & seeds)")
+        ax.grid(False)
+
+        # Put legends only on the last subplot to reduce clutter if many panes
+        # If you prefer per-pane legends, move this inside the loop without the condition
+    # Decide where to place a single shared legend:
+    handles, labels_leg = axes_flat[0].get_legend_handles_labels()
+    for a in axes_flat[1:]:
+        h, l = a.get_legend_handles_labels()
+        handles += h
+        labels_leg += l
+    # De-duplicate legend entries while preserving order
+    seen = set()
+    uniq = [(h, l) for h, l in zip(handles, labels_leg) if not (l in seen or seen.add(l))]
+    fig.legend([h for h, _ in uniq], [l for _, l in uniq], loc="upper center", ncol=3, frameon=False, bbox_to_anchor=(0.5, 1.02))
+
+    # Hide any unused axes
+    for ax in axes_flat[len(nets):]:
+        ax.axis("off")
+
+    fig.suptitle("Algorithms: Average Accuracy vs Iteration (faceted by client_net_type_name)", y=1.08)
+    fig.tight_layout()
 
     outdir.mkdir(parents=True, exist_ok=True)
-    outfile = outdir / "algorithms_avg_accuracy.pdf"
-    plt.savefig(outfile, bbox_inches="tight")
-    plt.close()
+    outfile = outdir / "algorithms_avg_accuracy_by_client_net_type.pdf"
+    fig.savefig(outfile, bbox_inches="tight")
+    plt.close(fig)
     print(f"[OK] Saved figure: {outfile}")
 
 # ---------- CLI ----------
@@ -391,7 +447,7 @@ def main():
         print(df.head(10).to_string(index=False))
 
     if not args.inspect:
-        plot_algorithms_avg_accuracy(df, args.figdir)
+        plot_faceted_by_client_net(df, args.figdir)
 
 if __name__ == "__main__":
     main()

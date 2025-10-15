@@ -254,7 +254,23 @@ class SqueezeNetServer(nn.Module):
         return {f"head_{i}": head(x) for i, head in self.heads.items()}
 
 
+
 def get_rnd_net(rnd:Random = None):
+    p = rnd.random()
+    if p <= 0.25:
+        print("ResNet18Server")
+        return ResNet18Server(num_classes=experiment_config.num_classes).to(device)
+    if 0.25 < p <= 0.50:
+        print("MobileNetV2Server")
+        return MobileNetV2Server(num_classes=experiment_config.num_classes).to(device)
+    if 0.50 < p <= 0.75:
+        print("SqueezeNetServer")
+        return SqueezeNetServer(num_classes=experiment_config.num_classes).to(device)
+    else:
+        print("AlexNet")
+        return AlexNet(num_classes=experiment_config.num_classes).to(device)
+
+def get_rnd_strong_net(rnd:Random = None):
     p = rnd.random()
     if p <= 0.5:
         print("ResNet18Server")
@@ -268,6 +284,17 @@ def get_rnd_net(rnd:Random = None):
     else:
         print("AlexNet")
         return AlexNet(num_classes=experiment_config.num_classes).to(device)
+
+def get_rnd_weak_net(rnd:Random = None):
+    p = rnd.random()
+
+    if p <= 0.5:
+        print("MobileNetV2Server")
+        return MobileNetV2Server(num_classes=experiment_config.num_classes).to(device)
+    else:
+        print("SqueezeNetServer")
+        return SqueezeNetServer(num_classes=experiment_config.num_classes).to(device)
+
 
 def get_rnd_net_weak(rnd:Random = None):
     p = rnd.random()
@@ -602,8 +629,11 @@ class Client(LearningEntity):
             return AlexNet(num_classes=experiment_config.num_classes).to(device)
         if experiment_config.client_net_type == NetType.VGG:
             return VGGServer(num_classes=experiment_config.num_classes).to(device)
-        if experiment_config.client_net_type == NetType.rndNet:
-            return get_rnd_net(self.rand_client)
+        if experiment_config.client_net_type == NetType.rndStrong:
+            return get_rnd_strong_net(self.rand_client)
+        if  experiment_config.client_net_type == NetType.rndWeak:
+            return get_rnd_weak_net(self.rand_client)
+
     def get_label_distribution(self):
         label_counts = defaultdict(int)
 
