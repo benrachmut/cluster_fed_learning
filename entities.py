@@ -633,7 +633,8 @@ class Client(LearningEntity):
             return get_rnd_strong_net(self.rand_client)
         if  experiment_config.client_net_type == NetType.rndWeak:
             return get_rnd_weak_net(self.rand_client)
-
+        if experiment_config.client_net_type == NetType.rndNet:
+            return get_rnd_net(self.rand_client)
     def get_label_distribution(self):
         label_counts = defaultdict(int)
 
