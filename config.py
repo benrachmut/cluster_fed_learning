@@ -288,6 +288,10 @@ class ExperimentConfig:
             self.server_net_type_name = ""
         else:
             self.server_net_type_name = self.server_net_type.name
+        if self.algorithm_selection == AlgorithmSelected.COMET:
+            self.learning_rate_train_c = 0.0008
+        elif self.algorithm_selection == AlgorithmSelected.FedMD:
+            self.learning_rate_train_c = 0.002
 
         self.client_net_type_name = self.client_net_type.name
         self.server_net_type_name = self.server_net_type.name
