@@ -359,6 +359,9 @@ def run_exp_by_algo():
         run_PseudoLabelsClusters() # Done
 
     if algorithm_selection == AlgorithmSelected.FedMD:
+        experiment_config.server_net_type = None
+        experiment_config.server_net_type_name = None
+
         run_PseudoLabelsNoServerModel()  # Running
 
     if algorithm_selection == AlgorithmSelected.COMET:
@@ -383,8 +386,8 @@ def run_exp_by_algo():
 
 if __name__ == '__main__':
     print(device)
-    seed_num_list = [1,2,3]#[2,4,5]#10:[2,4,5,6,9]#100:[1,2,3,5,7]#[1,2,3,4,5,6,7,8,9]
-    data_sets_list = [DataSet.CIFAR100]
+    seed_num_list = [1]#[2,4,5]#10:[2,4,5,6,9]#100:[1,2,3,5,7]#[1,2,3,4,5,6,7,8,9]
+    data_sets_list = [DataSet.CIFAR10]
     num_clients_list = [25]#[25]
     num_opt_clusters_list =[5] #[5]
     mix_percentage = 0.1
@@ -400,7 +403,7 @@ if __name__ == '__main__':
     #AlgorithmSelected.COMET,AlgorithmSelected.PseudoLabelsNoServerModel
 
     # parameters for PseudoLabelsClusters
-    nets_types_list_PseudoLabelsClusters  = [NetsType.C_rnd_S_alex]#,NetsType.C_alex_S_vgg,NetsType.C_alex_S_alex]#,NetsType.C_alex_S_vgg]# ,NetsType.C_alex_S_vgg]#,NetsType.C_alex_S_vgg]#,NetsType.C_alex_S_vgg]
+    nets_types_list_PseudoLabelsClusters  = [NetsType.C_rndWeak_S_alex,NetsType.C_rnd_S_alex]#,NetsType.C_alex_S_vgg,NetsType.C_alex_S_alex]#,NetsType.C_alex_S_vgg]# ,NetsType.C_alex_S_vgg]#,NetsType.C_alex_S_vgg]#,NetsType.C_alex_S_vgg]
     net_cluster_technique_list = [NetClusterTechnique.multi_model]#,NetClusterTechnique.multi_head]
     server_input_tech_list = [ServerInputTech.max]
     cluster_technique_list = [ClusterTechnique.greedy_elimination_L2]#[ClusterTechnique.greedy_elimination_cross_entropy]#[ClusterTechnique.manual_single_iter,ClusterTechnique.manual,ClusterTechnique.kmeans]

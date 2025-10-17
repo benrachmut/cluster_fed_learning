@@ -1280,7 +1280,7 @@ class Client(LearningEntity):
 class Client_pFedCK(Client):
     def __init__(self, id_, client_data, global_data, global_test_data, local_test_data):
         super().__init__(id_, client_data, global_data, global_test_data, local_test_data)
-        self.personalized_model = AlexNet(num_classes=experiment_config.num_classes).to(device)
+        self.personalized_model = AlexNet (num_classes=experiment_config.num_classes).to(device)
         self.interactive_model = AlexNet(num_classes=experiment_config.num_classes).to(device)
         self.initial_state = None  # To store interactive model's state before training
 

@@ -36,6 +36,12 @@ import matplotlib.pyplot as plt
 
 Json = Union[Dict[str, Any], List[Any], str, int, float, bool, None]
 
+TITLE_MAP = {
+    "rndNet":    "{Alex, Res, Mobile, Squeeze}",
+    "rndStrong": "{Alex, Res}",
+    "rndWeak":   "{Mobile, Squeeze}",
+}
+
 # ---------- Recursive traversal ----------
 def walk(obj: Json, path: Tuple[str, ...] = ()):
     yield path, obj
@@ -363,7 +369,6 @@ def plot_faceted_by_client_net(df: pd.DataFrame, outdir: Path):
     if df.empty:
         print("[WARN] No usable rows to plot.")
         return
-
     if "client_net_type_name" not in df.columns:
         print("[WARN] No 'client_net_type_name' field found; skipping faceted figure.")
         return
@@ -375,17 +380,30 @@ def plot_faceted_by_client_net(df: pd.DataFrame, outdir: Path):
     # Aggregate: mean across clients & seeds per (label, iteration, client_net_type_name)
     grp = (
         df.groupby(["client_net_type_name", "algorithm_display", "iteration"], dropna=False)["accuracy"]
-        .mean()
-        .reset_index()
-        .rename(columns={"accuracy": "avg_accuracy"})
+          .mean()
+          .reset_index()
+          .rename(columns={"accuracy": "avg_accuracy"})
     )
 
     nets = sorted(grp["client_net_type_name"].unique(), key=lambda x: (str(x).lower() if x is not None else ""))
     n = len(nets)
-    ncols = 2 if n >= 2 else 1
-    nrows = math.ceil(n / ncols)
+    if n == 0:
+        print("[WARN] No unique client_net_type_name values found.")
+        return
 
-    fig, axes = plt.subplots(nrows=nrows, ncols=ncols, figsize=(6 * ncols, 4 * nrows), squeeze=False)
+    # Compute global x/y limits for consistent scales across facets
+    global_xmin = int(grp["iteration"].min())
+    global_xmax = int(grp["iteration"].max())
+    global_ymin = float(grp["avg_accuracy"].min())
+    global_ymax = float(grp["avg_accuracy"].max())
+
+    # One row, n columns; share both axes
+    ncols = n
+    nrows = 1
+    fig, axes = plt.subplots(
+        nrows=nrows, ncols=ncols, figsize=(5.0 * ncols, 4.0),
+        sharex=True, sharey=True, squeeze=False
+    )
     axes_flat = axes.flatten()
 
     for ax, net in zip(axes_flat, nets):
@@ -402,31 +420,56 @@ def plot_faceted_by_client_net(df: pd.DataFrame, outdir: Path):
                 color=color_by_label.get(lab, None),
                 linestyle=_linestyle_for(lab),
             )
-        ax.set_title(f"client_net_type_name = {net}")
-        ax.set_xlabel("Iteration")
-        ax.set_ylabel("Average Accuracy (across clients & seeds)")
+
+        ax.set_title(TITLE_MAP.get(str(net), str(net)))
         ax.grid(False)
+        ax.set_xlim(global_xmin, global_xmax)
+        ax.set_ylim(global_ymin, global_ymax)
 
-        # Put legends only on the last subplot to reduce clutter if many panes
-        # If you prefer per-pane legends, move this inside the loop without the condition
-    # Decide where to place a single shared legend:
-    handles, labels_leg = axes_flat[0].get_legend_handles_labels()
-    for a in axes_flat[1:]:
-        h, l = a.get_legend_handles_labels()
-        handles += h
-        labels_leg += l
-    # De-duplicate legend entries while preserving order
-    seen = set()
-    uniq = [(h, l) for h, l in zip(handles, labels_leg) if not (l in seen or seen.add(l))]
-    fig.legend([h for h, _ in uniq], [l for _, l in uniq], loc="upper center", ncol=3, frameon=False, bbox_to_anchor=(0.5, 1.02))
-
-    # Hide any unused axes
+    # Hide any unused axes if fewer than allocated (defensive)
     for ax in axes_flat[len(nets):]:
         ax.axis("off")
 
-    fig.suptitle("Algorithms: Average Accuracy vs Iteration (faceted by client_net_type_name)", y=1.08)
-    fig.tight_layout()
+    # Shared axis labels (only once)
+    try:
+        fig.supxlabel("Iteration")
+        fig.supylabel("Average Accuracy")
+    except Exception:
+        # Fallback for older matplotlib: label only leftmost/bottom and hide others
+        for j, ax in enumerate(axes_flat):
+            if j % ncols != 0:
+                ax.set_ylabel("")
+            if j < (ncols * (nrows - 1)):
+                ax.set_xlabel("")
+        axes_flat[0].set_ylabel("Average Accuracy")
+        axes_flat[-1].set_xlabel("Iteration")
 
+    # Build a single, de-duplicated legend
+    handles, labels_leg = [], []
+    for a in axes_flat[:n]:
+        h, l = a.get_legend_handles_labels()
+        handles += h
+        labels_leg += l
+    seen = set()
+    uniq = [(h, l) for h, l in zip(handles, labels_leg) if not (l in seen or seen.add(l))]
+
+    # ===== Option A: reserve headroom + place legend ABOVE (no overlap) =====
+    # Reserve ~20% of the top for the legend/suptitle band
+    fig.tight_layout(rect=[0.0, 0.0, 1.0, 0.80])
+
+    if uniq:
+        fig.legend(
+            [h for h, _ in uniq], [l for _, l in uniq],
+            loc="upper center",
+            ncol=min(4, len(uniq)),
+            frameon=False,
+            bbox_to_anchor=(0.5, 0.92)   # sits inside the reserved top band
+        )
+
+    # Optional: uncomment to show a suptitle above the legend band
+    # fig.suptitle("Algorithms: Average Accuracy vs Iteration (by client_net_type_name)", y=0.99)
+
+    # (No second tight_layout — we already reserved space precisely)
     outdir.mkdir(parents=True, exist_ok=True)
     outfile = outdir / "algorithms_avg_accuracy_by_client_net_type.pdf"
     fig.savefig(outfile, bbox_inches="tight")
