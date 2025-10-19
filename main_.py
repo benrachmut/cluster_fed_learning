@@ -386,7 +386,7 @@ def run_exp_by_algo():
 
 if __name__ == '__main__':
     print(device)
-    seed_num_list = [2]#[2,4,5]#10:[2,4,5,6,9]#100:[1,2,3,5,7]#[1,2,3,4,5,6,7,8,9]
+    seed_num_list = [3]#[2,4,5]#10:[2,4,5,6,9]#100:[1,2,3,5,7]#[1,2,3,4,5,6,7,8,9]
     data_sets_list = [DataSet.CIFAR10]
     num_clients_list = [25]#[25]
     num_opt_clusters_list =[5] #[5]
@@ -397,13 +397,13 @@ if __name__ == '__main__':
     server_data_ratios = [1]#[-4,-3,-2,-1,0,1,2,3,4] #  # 0.96,0.5,0.75,1,1.25,1.5,1.75,2]
     print("epsilons:", cluster_additions)
     print(("alpha_dichts", alpha_dichts))
-    algorithm_selection_list =[AlgorithmSelected.MAPL]#,AlgorithmSelected.pFedCK,AlgorithmSelected.pFedCK,AlgorithmSelected.COMET,AlgorithmSelected.FedMD]
+    algorithm_selection_list =[AlgorithmSelected.COMET]#,AlgorithmSelected.pFedCK,AlgorithmSelected.pFedCK,AlgorithmSelected.COMET,AlgorithmSelected.FedMD]
     #AlgorithmSelected.FedAvg,AlgorithmSelected.NoFederatedLearning,AlgorithmSelected.pFedCK
     #AlgorithmSelected.PseudoLabelsClusters
     #AlgorithmSelected.COMET,AlgorithmSelected.PseudoLabelsNoServerModel
 
     # parameters for PseudoLabelsClusters
-    nets_types_list_PseudoLabelsClusters  = [NetsType.C_rndWeak_S_VGG]#,NetsType.C_alex_S_vgg,NetsType.C_alex_S_alex]#,NetsType.C_alex_S_vgg]# ,NetsType.C_alex_S_vgg]#,NetsType.C_alex_S_vgg]#,NetsType.C_alex_S_vgg]
+    nets_types_list_PseudoLabelsClusters  = [NetsType.C_rndWeak_S_alex]#,NetsType.C_alex_S_vgg,NetsType.C_alex_S_alex]#,NetsType.C_alex_S_vgg]# ,NetsType.C_alex_S_vgg]#,NetsType.C_alex_S_vgg]#,NetsType.C_alex_S_vgg]
     net_cluster_technique_list = [NetClusterTechnique.multi_model]#,NetClusterTechnique.multi_head]
     server_input_tech_list = [ServerInputTech.max]
     cluster_technique_list = [ClusterTechnique.greedy_elimination_L2]#[ClusterTechnique.greedy_elimination_cross_entropy]#[ClusterTechnique.manual_single_iter,ClusterTechnique.manual,ClusterTechnique.kmeans]
