@@ -4,6 +4,7 @@ from random import random
 import torch
 from matplotlib import pyplot as plt
 from torch.utils.data import TensorDataset
+from torchvision.models import MobileNetV2
 
 cifar100_label_to_superclass = {
     0: 0,  1: 0,  2: 0,  3: 0,  4: 0,     # Aquatic mammals
@@ -71,7 +72,9 @@ class ServerInputTech(Enum):
     mean = 1
     max = 2
 class NetType(Enum):
+    MobileNet = "MobileNet"
     rndNet = "rndNet"
+
     ALEXNET = "AlexNet"
     VGG = "VGG"
     ResNet = "ResNet"
@@ -92,6 +95,8 @@ class DataType(Enum):
     NonIID = 2
 
 class NetsType(Enum):
+    C_Mobile_S_alex = 20
+    C_Mobile_S_VGG = 21
     C_rnd_S_VGG = 14
     C_rnd_S_alex = 15
 
@@ -247,13 +252,15 @@ class ExperimentConfig:
     def update_net_type(self,net_type):
 
 
-        if net_type == NetsType.C_alex_S_alex or net_type == NetsType.C_alex or net_type==NetsType.S_alex or net_type==NetsType.S_vgg or  net_type == NetsType.C_rndStrong_S_alex or net_type == NetsType.C_rndWeak_S_alex or net_type == NetsType.C_rnd_S_alex:
+        if net_type == NetsType.C_alex_S_alex or net_type == NetsType.C_alex or net_type==NetsType.S_alex or net_type==NetsType.S_vgg or  net_type == NetsType.C_rndStrong_S_alex or net_type == NetsType.C_rndWeak_S_alex or net_type == NetsType.C_rnd_S_alex or net_type ==NetsType.C_Mobile_S_alex:
             if net_type == NetsType.C_rndStrong_S_alex:
                 self.client_net_type = NetType.rndStrong
             elif net_type == NetsType.C_rndWeak_S_alex:
                 self.client_net_type = NetType.rndWeak
             elif net_type == NetsType.C_rnd_S_alex:
                 self.client_net_type = NetType.rndNet
+            elif  net_type ==NetsType.C_Mobile_S_alex:
+                self.client_net_type = NetType.MobileNet
             else:
                 self.client_net_type = NetType.ALEXNET
             self.server_net_type = NetType.ALEXNET
@@ -268,14 +275,15 @@ class ExperimentConfig:
             self.learning_rate_train_s = 0.001
 
 
-
-        if net_type == NetsType.C_alex_S_vgg or net_type == NetsType.S_vgg or net_type == NetsType.C_rndStrong_S_VGG or net_type == NetsType.C_rndWeak_S_VGG or net_type == NetsType.C_rnd_S_VGG:
+        if net_type == NetsType.C_alex_S_vgg or net_type == NetsType.S_vgg or net_type == NetsType.C_rndStrong_S_VGG or net_type == NetsType.C_rndWeak_S_VGG or net_type == NetsType.C_rnd_S_VGG or   net_type == NetsType.C_Mobile_S_VGG:
             if net_type == NetsType.C_rndStrong_S_VGG:
                 self.client_net_type = NetType.rndStrong
             elif net_type == NetsType.C_rndWeak_S_VGG:
                 self.client_net_type = NetType.rndWeak
             elif net_type == NetsType.C_rnd_S_VGG:
                 self.client_net_type = NetType.rndNet
+            elif  net_type == NetsType.C_Mobile_S_VGG:
+                self.client_net_type = NetType.MobileNet
             else:
                 self.client_net_type = NetType.ALEXNET
             self.server_net_type = NetType.VGG
