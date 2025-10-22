@@ -421,8 +421,8 @@ def run_exp_by_algo():
 
 if __name__ == '__main__':
     print(device)
-    seed_num_list = [1]
-    data_sets_list = [DataSet.CIFAR100]
+    seed_num_list = [2]
+    data_sets_list = [DataSet.CIFAR10]
     num_clients_list = [25]#[25]
     num_opt_clusters_list =[5] #[5]
     mix_percentage = 0.1
@@ -432,7 +432,7 @@ if __name__ == '__main__':
     server_data_ratios = [1]#[-4,-3,-2,-1,0,1,2,3,4] #  # 0.96,0.5,0.75,1,1.25,1.5,1.75,2]
     print("epsilons:", cluster_additions)
     print(("alpha_dichts", alpha_dichts))
-    algorithm_selection_list =[AlgorithmSelected.Ditto]#,AlgorithmSelected.pFedCK,AlgorithmSelected.pFedCK,AlgorithmSelected.COMET,AlgorithmSelected.FedMD]
+    algorithm_selection_list =[AlgorithmSelected.FedMD]#,AlgorithmSelected.pFedCK,AlgorithmSelected.pFedCK,AlgorithmSelected.COMET,AlgorithmSelected.FedMD]
     #AlgorithmSelected.FedAvg,AlgorithmSelected.NoFederatedLearning,AlgorithmSelected.pFedCK
     #AlgorithmSelected.PseudoLabelsClusters
     #AlgorithmSelected.COMET,AlgorithmSelected.PseudoLabelsNoServerModel
