@@ -16,6 +16,8 @@ results/
       <algorithm1>/*.json
       <algorithm2>/*.json
     <subfigureB>/ ...
+  examine_lambda_for_ditto/          # FIGSET 3 (one figure; multiple curves: λ_ditto per curve)
+    *.json or nested folders with *.json
 
 Outputs (one PDF per figset):
 figures/<FIGSET>/<FIGSET>.pdf
@@ -41,10 +43,12 @@ TITLE_MAP = {
     "rndStrong": "{Alex, Res}",
     "rndWeak":   "{Mobile, Squeeze}",
 }
+
 def _right_of_dash(s: str) -> str:
     # split on hyphen or en/em dash; keep the part after it
     parts = re.split(r"\s*[-–—]\s*", str(s), maxsplit=1)
     return parts[1] if len(parts) > 1 else str(s)
+
 # --------------------- Windows long-path helpers ---------------------
 
 def _win_long_abs(path: Path) -> str:
@@ -254,6 +258,34 @@ def find_alpha_dich(root: Json):
             return None, p
     return None, None
 
+def find_lambda_ditto(root: Json):
+    # Prefer summary.lambda_ditto
+    try:
+        if isinstance(root, dict) and "summary" in root:
+            s = root["summary"]
+            if isinstance(s, dict) and "lambda_ditto" in s:
+                v = s["lambda_ditto"]
+                try:
+                    return float(v), ("summary","lambda_ditto")
+                except Exception:
+                    try:
+                        return float(str(v).strip()), ("summary","lambda_ditto")
+                    except Exception:
+                        return None, ("summary","lambda_ditto")
+    except Exception:
+        pass
+    # Fallback: anywhere
+    for p, v in walk(root):
+        if p and p[-1] == "lambda_ditto":
+            try:
+                return float(v), p
+            except Exception:
+                try:
+                    return float(str(v).strip()), p
+                except Exception:
+                    return None, p
+    return None, None
+
 # --------------------- loading ---------------------
 
 def load_rows_from_dir(dir_path: Path, *, inspect: bool = False, alg_hint: Optional[str] = None) -> pd.DataFrame:
@@ -291,6 +323,7 @@ def load_rows_from_dir(dir_path: Path, *, inspect: bool = False, alg_hint: Optio
         server_net_val, server_net_path = find_server_net_type_value(raw)
         client_net_name, client_net_path = find_client_net_type_name(raw)
         alpha_dich, alpha_path = find_alpha_dich(raw)
+        lambda_ditto, lambda_path = find_lambda_ditto(raw)
 
         if inspect:
             print(f"[INSPECT] {p.name}")
@@ -302,6 +335,7 @@ def load_rows_from_dir(dir_path: Path, *, inspect: bool = False, alg_hint: Optio
             print(f"  server_net_type._value_: {server_net_val} @ {path_str(server_net_path)}")
             print(f"  client_net_type_name: {client_net_name} @ {path_str(client_net_path)}")
             print(f"  alpha_dich: {alpha_dich} @ {path_str(alpha_path)}")
+            print(f"  lambda_ditto: {lambda_ditto} @ {path_str(lambda_path)}")
 
         is_mapl = bool(alg_name and "mapl" in str(alg_name).lower())
         used_any = False
@@ -339,6 +373,7 @@ def load_rows_from_dir(dir_path: Path, *, inspect: bool = False, alg_hint: Optio
                         "accuracy": acc,
                         "client_net_type_name": client_net_name or "unknown_client_net",
                         "alpha_dich": alpha_dich,
+                        "lambda_ditto": lambda_ditto,
                     })
                     used_any = True
 
@@ -372,6 +407,7 @@ def load_rows_from_dir(dir_path: Path, *, inspect: bool = False, alg_hint: Optio
                         "accuracy": acc,
                         "client_net_type_name": client_net_name or "unknown_client_net",
                         "alpha_dich": alpha_dich,
+                        "lambda_ditto": lambda_ditto,
                     })
                     used_any = True
 
@@ -383,7 +419,7 @@ def load_rows_from_dir(dir_path: Path, *, inspect: bool = False, alg_hint: Optio
 
     cols = [
         "dataset","algorithm_display","measure","seed","client_id",
-        "iteration","accuracy","client_net_type_name","alpha_dich","_path","algorithm"
+        "iteration","accuracy","client_net_type_name","alpha_dich","lambda_ditto","_path","algorithm"
     ]
     return pd.DataFrame(rows, columns=cols) if rows else pd.DataFrame(columns=cols)
 
@@ -426,7 +462,7 @@ def _concat_or_empty(frames: List[pd.DataFrame]) -> pd.DataFrame:
     frames = [f for f in frames if f is not None and not f.empty]
     return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame(
         columns=["dataset","algorithm_display","measure","seed","client_id",
-                 "iteration","accuracy","client_net_type_name","alpha_dich","_path","algorithm"]
+                 "iteration","accuracy","client_net_type_name","alpha_dich","lambda_ditto","_path","algorithm"]
     )
 
 def _load_subfig_df(subfig_dir: Path, inspect: bool) -> pd.DataFrame:
@@ -464,12 +500,11 @@ def figure_diff_benchmarks(figset_dir: Path, out_root: Path, *, alpha_value: int
     for sf, df in loaded:
         if df.empty:
             continue
-        sub = df[
-                 (df["alpha_dich"] == alpha_value)]
+        sub = df[(df["alpha_dich"] == alpha_value)]
         if not sub.empty:
             filtered.append((sf, sub))
     if not filtered:
-        print(f"[WARN] No rows for rndWeak & alpha={alpha_value} in {figset_dir}."); return
+        print(f"[WARN] No rows for alpha={alpha_value} in {figset_dir}."); return
 
     # Limit to 4 subplots max (as requested)
     filtered = filtered[:4]
@@ -502,7 +537,8 @@ def figure_diff_benchmarks(figset_dir: Path, out_root: Path, *, alpha_value: int
             ax.plot(sub_lab["iteration"], sub_lab["avg_accuracy"],
                     marker=None, linewidth=2.0, label=str(lab),
                     color=color_by_label.get(lab, None), linestyle=_linestyle_for(lab))
-        ax.set_title(f"{dataset_choice}")
+        # Title: only the part after "-" if any
+        ax.set_title(_right_of_dash(dataset_choice))
         ax.set_xlabel("Iteration")
         ax.set_ylabel("Average Accuracy")
         ax.grid(False)
@@ -513,7 +549,7 @@ def figure_diff_benchmarks(figset_dir: Path, out_root: Path, *, alpha_value: int
     if h:
         fig.legend(h, l, loc="upper center", ncol=min(6, len(h)), frameon=False, bbox_to_anchor=(0.5, 0.98))
 
-    outfile = out_root /  f"{figset_dir.name}.pdf"
+    outfile = out_root / f"{figset_dir.name}.pdf"
     _savefig_longpath(fig, outfile); plt.close(fig)
     print(f"[OK] Saved: {outfile}")
 
@@ -568,8 +604,7 @@ def figure_diff_clients_nets(figset_dir: Path, out_root: Path, *, inspect: bool)
               .mean().reset_index().rename(columns={"accuracy":"avg_accuracy"})
               .sort_values(["algorithm_display","iteration"])
         )
-        # Optional: if you want to show the client_net facet in the title (not faceting inside),
-        # show the dominant client_net_type_name in this subfig
+        # Title should show only the TITLE_MAP value for the dominant client_net type
         dom_net = df["client_net_type_name"].astype(str).value_counts().index[0] if "client_net_type_name" in df.columns and not df.empty else "clients"
         dom_net_disp = TITLE_MAP.get(dom_net, dom_net)
 
@@ -590,7 +625,66 @@ def figure_diff_clients_nets(figset_dir: Path, out_root: Path, *, inspect: bool)
     if h:
         fig.legend(h, l, loc="upper center", ncol=min(6, len(h)), frameon=False, bbox_to_anchor=(0.5, 0.98))
 
-    outfile = out_root /  f"{figset_dir.name}.pdf"
+    outfile = out_root / f"{figset_dir.name}.pdf"
+    _savefig_longpath(fig, outfile); plt.close(fig)
+    print(f"[OK] Saved: {outfile}")
+
+def figure_examine_lambda_for_ditto(figset_dir: Path, out_root: Path, *, inspect: bool):
+    """
+    Single figure: multiple curves, one per lambda_ditto.
+    Averages accuracy across clients for each iteration, across all JSONs under figset_dir (recursively safe).
+    """
+    if not figset_dir.exists():
+        print(f"[SKIP] {figset_dir} (missing)"); return
+
+    # Load JSONs that may be directly under figset_dir AND/OR nested one level deeper.
+    frames: List[pd.DataFrame] = []
+
+    # Case 1: JSONs directly in figset_dir
+    frames.append(load_rows_from_dir(figset_dir, inspect=inspect, alg_hint=None))
+
+    # Case 2: any immediate subfolders (e.g., seeds/variants)
+    for sub in sorted([d for d in figset_dir.iterdir() if d.is_dir()]):
+        frames.append(load_rows_from_dir(sub, inspect=inspect, alg_hint=sub.name))
+
+    df = _concat_or_empty(frames)
+    if df.empty:
+        print(f"[WARN] No data in {figset_dir}"); return
+
+    # Only keep rows where lambda_ditto is present
+    df = df[~df["lambda_ditto"].isna()]
+    if df.empty:
+        print(f"[WARN] No lambda_ditto values found in {figset_dir}"); return
+
+    # Average over clients per iteration, per lambda
+    grp = (
+        df.groupby(["lambda_ditto","iteration"], dropna=False)["accuracy"]
+          .mean().reset_index().rename(columns={"accuracy":"avg_accuracy"})
+    )
+
+    # Sort lambdas numerically
+    lambdas = sorted(grp["lambda_ditto"].dropna().unique().tolist())
+
+    # Build color map deterministic by lambda label
+    lambda_labels = [f"λ={lmbda:g}" for lmbda in lambdas]
+    cmap = plt.get_cmap("tab10")
+    color_by_label = {lab: cmap(i % 10) for i, lab in enumerate(lambda_labels)}
+
+    fig, ax = plt.subplots(1, 1, figsize=(6.5, 4.8))
+    for i, lmbda in enumerate(lambdas):
+        gsub = grp[grp["lambda_ditto"] == lmbda].sort_values("iteration")
+        lab = f"λ={lmbda:g}"
+        ax.plot(gsub["iteration"], gsub["avg_accuracy"], linewidth=2.0, label=lab, color=color_by_label[lab])
+
+    ax.set_title("Ditto: effect of λ")
+    ax.set_xlabel("Iteration")
+    ax.set_ylabel("Average Accuracy (across clients)")
+    ax.grid(False)
+
+    # Legend
+    ax.legend(loc="upper center", bbox_to_anchor=(0.5, 1.12), ncol=min(6, len(lambda_labels)), frameon=False)
+
+    outfile = out_root / f"{figset_dir.name}.pdf"
     _savefig_longpath(fig, outfile); plt.close(fig)
     print(f"[OK] Saved: {outfile}")
 
@@ -600,14 +694,18 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--root", type=Path, default=Path("results"), help="Root results folder (contains figure-set folders)")
     ap.add_argument("--figdir", type=Path, default=Path("figures"), help="Where to save PDFs")
-
     ap.add_argument("--inspect", action="store_true", help="Print detected paths/keys while loading")
+    # Optional: allow custom folder names if you want
+    ap.add_argument("--lambda_folder", type=str, default="examine_lambda_for_ditto")
+    ap.add_argument("--alpha", type=int, default=5)
 
     args = ap.parse_args()
 
-    figure_diff_clients_nets(args.root / "diff_clients_nets", args.figdir, inspect=args.inspect)
+    figure_diff_clients_nets(args.root /"diff_clients_nets", args.figdir, inspect=args.inspect)
     figure_diff_benchmarks(args.root / "diff_benchmarks_05", args.figdir, alpha_value=5, inspect=args.inspect)
+    # (Optional) another benchmark set you had:
     figure_diff_benchmarks(args.root / "same_client_nets", args.figdir, alpha_value=5, inspect=args.inspect)
+    figure_examine_lambda_for_ditto(args.root / args.lambda_folder, args.figdir, inspect=args.inspect)
 
 if __name__ == "__main__":
     main()

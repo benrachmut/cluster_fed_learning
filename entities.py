@@ -1283,8 +1283,8 @@ class Client(LearningEntity):
 class Client_pFedCK(Client):
     def __init__(self, id_, client_data, global_data, global_test_data, local_test_data):
         super().__init__(id_, client_data, global_data, global_test_data, local_test_data)
-        self.personalized_model = AlexNet (num_classes=experiment_config.num_classes).to(device)
-        self.interactive_model = AlexNet(num_classes=experiment_config.num_classes).to(device)
+        self.personalized_model = MobileNetV2Server (num_classes=experiment_config.num_classes).to(device)
+        self.interactive_model = MobileNetV2Server(num_classes=experiment_config.num_classes).to(device)
         self.initial_state = None  # To store interactive model's state before training
 
     def set_models(self, personalized_state, interactive_state):
@@ -1484,32 +1484,39 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
 
+
 class Client_Ditto(Client):
     """
-    Ditto client (personalized FL):
-      - self.model:       global-path model (used for FedAvg aggregation)
+    Ditto client:
+      - self.model:          global-path model (sent to server; FedAvg)
       - self.personal_model: local personalized model (kept on client)
-      - self.weights_received: filled by server each round (global anchor)
-      - self.weights_to_send: what we send to server (global-path weights)
+      - self.weights_received: set by server after aggregation (expected each round)
+      - self.weights_to_send: what we send to the server (global path)
     """
-    def __init__(self, id_, client_data, global_data, global_test_data, local_test_data,lam_ditto):
+
+    def __init__(self, id_, client_data, global_data, global_test_data, local_test_data, lam_ditto=1.0):
         super().__init__(id_, client_data, global_data, global_test_data, local_test_data)
-        # Ditto additions
         self.personal_model = copy.deepcopy(self.model)
-        # configurable proximal strength; falls back to 1.0 if not present
-        self.lam_ditto = lam_ditto
+        self.lam_ditto = float(lam_ditto)
 
-        # FedAvg handshake fields (mirroring your FedAvg client)
         self.weights_received = None
-        self.weights_to_send = None
+        self.weights_to_send  = None
 
-    # --------- small utilities ----------
+        # Optional separate epoch knobs; will fallback to your existing var if absent.
+        self.epochs_global   = getattr(experiment_config, "epochs_global",
+                                getattr(experiment_config, "epochs_num_input_fine_tune_clients", 1))
+        self.epochs_personal = getattr(experiment_config, "epochs_personal",
+                                getattr(experiment_config, "epochs_num_input_fine_tune_clients", 1))
+
+        self.lr_c = experiment_config.learning_rate_fine_tune_c  # reuse your LR
+
+    # ---------- utilities ----------
     @torch.no_grad()
     def _load_state(self, model, state_dict):
         model.load_state_dict(state_dict, strict=True)
 
     def _eval_on(self, model, eval_fn, *args, **kwargs):
-        """Use your existing evaluation helpers on a specific model without refactoring them."""
+        """Temporarily swap self.model to reuse your existing eval funcs unchanged."""
         old = self.model
         try:
             self.model = model
@@ -1517,34 +1524,31 @@ class Client_Ditto(Client):
         finally:
             self.model = old
 
-    def _proximal_loss_L2(self, model, anchor_state):
-        """Sum ||θ - θ_anchor||^2 over all trainable params."""
-        sq = 0.0
-        # put anchor tensors on the same device as model params
+    def _proximal_loss_L2_mean(self, model, anchor_state):
+        """
+        Mean L2 distance (not sum) between params and anchor.
+        Using mean makes lambda human-scaled (e.g., 0.05–2).
+        """
         anchor = {k: v.to(next(model.parameters()).device) for k, v in anchor_state.items()}
+        sq, n = 0.0, 0
         for name, p in model.named_parameters():
             if not p.requires_grad:
                 continue
-            sq = sq + torch.sum((p - anchor[name]) ** 2)
-        return sq
+            d = p - anchor[name]
+            sq += torch.sum(d * d)
+            n  += d.numel()
+        return sq / max(n, 1)
 
-    # --------- training paths ----------
+    # ---------- training paths ----------
     def _global_update_fedavg(self):
-        """
-        Standard local supervised training on self.model (global path).
-        Returns a deep-copied state_dict to send to server.
-        """
+        """Local supervised training on self.model; returns sd to send."""
         print(f"*** {self} global-path (FedAvg) update ***")
-        loader = DataLoader(self.local_data,
-                            batch_size=experiment_config.batch_size,
-                            shuffle=True)
+        loader = DataLoader(self.local_data, batch_size=experiment_config.batch_size, shuffle=True)
         self.model.train()
         criterion = nn.CrossEntropyLoss()
-        opt = torch.optim.Adam(self.model.parameters(),
-                               lr=experiment_config.learning_rate_fine_tune_c)
+        opt = torch.optim.Adam(self.model.parameters(), lr=self.lr_c)
 
-        epochs = experiment_config.epochs_num_input_fine_tune_clients
-        for epoch in range(epochs):
+        for epoch in range(self.epochs_global):
             self.epoch_count += 1
             epoch_loss = 0.0
             for x, y in loader:
@@ -1556,87 +1560,80 @@ class Client_Ditto(Client):
                 torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
                 opt.step()
                 epoch_loss += float(loss.item())
-            print(f"[Global] Epoch {epoch+1}/{epochs}  Loss: {epoch_loss/len(loader):.4f}")
+            print(f"[Global] Epoch {epoch+1}/{self.epochs_global}  Loss: {epoch_loss/len(loader):.4f}")
 
         return copy.deepcopy(self.model.state_dict())
 
     def _personalized_update_ditto(self, anchor_state):
-        """
-        Ditto’s personalized objective on self.personal_model:
-           CE + 0.5 * lam_ditto * ||θ_personal - θ_anchor||^2
-        Anchor is typically the just-received global weights (self.weights_received).
-        """
+        """Ditto objective on self.personal_model: CE + 0.5*λ*mean||θ-v||^2."""
         print(f"*** {self} personalized-path (Ditto) update, lambda={self.lam_ditto} ***")
-        loader = DataLoader(self.local_data,
-                            batch_size=experiment_config.batch_size,
-                            shuffle=True)
+        loader = DataLoader(self.local_data, batch_size=experiment_config.batch_size, shuffle=True)
         self.personal_model.train()
         criterion = nn.CrossEntropyLoss()
-        opt = torch.optim.Adam(self.personal_model.parameters(),
-                               lr=experiment_config.learning_rate_fine_tune_c)
+        opt = torch.optim.Adam(self.personal_model.parameters(), lr=self.lr_c)
 
-        epochs = experiment_config.epochs_num_input_fine_tune_clients
-        for epoch in range(epochs):
+        # Freeze a copy of the anchor
+        anchor = {k: v.detach().clone() for k, v in anchor_state.items()}
+
+        for epoch in range(self.epochs_personal):
             epoch_obj = 0.0
             for x, y in loader:
                 x, y = x.to(device), y.to(device)
                 opt.zero_grad()
                 logits = self.personal_model(x)
                 ce = criterion(logits, y)
-                prox = self._proximal_loss_L2(self.personal_model, anchor_state)
+                prox = self._proximal_loss_L2_mean(self.personal_model, anchor)
                 loss = ce + 0.5 * self.lam_ditto * prox
                 loss.backward()
                 torch.nn.utils.clip_grad_norm_(self.personal_model.parameters(), max_norm=1.0)
                 opt.step()
                 epoch_obj += float(loss.item())
-            print(f"[Personalized] Epoch {epoch+1}/{epochs}  Obj: {epoch_obj/len(loader):.4f}")
+            print(f"[Personalized] Epoch {epoch+1}/{self.epochs_personal}  Obj: {epoch_obj/len(loader):.4f}")
 
-    # --------- round entry point (called by c.iterate(t)) ----------
+    # ---------- round entry ----------
     def iterate(self, t):
-        """
-        Matches your main loop contract:
-           - train locally
-           - set `self.weights_to_send`
-           - server will read it, aggregate, and later set `self.weights_received`
-        """
         self.current_iteration = t
 
-        # 1) Initialize or load the global model
-        if t == 0 or self.weights_received is None:
-            # your original code initializes; follow the same behavior
-            self.model.apply(self.initialize_weights)
-            # start personal model from same init
-            self.personal_model = copy.deepcopy(self.model)
-            print(f"{self}: initialized models for t={t}")
+        # (A) Model init / loading
+        if t == 0:
+            if self.weights_received is not None:
+                # Best case: server broadcasted a common w0
+                self._load_state(self.model, self.weights_received)
+                self.personal_model = copy.deepcopy(self.model)
+                print(f"{self}: loaded broadcast w0")
+            else:
+                # Fallback (try to avoid by broadcasting w0 from server)
+                self.model.apply(self.initialize_weights)
+                self.personal_model = copy.deepcopy(self.model)
+                print(f"{self}: WARNING—no broadcast w0; using local init")
         else:
-            # load received global weights into the global-path model
+            # Load aggregated global for this round
             self._load_state(self.model, self.weights_received)
-            # keep personalization continuity across rounds (DO NOT overwrite personal model)
 
-        # 2) Global-path update (the one that will be sent to server)
-        global_state = self._global_update_fedavg()
-        self.weights_to_send = global_state
+        # Keep a PRE-UPDATE anchor in case no broadcast happened this round
+        pre_update_anchor = copy.deepcopy(self.model.state_dict())
 
-        # 3) Personalized Ditto update (kept local)
-        anchor = self.weights_received if self.weights_received is not None else global_state
+        # (B) Global-path update (what we send to server)
+        self.weights_to_send = self._global_update_fedavg()
+
+        # (C) Personalized Ditto update (kept local)
+        # Prefer the received global; fallback to the pre-update anchor on round 0
+        anchor = self.weights_received if self.weights_received is not None else pre_update_anchor
         self._personalized_update_ditto(anchor)
 
-        # 4) Accounting & metrics
-        total_size = 0
-        for p in self.weights_to_send.values():
-            total_size += p.numel() * p.element_size()
+        # (D) Accounting & metrics
+        total_size = sum(p.numel() * p.element_size() for p in self.weights_to_send.values())
         self.size_sent[t] = total_size / (1024 * 1024)
 
-        # use personalized model for local accuracies
+        # Evaluate with personalized model on local test
         self.accuracy_per_client_1[t]   = self._eval_on(self.personal_model, self.evaluate_accuracy_single, self.local_test_set, k=1)
         self.accuracy_per_client_5[t]   = self._eval_on(self.personal_model, self.evaluate_accuracy,        self.local_test_set, k=5)
         self.accuracy_per_client_10[t]  = self._eval_on(self.personal_model, self.evaluate_accuracy,        self.local_test_set, k=10)
         self.accuracy_per_client_100[t] = self._eval_on(self.personal_model, self.evaluate_accuracy,        self.local_test_set, k=100)
 
-        # (optional) also measure how the global-path model does on global test
-        _ = self.evaluate_accuracy_single(self.test_global_data)  # uses self.model (global-path)
+        # Optional: also log global-path accuracy on global test
+        _ = self.evaluate_accuracy_single(self.test_global_data)
         return
-
 
 
 class Client_NoFederatedLearning(Client):
@@ -3050,69 +3047,91 @@ class Server_Centralized(Server):
 
         return ans
 
+import copy
+import torch
+
 class ServerFedAvg(Server):
-    def __init__(self, id_, global_data, test_data, clients_ids, clients_test_data_dict):
-        Server.__init__(self, id_, global_data, test_data, clients_ids, clients_test_data_dict)
-        self.received_weights = {}
-        self.weights_to_send = {}
+    def __init__(self, id_, global_data, test_data, clients_ids, clients_test_data_dict,
+                 client_num_examples: dict = None):
+        super().__init__(id_, global_data, test_data, clients_ids, clients_test_data_dict)
+        self.received_weights = {}   # filled each round: client_id -> state_dict
+        self.weights_to_send  = {}   # what we push back to each client
+        self.client_num_examples = client_num_examples or {cid: 1 for cid in clients_ids}
 
-    def iteration_context(self,t):
+    # Main round entry (called from your loop)
+    def iterate(self, t):
         self.current_iteration = t
-        weights_per_cluster, self.clusters_client_id_dict_per_iter[t] = self.get_weights_per_cluster(
-            t)  # #
-        for cluster_id, clients_ids_list in self.clusters_client_id_dict_per_iter[t].items():
-            for client_id in clients_ids_list:
-                self.weights_to_send[client_id] =weights_per_cluster[cluster_id]
 
+        # basic sanity
+        if len(self.received_weights) != len(self.clients_ids):
+            missing = set(self.clients_ids) - set(self.received_weights.keys())
+            raise RuntimeError(f"ServerFedAvg: missing weights from clients: {sorted(missing)}")
 
+        # organize weights by cluster
+        weights_per_cluster, clusters_client_id_dict = self.get_weights_per_cluster(t)
 
-    def get_weights_per_cluster(self,t):
-        mean_per_cluster = {}
+        with torch.no_grad():
+            mean_per_cluster = {}
+            for cluster_id, weight_list in weights_per_cluster.items():
+                cids  = clusters_client_id_dict[cluster_id]
+                sizes = [float(self.client_num_examples.get(cid, 1)) for cid in cids]
+                mean_per_cluster[cluster_id] = self.average_weights(weight_list, sizes)
 
+            # send the cluster mean back to each client
+            self.weights_to_send = {}
+            for cluster_id, cids in clusters_client_id_dict.items():
+                mean_sd = mean_per_cluster[cluster_id]
+                for cid in cids:
+                    self.weights_to_send[cid] = copy.deepcopy(mean_sd)
+
+        # ready for next round
+        self.received_weights = {}
+
+    # keep for compatibility if base calls iteration_context()
+    def iteration_context(self, t):
+        self.iterate(t)
+
+    def get_weights_per_cluster(self, t):
         if experiment_config.num_clusters == "Optimal":
             clusters_client_id_dict = experiment_config.known_clusters
-
         elif experiment_config.num_clusters == 1:
-            clusters_client_id_dict={0:[]}
-            for client_id in self.clients_ids:
-                clusters_client_id_dict[0].append(client_id)
-
+            clusters_client_id_dict = {0: list(self.clients_ids)}
         else:
             raise Exception("implemented 1 and optimal only")
 
-
-
         cluster_weights_dict = self.get_cluster_weights_dict(clusters_client_id_dict)
+        return cluster_weights_dict, clusters_client_id_dict
 
-        #if experiment_config.num_clusters>1:
-        for cluster_id, weights in cluster_weights_dict.items():
-            mean_per_cluster[cluster_id] = self.average_weights(weights)
-        return mean_per_cluster, clusters_client_id_dict
+    def get_cluster_weights_dict(self, clusters_client_id_dict):
+        out = {}
+        for cluster_id, cids in clusters_client_id_dict.items():
+            out[cluster_id] = []
+            for cid in cids:
+                if cid not in self.received_weights:
+                    raise KeyError(f"ServerFedAvg: no weights for client {cid}")
+                out[cluster_id].append(self.received_weights[cid])
+        return out
 
-    def average_weights(self,weights_list):
+    def average_weights(self, weights_list, size_weights=None):
         """
-        Averages a list of state_dicts (model weights) using Federated Averaging (FedAvg).
-
-        :param weights_list: List of model state_dicts
-        :return: Averaged state_dict
+        FedAvg over a list of state_dicts (optionally size-weighted).
         """
         if not weights_list:
-            raise ValueError("The weights list is empty")
+            raise ValueError("average_weights: empty weights_list")
 
-        # Initialize an empty dictionary to store averaged weights
-        avg_weights = {}
+        with torch.no_grad():
+            if size_weights is None:
+                size_weights = [1.0] * len(weights_list)
+            total = float(sum(size_weights))
+            norm = 1.0 / max(total, 1.0)
 
-        # Iterate through each parameter key in the model
-        for key in weights_list[0].keys():
-            # Stack all weights along a new dimension and take the mean
-            avg_weights[key] = torch.stack([weights[key] for weights in weights_list]).mean(dim=0)
+            avg = {}
+            for k in weights_list[0].keys():
+                stacked = torch.stack(
+                    [w[k].float() * size_weights[i] for i, w in enumerate(weights_list)],
+                    dim=0
+                )
+                m = stacked.sum(dim=0) * norm
+                avg[k] = m.to(dtype=weights_list[0][k].dtype)
+            return avg
 
-        return avg_weights
-
-    def get_cluster_weights_dict(self,clusters_client_id_dict):
-        ans = {}
-        for cluster_id, clients_ids in clusters_client_id_dict.items():
-            ans[cluster_id] = []
-            for client_id in clients_ids:
-                ans[cluster_id].append(self.received_weights[client_id])
-        return ans

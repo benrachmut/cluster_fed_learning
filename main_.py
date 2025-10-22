@@ -82,7 +82,7 @@ def clients_and_server_use_pseudo_labels():
 
 
 def run_Ditto():
-    for net_type in [NetsType.C_alex_S_alex]:
+    for net_type in [NetsType.C_Mobile_S_alex]:
         experiment_config.update_net_type(net_type)
         for net_cluster_technique in net_cluster_technique_list:
             experiment_config.net_cluster_technique = net_cluster_technique
@@ -104,7 +104,17 @@ def run_Ditto():
                                                       test_data=server_test_data,
                                                       clients_ids=clients_ids,
                                                       clients_test_data_dict=clients_test_by_id_dict)
+                                # --- broadcast a shared w0 to all clients (one-time) ---
+                                # Option A: use client[0] as the reference
+                                with torch.no_grad():
+                                    w0 = copy.deepcopy(clients[0].model.state_dict())
+                                for c in clients:
+                                    c.model.load_state_dict(w0, strict=True)
+                                    if hasattr(c, "personal_model"):
+                                        c.personal_model = copy.deepcopy(c.model)
+                                    c.weights_received = copy.deepcopy(w0)
 
+                                # ...then your loop
                                 for t in range(experiment_config.iterations):
                                     print("----------------------------iter number:" + str(t))
                                     for c in clients: c.iterate(t)
@@ -112,13 +122,13 @@ def run_Ditto():
                                     server.iterate(t)
                                     for c in clients: c.weights_received = server.weights_to_send[c.id_]
                                     rd = RecordData(clients, server)
-
-                                    save_record_to_results(rd,addition_to_name = "lam_"+str(experiment_config.lambda_ditto))
+                                    save_record_to_results(rd, addition_to_name="lam_" + str(
+                                        experiment_config.lambda_ditto))
 
 
 def run_FedAvg():
 
-    for net_type in [NetsType.C_alex_S_alex]:
+    for net_type in [NetsType.C_Mobile_S_alex]:
         experiment_config.update_net_type(net_type)
         for net_cluster_technique in net_cluster_technique_list:
             experiment_config.net_cluster_technique = net_cluster_technique
@@ -140,17 +150,25 @@ def run_FedAvg():
                             server = ServerFedAvg(id_="server", global_data=server_train_data, test_data=server_test_data,
                                         clients_ids=clients_ids, clients_test_data_dict=clients_test_by_id_dict)
 
+                            # Option A: use client[0] as the reference
+                            with torch.no_grad():
+                                w0 = copy.deepcopy(clients[0].model.state_dict())
+                            for c in clients:
+                                c.model.load_state_dict(w0, strict=True)
+                                if hasattr(c, "personal_model"):
+                                    c.personal_model = copy.deepcopy(c.model)
+                                c.weights_received = copy.deepcopy(w0)
+
+                            # ...then your loop
                             for t in range(experiment_config.iterations):
-                                    print("----------------------------iter number:" + str(t))
-                                    for c in clients: c.iterate(t)
-                                    for c in clients: server.received_weights[c.id_] = c.weights_to_send
-                                    server.iterate(t)
-                                    for c in clients: c.weights_received = server.weights_to_send[c.id_]
-                                    rd = RecordData(clients, server)
-
-
-                                    save_record_to_results(rd)
-
+                                print("----------------------------iter number:" + str(t))
+                                for c in clients: c.iterate(t)
+                                for c in clients: server.received_weights[c.id_] = c.weights_to_send
+                                server.iterate(t)
+                                for c in clients: c.weights_received = server.weights_to_send[c.id_]
+                                rd = RecordData(clients, server)
+                                save_record_to_results(rd,
+                                                       addition_to_name="lam_" + str(experiment_config.lambda_ditto))
 
 
 def iterate_fl_clusters(clients,server,net_type,net_cluster_technique,server_input_tech,cluster_technique,server_feedback_technique,
@@ -421,8 +439,8 @@ def run_exp_by_algo():
 
 if __name__ == '__main__':
     print(device)
-    seed_num_list = [2,3]
-    data_sets_list = [DataSet.EMNIST_balanced]
+    seed_num_list = [1]
+    data_sets_list = [DataSet.CIFAR100]
     num_clients_list = [25]#[25]
     num_opt_clusters_list =[5] #[5]
     mix_percentage = 0.1
@@ -432,7 +450,7 @@ if __name__ == '__main__':
     server_data_ratios = [1]#[-4,-3,-2,-1,0,1,2,3,4] #  # 0.96,0.5,0.75,1,1.25,1.5,1.75,2]
     print("epsilons:", cluster_additions)
     print(("alpha_dichts", alpha_dichts))
-    algorithm_selection_list =[AlgorithmSelected.FedMD,AlgorithmSelected.COMET]#,AlgorithmSelected.pFedCK,AlgorithmSelected.pFedCK,AlgorithmSelected.COMET,AlgorithmSelected.FedMD]
+    algorithm_selection_list =[AlgorithmSelected.pFedCK]#,AlgorithmSelected.pFedCK,AlgorithmSelected.pFedCK,AlgorithmSelected.COMET,AlgorithmSelected.FedMD]
     #AlgorithmSelected.FedAvg,AlgorithmSelected.NoFederatedLearning,AlgorithmSelected.pFedCK
     #AlgorithmSelected.PseudoLabelsClusters
     #AlgorithmSelected.COMET,AlgorithmSelected.PseudoLabelsNoServerModel
