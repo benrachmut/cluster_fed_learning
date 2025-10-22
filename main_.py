@@ -81,6 +81,40 @@ def clients_and_server_use_pseudo_labels():
     pass
 
 
+def run_Ditto():
+    for net_type in [NetsType.C_alex_S_alex]:
+        experiment_config.update_net_type(net_type)
+        for net_cluster_technique in net_cluster_technique_list:
+            experiment_config.net_cluster_technique = net_cluster_technique
+            for server_input_tech in [ServerInputTech.mean]:
+                experiment_config.server_input_tech = server_input_tech
+                for cluster_technique in [ClusterTechnique.kmeans]:
+                    experiment_config.cluster_technique = cluster_technique
+                    for server_feedback_technique in server_feedback_technique_list:
+                        experiment_config.server_feedback_technique = server_feedback_technique
+                        for num_cluster in num_cluster_list_fedAVG:
+                            experiment_config.num_clusters = num_cluster
+                            for lambda_ditto in lambda_dittos:
+                                experiment_config.lambda_ditto = lambda_ditto
+                                clients, clients_ids, clients_test_by_id_dict = create_clients(clients_train_data_dict,
+                                                                                               server_train_data,
+                                                                                               clients_test_data_dict,
+                                                                                               server_test_data)
+                                server = ServerFedAvg(id_="server", global_data=server_train_data,
+                                                      test_data=server_test_data,
+                                                      clients_ids=clients_ids,
+                                                      clients_test_data_dict=clients_test_by_id_dict)
+
+                                for t in range(experiment_config.iterations):
+                                    print("----------------------------iter number:" + str(t))
+                                    for c in clients: c.iterate(t)
+                                    for c in clients: server.received_weights[c.id_] = c.weights_to_send
+                                    server.iterate(t)
+                                    for c in clients: c.weights_received = server.weights_to_send[c.id_]
+                                    rd = RecordData(clients, server)
+
+                                    save_record_to_results(rd,addition_to_name = "lam_"+str(experiment_config.lambda_ditto))
+
 
 def run_FedAvg():
 
@@ -375,9 +409,10 @@ def run_exp_by_algo():
     if algorithm_selection == AlgorithmSelected.Centralized:
         run_Centralized()
 
-    if algorithm_selection == AlgorithmSelected.FedAvg:
+    if algorithm_selection == AlgorithmSelected.FedAvg :
         run_FedAvg()
-
+    if algorithm_selection == algorithm_selection.Ditto:
+        run_Ditto()
     if algorithm_selection == AlgorithmSelected.pFedCK:
         run_pFedCK()
 
@@ -386,7 +421,7 @@ def run_exp_by_algo():
 
 if __name__ == '__main__':
     print(device)
-    seed_num_list = [3]
+    seed_num_list = [1]
     data_sets_list = [DataSet.CIFAR100]
     num_clients_list = [25]#[25]
     num_opt_clusters_list =[5] #[5]
@@ -397,7 +432,7 @@ if __name__ == '__main__':
     server_data_ratios = [1]#[-4,-3,-2,-1,0,1,2,3,4] #  # 0.96,0.5,0.75,1,1.25,1.5,1.75,2]
     print("epsilons:", cluster_additions)
     print(("alpha_dichts", alpha_dichts))
-    algorithm_selection_list =[AlgorithmSelected.MAPL]#,AlgorithmSelected.pFedCK,AlgorithmSelected.pFedCK,AlgorithmSelected.COMET,AlgorithmSelected.FedMD]
+    algorithm_selection_list =[AlgorithmSelected.Ditto]#,AlgorithmSelected.pFedCK,AlgorithmSelected.pFedCK,AlgorithmSelected.COMET,AlgorithmSelected.FedMD]
     #AlgorithmSelected.FedAvg,AlgorithmSelected.NoFederatedLearning,AlgorithmSelected.pFedCK
     #AlgorithmSelected.PseudoLabelsClusters
     #AlgorithmSelected.COMET,AlgorithmSelected.PseudoLabelsNoServerModel
@@ -423,8 +458,9 @@ if __name__ == '__main__':
 
     # parameters for fedAvg
     num_cluster_list_fedAVG = [1]
-    nets_types_list_fedAVG  = [NetsType.C_alex_S_alex] # dont touch
+    nets_types_list_fedAVG  = [NetsType.C_Mobile_S_alex] # dont touch
     cluster_technique_list_fedAVG = [ClusterTechnique.kmeans] # we need this because of logic in num_cluster_list_fedAVG
+    lambda_dittos = [1,0.5,0.8,1.2,1.5,2]
 
 
 

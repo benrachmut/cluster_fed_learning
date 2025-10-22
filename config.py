@@ -152,6 +152,8 @@ class AlgorithmSelected(Enum):
     FedAvg = 6
     pFedCK = 7
     COMET = 8
+    Ditto = 9
+
 class DataDistTypes(Enum):
     NaiveNonIID = 1
     Dirichlet1 = 2
@@ -160,7 +162,7 @@ class ExperimentConfig:
     def __init__(self):
         self.weights_for_ps = None
         self.input_consistency = None
-
+        self.lambda_ditto = 1
         self.which_net_arch = None
         self.seed_num = 1
         self.iterations = 20

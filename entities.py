@@ -1477,6 +1477,168 @@ class Client_FedAvg(Client):
         return  ans
 
 
+
+import copy
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+from torch.utils.data import DataLoader
+
+class Client_Ditto(Client):
+    """
+    Ditto client (personalized FL):
+      - self.model:       global-path model (used for FedAvg aggregation)
+      - self.personal_model: local personalized model (kept on client)
+      - self.weights_received: filled by server each round (global anchor)
+      - self.weights_to_send: what we send to server (global-path weights)
+    """
+    def __init__(self, id_, client_data, global_data, global_test_data, local_test_data,lam_ditto):
+        super().__init__(id_, client_data, global_data, global_test_data, local_test_data)
+        # Ditto additions
+        self.personal_model = copy.deepcopy(self.model)
+        # configurable proximal strength; falls back to 1.0 if not present
+        self.lam_ditto = lam_ditto
+
+        # FedAvg handshake fields (mirroring your FedAvg client)
+        self.weights_received = None
+        self.weights_to_send = None
+
+    # --------- small utilities ----------
+    @torch.no_grad()
+    def _load_state(self, model, state_dict):
+        model.load_state_dict(state_dict, strict=True)
+
+    def _eval_on(self, model, eval_fn, *args, **kwargs):
+        """Use your existing evaluation helpers on a specific model without refactoring them."""
+        old = self.model
+        try:
+            self.model = model
+            return eval_fn(*args, **kwargs)
+        finally:
+            self.model = old
+
+    def _proximal_loss_L2(self, model, anchor_state):
+        """Sum ||θ - θ_anchor||^2 over all trainable params."""
+        sq = 0.0
+        # put anchor tensors on the same device as model params
+        anchor = {k: v.to(next(model.parameters()).device) for k, v in anchor_state.items()}
+        for name, p in model.named_parameters():
+            if not p.requires_grad:
+                continue
+            sq = sq + torch.sum((p - anchor[name]) ** 2)
+        return sq
+
+    # --------- training paths ----------
+    def _global_update_fedavg(self):
+        """
+        Standard local supervised training on self.model (global path).
+        Returns a deep-copied state_dict to send to server.
+        """
+        print(f"*** {self} global-path (FedAvg) update ***")
+        loader = DataLoader(self.local_data,
+                            batch_size=experiment_config.batch_size,
+                            shuffle=True)
+        self.model.train()
+        criterion = nn.CrossEntropyLoss()
+        opt = torch.optim.Adam(self.model.parameters(),
+                               lr=experiment_config.learning_rate_fine_tune_c)
+
+        epochs = experiment_config.epochs_num_input_fine_tune_clients
+        for epoch in range(epochs):
+            self.epoch_count += 1
+            epoch_loss = 0.0
+            for x, y in loader:
+                x, y = x.to(device), y.to(device)
+                opt.zero_grad()
+                logits = self.model(x)
+                loss = criterion(logits, y)
+                loss.backward()
+                torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
+                opt.step()
+                epoch_loss += float(loss.item())
+            print(f"[Global] Epoch {epoch+1}/{epochs}  Loss: {epoch_loss/len(loader):.4f}")
+
+        return copy.deepcopy(self.model.state_dict())
+
+    def _personalized_update_ditto(self, anchor_state):
+        """
+        Ditto’s personalized objective on self.personal_model:
+           CE + 0.5 * lam_ditto * ||θ_personal - θ_anchor||^2
+        Anchor is typically the just-received global weights (self.weights_received).
+        """
+        print(f"*** {self} personalized-path (Ditto) update, lambda={self.lam_ditto} ***")
+        loader = DataLoader(self.local_data,
+                            batch_size=experiment_config.batch_size,
+                            shuffle=True)
+        self.personal_model.train()
+        criterion = nn.CrossEntropyLoss()
+        opt = torch.optim.Adam(self.personal_model.parameters(),
+                               lr=experiment_config.learning_rate_fine_tune_c)
+
+        epochs = experiment_config.epochs_num_input_fine_tune_clients
+        for epoch in range(epochs):
+            epoch_obj = 0.0
+            for x, y in loader:
+                x, y = x.to(device), y.to(device)
+                opt.zero_grad()
+                logits = self.personal_model(x)
+                ce = criterion(logits, y)
+                prox = self._proximal_loss_L2(self.personal_model, anchor_state)
+                loss = ce + 0.5 * self.lam_ditto * prox
+                loss.backward()
+                torch.nn.utils.clip_grad_norm_(self.personal_model.parameters(), max_norm=1.0)
+                opt.step()
+                epoch_obj += float(loss.item())
+            print(f"[Personalized] Epoch {epoch+1}/{epochs}  Obj: {epoch_obj/len(loader):.4f}")
+
+    # --------- round entry point (called by c.iterate(t)) ----------
+    def iterate(self, t):
+        """
+        Matches your main loop contract:
+           - train locally
+           - set `self.weights_to_send`
+           - server will read it, aggregate, and later set `self.weights_received`
+        """
+        self.current_iteration = t
+
+        # 1) Initialize or load the global model
+        if t == 0 or self.weights_received is None:
+            # your original code initializes; follow the same behavior
+            self.model.apply(self.initialize_weights)
+            # start personal model from same init
+            self.personal_model = copy.deepcopy(self.model)
+            print(f"{self}: initialized models for t={t}")
+        else:
+            # load received global weights into the global-path model
+            self._load_state(self.model, self.weights_received)
+            # keep personalization continuity across rounds (DO NOT overwrite personal model)
+
+        # 2) Global-path update (the one that will be sent to server)
+        global_state = self._global_update_fedavg()
+        self.weights_to_send = global_state
+
+        # 3) Personalized Ditto update (kept local)
+        anchor = self.weights_received if self.weights_received is not None else global_state
+        self._personalized_update_ditto(anchor)
+
+        # 4) Accounting & metrics
+        total_size = 0
+        for p in self.weights_to_send.values():
+            total_size += p.numel() * p.element_size()
+        self.size_sent[t] = total_size / (1024 * 1024)
+
+        # use personalized model for local accuracies
+        self.accuracy_per_client_1[t]   = self._eval_on(self.personal_model, self.evaluate_accuracy_single, self.local_test_set, k=1)
+        self.accuracy_per_client_5[t]   = self._eval_on(self.personal_model, self.evaluate_accuracy,        self.local_test_set, k=5)
+        self.accuracy_per_client_10[t]  = self._eval_on(self.personal_model, self.evaluate_accuracy,        self.local_test_set, k=10)
+        self.accuracy_per_client_100[t] = self._eval_on(self.personal_model, self.evaluate_accuracy,        self.local_test_set, k=100)
+
+        # (optional) also measure how the global-path model does on global test
+        _ = self.evaluate_accuracy_single(self.test_global_data)  # uses self.model (global-path)
+        return
+
+
+
 class Client_NoFederatedLearning(Client):
     def __init__(self,id_, client_data, global_data,global_test_data,local_test_data,evaluate_every):
         Client.__init__(self,id_, client_data, global_data,global_test_data,local_test_data)

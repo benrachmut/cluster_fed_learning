@@ -914,7 +914,10 @@ def create_clients(client_data_dict,server_data,test_set,server_test_data):
             if experiment_config.algorithm_selection == AlgorithmSelected.pFedCK:
                 c = Client_pFedCK(id_=id_, client_data=data_, global_data=server_data, global_test_data=server_test_data,
                            local_test_data=test_set[group_name][data_index])
-
+            if experiment_config.algorithm_selection ==AlgorithmSelected.Ditto:
+                c = Client_Ditto(id_=id_, client_data=data_, global_data=server_data,
+                                  global_test_data=server_test_data,
+                                  local_test_data=test_set[group_name][data_index],lam_ditto = experiment_config.lambda_ditto)
             ans.append(c)
             clients_test_by_id_dict[id_] = test_set[group_name][data_index]
             data_index = data_index+1
@@ -1086,7 +1089,7 @@ def _fmt_alpha(v):
 
 import re
 
-def save_record_to_results(record, *, filename= None, indent = 2) :
+def save_record_to_results(record, *, addition_to_name = "",filename= None, indent = 2) :
     """
     Save under:
       results/
@@ -1134,6 +1137,7 @@ def save_record_to_results(record, *, filename= None, indent = 2) :
 
     # Folder WITHOUT seed
     folder_ = (
+        f"{addition_to_name}"
         f"data_set{data_set_s}_alg{alg_s}_clusters{clusters_s}"
         f"_server{server_s}_clients{clients_s}_client{client_s}"
         f"_alpha{alpha_s}_ratio{ratio_s}"
