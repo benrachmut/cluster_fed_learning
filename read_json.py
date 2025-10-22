@@ -2,42 +2,23 @@
 # -*- coding: utf-8 -*-
 """
 make_fig_algorithms_avg_accuracy.py
-Faceted by client_net_type_name + MAPL_C/S styling & shared colors by X.
 
-Filters (Fig 1 only):
-- ONLY includes JSONs where summary["data_set_selected"]["_name_"] == "CIFAR100" (case-insensitive safeguard)
+This builds ONE figure per figset:
 
-New Figure (Fig 2):
-- Only client_net_type_name == "rndWeak"
-- Faceted by summary["data_set_selected"]["_name_"] (independent y-axes)
-- Filter alpha_dich == --alpha (default 5)
+results/
+  diff_clients_nets/                 # FIGSET 1 (one figure; 1xN subplots)
+    <subfigureA>/
+      <algorithm1>/*.json
+      <algorithm2>/*.json
+    <subfigureB>/ ...
+  diff_benchmarks_05/                # FIGSET 2 (one figure; 1xN subplots; alpha filter)
+    <subfigureA>/
+      <algorithm1>/*.json
+      <algorithm2>/*.json
+    <subfigureB>/ ...
 
-Figure(s)
----------
-1) algorithms_avg_accuracy_by_client_net_type.pdf
-   - Facets (subplots) by client_net_type_name (from summary.client_net_type_name)
-   - x-axis: iteration
-   - y-axis: mean accuracy across ALL clients & ALL seeds
-   - Lines: per displayed label
-       * Non-MAPL: algorithm name (solid)
-       * MAPL:
-           - MAPL_C-<X>  (client_accuracy_per_client_1)  -> dashed
-           - MAPL_S-<X>  (server_accuracy_per_client_1_max) -> solid
-         where <X> = summary.server_net_type._value_
-
-2) algorithms_avg_accuracy_rndWeak_by_dataset_alpha{ALPHA}.pdf
-   - Filter: client_net_type_name == "rndWeak", alpha_dich == {ALPHA}
-   - Facets by dataset (summary.data_set_selected._name_)
-   - x-axis: iteration
-   - y-axis: mean accuracy across ALL clients & ALL seeds (independent per subplot)
-   - Same line styling as above
-
-Usage
------
-  python make_fig_algorithms_avg_accuracy.py --root results --inspect
-  python make_fig_algorithms_avg_accuracy.py --root results --figdir figures
-  # With a different alpha for Fig 2
-  python make_fig_algorithms_avg_accuracy.py --root results --alpha 3
+Outputs (one PDF per figset):
+figures/<FIGSET>/<FIGSET>.pdf
 """
 
 from __future__ import annotations
@@ -45,13 +26,13 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import os
 import re
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Union
 
-import numpy as np
-import pandas as pd
 import matplotlib.pyplot as plt
+import pandas as pd
 
 Json = Union[Dict[str, Any], List[Any], str, int, float, bool, None]
 
@@ -60,8 +41,36 @@ TITLE_MAP = {
     "rndStrong": "{Alex, Res}",
     "rndWeak":   "{Mobile, Squeeze}",
 }
+def _right_of_dash(s: str) -> str:
+    # split on hyphen or en/em dash; keep the part after it
+    parts = re.split(r"\s*[-–—]\s*", str(s), maxsplit=1)
+    return parts[1] if len(parts) > 1 else str(s)
+# --------------------- Windows long-path helpers ---------------------
 
-# ---------- Recursive traversal ----------
+def _win_long_abs(path: Path) -> str:
+    s = str(path if path.is_absolute() else (Path.cwd() / path))
+    if os.name == "nt":
+        s = os.path.normpath(s)
+        if s.startswith("\\\\?\\") or s.startswith("\\\\?\\UNC\\"):
+            return s
+        if s.startswith("\\\\"):
+            s = "\\\\?\\UNC\\" + s.lstrip("\\")
+        else:
+            s = "\\\\?\\" + s
+    return s
+
+def _open_json_win_safe(p: Path):
+    return open(_win_long_abs(p), "r", encoding="utf-8")
+
+def _savefig_longpath(fig, outfile: Path):
+    outfile.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        fig.savefig(_win_long_abs(outfile), bbox_inches="tight")
+    except Exception:
+        fig.savefig(str(outfile), bbox_inches="tight")
+
+# --------------------- tiny utils ---------------------
+
 def walk(obj: Json, path: Tuple[str, ...] = ()):
     yield path, obj
     if isinstance(obj, dict):
@@ -71,62 +80,52 @@ def walk(obj: Json, path: Tuple[str, ...] = ()):
         for i, v in enumerate(obj):
             yield from walk(v, path + (f"[{i}]",))
 
-def path_str(path: Optional[Tuple[str, ...]]):  # -> str
+def path_str(path: Optional[Tuple[str, ...]]):
     return ".".join(path) if path else "N/A"
 
-# ---------- Field finders ----------
+# --------------------- field finders ---------------------
+
 def find_algorithm_name(root: Json):
-    candidates: List[Tuple[Tuple[str, ...], str]] = []
+    c: List[Tuple[Tuple[str, ...], str]] = []
     for p, v in walk(root):
         if isinstance(v, str) and v.strip():
             if p and p[-1].lower() in {"_name_", "name"} and any("algorithm" in seg.lower() for seg in p):
-                candidates.append((p, v.strip()))
+                c.append((p, v.strip()))
             if p and p[-1].lower() == "algorithm":
-                candidates.append((p, v.strip()))
-    if candidates:
+                c.append((p, v.strip()))
+    if c:
         def score(path: Tuple[str, ...]) -> int:
             s = 0
-            if path and path[-1].lower() in {"_name_", "name"}:
-                s += 2
-            if any("algorithm" in seg.lower() for seg in path):
-                s += 2
-            if path and path[-1].lower() == "algorithm":
-                s += 3
+            if path and path[-1].lower() in {"_name_", "name"}: s += 2
+            if any("algorithm" in seg.lower() for seg in path): s += 2
+            if path and path[-1].lower() == "algorithm": s += 3
             return s
-        best = max(candidates, key=lambda t: score(t[0]))
+        best = max(c, key=lambda t: score(t[0]))
         return best[1], best[0]
     return None, None
 
 def find_seed_num(root: Json):
     for p, v in walk(root):
-        if not p:
-            continue
+        if not p: continue
         key = p[-1].lower()
         if key in {"seed_num", "seed"}:
-            try:
-                return int(v), p
-            except Exception:
-                try:
-                    return int(float(v)), p
-                except Exception:
-                    continue
+            for caster in (int, lambda x: int(float(x))):
+                try: return caster(v), p
+                except Exception: pass
     return None, None
 
 def looks_like_client_accuracy_map(v: Any) -> bool:
-    if not isinstance(v, dict) or not v:
-        return False
-    n_checked = 0
-    nested_dict_seen = 0
+    if not isinstance(v, dict) or not v: return False
+    checked, nested = 0, 0
     for _, inner in v.items():
-        n_checked += 1
+        checked += 1
         if isinstance(inner, dict) and inner:
             for it_val in inner.values():
                 if isinstance(it_val, (int, float, str)):
-                    nested_dict_seen += 1
+                    nested += 1
                     break
-        if n_checked >= 5:
-            break
-    return nested_dict_seen > 0
+        if checked >= 5: break
+    return nested > 0
 
 def find_exact_key_map(root: Json, keyname: str):
     hits: List[Tuple[Tuple[str, ...], Any]] = []
@@ -140,77 +139,81 @@ def find_exact_key_map(root: Json, keyname: str):
 
 def find_client_accuracy_map_anywhere(root: Json):
     v, p = find_exact_key_map(root, "client_accuracy_per_client_1")
-    if v is not None:
-        return v, p
-    candidates: List[Tuple[Tuple[str, ...], Any]] = []
+    if v is not None: return v, p
+    c: List[Tuple[Tuple[str, ...], Any]] = []
     for p, v in walk(root):
-        if looks_like_client_accuracy_map(v):
-            candidates.append((p, v))
-    if candidates:
-        def cscore(pv: Tuple[Tuple[str, ...], Any]) -> int:
-            p, _ = pv
-            s = 0
-            if any("summary" in seg.lower() for seg in p):
-                s += 2
-            if any("client" in seg.lower() for seg in p):
-                s += 1
+        if looks_like_client_accuracy_map(v): c.append((p, v))
+    if c:
+        def score(pv):
+            p,_ = pv; s=0
+            if any("summary" in seg.lower() for seg in p): s+=2
+            if any("client" in seg.lower() for seg in p): s+=1
             return s
-        candidates.sort(key=cscore, reverse=True)
-        return candidates[0][1], candidates[0][0]
+        c.sort(key=score, reverse=True)
+        return c[0][1], c[0][0]
     return None, None
 
 def find_server_accuracy_map(root: Json):
     v, p = find_exact_key_map(root, "server_accuracy_per_client_1_max")
-    if v is not None:
-        return v, p
-    candidates: List[Tuple[Tuple[str, ...], Any]] = []
+    if v is not None: return v, p
+    c: List[Tuple[Tuple[str, ...], Any]] = []
     for p, v in walk(root):
         if looks_like_client_accuracy_map(v) and any("server" in seg.lower() for seg in p):
-            candidates.append((p, v))
-    if candidates:
-        def cscore(pv: Tuple[Tuple[str, ...], Any]) -> int:
-            p, _ = pv
-            s = 0
-            if any("summary" in seg.lower() for seg in p):
-                s += 2
-            if any("server" in seg.lower() for seg in p):
-                s += 1
+            c.append((p, v))
+    if c:
+        def score(pv):
+            p,_=pv; s=0
+            if any("summary" in seg.lower() for seg in p): s+=2
+            if any("server" in seg.lower() for seg in p): s+=1
             return s
-        candidates.sort(key=cscore, reverse=True)
-        return candidates[0][1], candidates[0][0]
+        c.sort(key=score, reverse=True)
+        return c[0][1], c[0][0]
     return None, None
 
 def find_server_net_type_value(root: Json):
-    for p, v in walk(root):
-        if not p:
-            continue
-        if p[-1] in {"_value_", "value"} and isinstance(v, (str, int, float)):
-            if any(seg.lower() == "server_net_type" for seg in p) and any(seg.lower() == "summary" for seg in p):
-                return str(v), p
     best: Optional[Tuple[Tuple[str, ...], str]] = None
     best_score = -1
     for p, v in walk(root):
-        if not p:
-            continue
+        if not p: continue
         if p[-1] in {"_value_", "value"} and isinstance(v, (str, int, float)):
             pl = [seg.lower() for seg in p]
             if any("server" in seg for seg in pl) and any("net" in seg for seg in pl):
                 score = 1 + (2 if any("summary" in seg for seg in pl) else 0)
                 if score > best_score:
-                    best = (p, str(v))
-                    best_score = score
-    if best:
-        return best[1], best[0]
+                    best = (p, str(v)); best_score = score
+    if best: return best[1], best[0]
     return None, None
 
 def find_client_net_type_name(root: Json):
+    # Prefer summary.client_net_type_name if present
+    cur = root
+    try:
+        if isinstance(cur, dict) and "summary" in cur:
+            cur = cur["summary"]
+            if isinstance(cur, dict) and "client_net_type_name" in cur:
+                v = cur["client_net_type_name"]
+                return (str(v) if v is not None else None), ("summary","client_net_type_name")
+    except Exception:
+        pass
+    # Fallback: anywhere
     for p, v in walk(root):
         if p and p[-1] == "client_net_type_name":
             return (str(v) if v is not None else None), p
+    # Fallback 2: summary.client_net_type._name_ / _value_
+    try:
+        cur = root
+        if isinstance(cur, dict) and "summary" in cur and isinstance(cur["summary"], dict):
+            s = cur["summary"]
+            if isinstance(s.get("client_net_type"), dict):
+                d = s["client_net_type"]
+                for k in ("_name_","_value_"):
+                    if k in d and d[k] is not None:
+                        return str(d[k]), ("summary","client_net_type",k)
+    except Exception:
+        pass
     return None, None
 
 def find_dataset_selected_name(root: Json):
-    # Exact preferred
     cur = root
     try:
         if isinstance(cur, dict) and "summary" in cur:
@@ -219,62 +222,69 @@ def find_dataset_selected_name(root: Json):
                 cur2 = cur["data_set_selected"]
                 if isinstance(cur2, dict) and "_name_" in cur2:
                     v = cur2["_name_"]
-                    return (str(v) if v is not None else None), ("summary", "data_set_selected", "_name_")
+                    return (str(v) if v is not None else None), ("summary","data_set_selected","_name_")
     except Exception:
         pass
-    # Heuristic fallback
     for p, v in walk(root):
-        if not p or not isinstance(v, (str, int, float)):
-            continue
+        if not p or not isinstance(v, (str,int,float)): continue
         pl = [seg.lower() for seg in p]
         if any("summary" in seg for seg in pl) and any("data_set_selected" in seg for seg in pl):
-            if p[-1].lower() in {"_name_", "name"}:
-                return str(v), p
+            if p[-1].lower() in {"_name_","name"}: return str(v), p
     return None, None
 
 def find_alpha_dich(root: Json):
+    # Prefer summary.alpha_dich
+    try:
+        if isinstance(root, dict) and "summary" in root:
+            s = root["summary"]
+            if isinstance(s, dict) and "alpha_dich" in s:
+                v = s["alpha_dich"]
+                for caster in (int, lambda x: int(float(x))):
+                    try: return caster(v), ("summary","alpha_dich")
+                    except Exception: pass
+                return None, ("summary","alpha_dich")
+    except Exception:
+        pass
+    # Fallback: anywhere
     for p, v in walk(root):
         if p and p[-1] == "alpha_dich":
-            try:
-                return int(v), p
-            except Exception:
-                try:
-                    return int(float(v)), p
-                except Exception:
-                    return None, p
+            for caster in (int, lambda x: int(float(x))):
+                try: return caster(v), p
+                except Exception: pass
+            return None, p
     return None, None
 
-# ---------- Loading ----------
-def load_rows(root: Path, *, dataset_filter: Optional[str] = None, inspect: bool = False) -> pd.DataFrame:
+# --------------------- loading ---------------------
+
+def load_rows_from_dir(dir_path: Path, *, inspect: bool = False, alg_hint: Optional[str] = None) -> pd.DataFrame:
     """
-    dataset_filter:
-        - None -> include all datasets
-        - "CIFAR100" -> include only CIFAR100 (case-insensitive)
+    Build rows ONLY from JSONs under dir_path (single algorithm folder).
+    If a JSON lacks an algorithm name, fall back to `alg_hint` (usually the folder name).
     """
     rows: List[Dict[str, Any]] = []
     files_scanned = 0
     files_used = 0
 
-    for p in root.glob("**/*.json"):
-        if not p.is_file():
-            continue
+    json_paths = list(dir_path.glob("*.json")) + list(dir_path.glob("*.JSON"))
+    if inspect:
+        print(f"\n[SCAN] {dir_path} -> {len(json_paths)} JSONs (alg_hint={alg_hint!r})")
+        for jp in json_paths:
+            print(" -", jp.name)
 
+    for p in sorted(json_paths):
         files_scanned += 1
         try:
-            with p.open("r", encoding="utf-8") as f:
-                raw = json.load(f)
+            with _open_json_win_safe(p) as fh:
+                raw = json.load(fh)
         except Exception as e:
             print(f"[WARN] skipping {p}: {e}")
             continue
 
         ds_name, ds_path = find_dataset_selected_name(raw)
-        if dataset_filter is not None:
-            if ds_name is None or str(ds_name).strip().lower() != dataset_filter.strip().lower():
-                if inspect:
-                    print(f"[SKIP] {p} — dataset={ds_name!r} @ {path_str(ds_path)} (want '{dataset_filter}')")
-                continue
-
         alg_name, alg_path = find_algorithm_name(raw)
+        if not alg_name:
+            alg_name = alg_hint or dir_path.name  # fallback to folder name
+
         seed_num, seed_path = find_seed_num(raw)
         client_map, client_path = find_client_accuracy_map_anywhere(raw)
         server_map, server_path = find_server_accuracy_map(raw)
@@ -283,361 +293,321 @@ def load_rows(root: Path, *, dataset_filter: Optional[str] = None, inspect: bool
         alpha_dich, alpha_path = find_alpha_dich(raw)
 
         if inspect:
-            print(f"\n--- Inspect: {p}")
+            print(f"[INSPECT] {p.name}")
             print(f"  dataset_selected._name_: {ds_name} @ {path_str(ds_path)}")
-            print(f"  algorithm: {alg_name} @ {path_str(alg_path)}")
+            print(f"  algorithm: {alg_name} @ {path_str(alg_path) if alg_path else '(folder fallback)'}")
             print(f"  seed_num : {seed_num} @ {path_str(seed_path)}")
-            print(f"  client_accuracy_per_client_1: @ {path_str(client_path)}")
-            print(f"  server_accuracy_per_client_1_max: @ {path_str(server_path)}")
+            print(f"  client_accuracy_per_client_1: @ {path_str(client_path)}  (found={client_map is not None})")
+            print(f"  server_accuracy_per_client_1_max: @ {path_str(server_path)} (found={server_map is not None})")
             print(f"  server_net_type._value_: {server_net_val} @ {path_str(server_net_path)}")
             print(f"  client_net_type_name: {client_net_name} @ {path_str(client_net_path)}")
             print(f"  alpha_dich: {alpha_dich} @ {path_str(alpha_path)}")
 
-        is_mapl = bool(alg_name and "mapl" in alg_name.lower())
+        is_mapl = bool(alg_name and "mapl" in str(alg_name).lower())
         used_any = False
 
-        # 1) CLIENT measure: all algorithms (for MAPL: label as MAPL_C-X)
-        if client_map is not None:
-            display_label = (alg_name or "unknown_alg")
+        # client measure (all algs)
+        if isinstance(client_map, dict) and client_map:
+            display_label = str(alg_name)
             if is_mapl:
                 x = server_net_val if server_net_val is not None else "NA"
                 display_label = f"MAPL_C-{x}"
 
             for client_id, iter_dict in client_map.items():
+                iter_pairs = iter_dict.items() if isinstance(iter_dict, dict) else client_map.items()
                 if not isinstance(iter_dict, dict):
-                    continue
-                for iter_k, acc_v in iter_dict.items():
+                    client_id = "ALL"
+                for iter_k, acc_v in iter_pairs:
                     try:
                         iteration = int(iter_k)
                     except Exception:
-                        try:
-                            iteration = int(float(iter_k))
-                        except Exception:
-                            continue
+                        try: iteration = int(float(iter_k))
+                        except Exception: continue
                     try:
                         acc = float(acc_v)
                     except Exception:
                         continue
-                    rows.append(
-                        {
-                            "_path": str(p),
-                            "dataset": ds_name or "unknown_dataset",
-                            "algorithm": alg_name or "unknown_alg",
-                            "algorithm_display": display_label,
-                            "measure": "client",
-                            "seed": seed_num,
-                            "client_id": str(client_id),
-                            "iteration": iteration,
-                            "accuracy": acc,
-                            "client_net_type_name": client_net_name or "unknown_client_net",
-                            "alpha_dich": alpha_dich,
-                        }
-                    )
+                    rows.append({
+                        "_path": str(p),
+                        "dataset": ds_name or "unknown_dataset",
+                        "algorithm": alg_name or "unknown_alg",
+                        "algorithm_display": display_label,
+                        "measure": "client",
+                        "seed": seed_num,
+                        "client_id": str(client_id),
+                        "iteration": iteration,
+                        "accuracy": acc,
+                        "client_net_type_name": client_net_name or "unknown_client_net",
+                        "alpha_dich": alpha_dich,
+                    })
                     used_any = True
 
-        # 2) SERVER measure: only for MAPL (label as MAPL_S-X)
-        if is_mapl and server_map is not None:
+        # server measure (MAPL only)
+        if is_mapl and isinstance(server_map, dict) and server_map:
             x = server_net_val if server_net_val is not None else "NA"
             display_label = f"MAPL_S-{x}"
-
             for client_id, iter_dict in server_map.items():
+                iter_pairs = iter_dict.items() if isinstance(iter_dict, dict) else server_map.items()
                 if not isinstance(iter_dict, dict):
-                    continue
-                for iter_k, acc_v in iter_dict.items():
+                    client_id = "ALL"
+                for iter_k, acc_v in iter_pairs:
                     try:
                         iteration = int(iter_k)
                     except Exception:
-                        try:
-                            iteration = int(float(iter_k))
-                        except Exception:
-                            continue
+                        try: iteration = int(float(iter_k))
+                        except Exception: continue
                     try:
                         acc = float(acc_v)
                     except Exception:
                         continue
-                    rows.append(
-                        {
-                            "_path": str(p),
-                            "dataset": ds_name or "unknown_dataset",
-                            "algorithm": alg_name or "unknown_alg",
-                            "algorithm_display": display_label,
-                            "measure": "server",
-                            "seed": seed_num,
-                            "client_id": str(client_id),
-                            "iteration": iteration,
-                            "accuracy": acc,
-                            "client_net_type_name": client_net_name or "unknown_client_net",
-                            "alpha_dich": alpha_dich,
-                        }
-                    )
+                    rows.append({
+                        "_path": str(p),
+                        "dataset": ds_name or "unknown_dataset",
+                        "algorithm": alg_name or "unknown_alg",
+                        "algorithm_display": display_label,
+                        "measure": "server",
+                        "seed": seed_num,
+                        "client_id": str(client_id),
+                        "iteration": iteration,
+                        "accuracy": acc,
+                        "client_net_type_name": client_net_name or "unknown_client_net",
+                        "alpha_dich": alpha_dich,
+                    })
                     used_any = True
 
         if used_any:
             files_used += 1
 
     if inspect:
-        want = dataset_filter if dataset_filter else "ALL"
-        print(f"\nScanned {files_scanned} JSON files; usable for plot (dataset={want}): {files_used}")
+        print(f"[SUMMARY] scanned={files_scanned}, used={files_used} in {dir_path}")
 
-    if not rows:
-        return pd.DataFrame(columns=[
-            "dataset", "algorithm_display", "measure", "seed", "client_id",
-            "iteration", "accuracy", "client_net_type_name", "alpha_dich"
-        ])
-    return pd.DataFrame(rows)
+    cols = [
+        "dataset","algorithm_display","measure","seed","client_id",
+        "iteration","accuracy","client_net_type_name","alpha_dich","_path","algorithm"
+    ]
+    return pd.DataFrame(rows, columns=cols) if rows else pd.DataFrame(columns=cols)
 
-# ---------- Color/linestyle utilities ----------
+# --------------------- styling helpers ---------------------
+
 _mapl_label_re = re.compile(r"^MAPL_(?P<variant>[CS])-(?P<x>.+)$")
-
 def _extract_mapl_x(label: str) -> Optional[str]:
-    m = _mapl_label_re.match(label)
-    return m.group("x") if m else None
-
+    m = _mapl_label_re.match(label); return m.group("x") if m else None
 def _extract_mapl_variant(label: str) -> Optional[str]:
-    m = _mapl_label_re.match(label)
-    return m.group("variant") if m else None
+    m = _mapl_label_re.match(label); return m.group("variant") if m else None
 
 def _build_color_map(labels: List[str]):
-    """Assign colors so that MAPL_* with the same X share a color; others get distinct colors."""
     cmap = plt.get_cmap("tab10")
-    mapl_x_values = []
-    non_mapl_labels = []
+    mapl_x_values, non_mapl = [], []
     for lab in labels:
         x = _extract_mapl_x(lab)
-        if x is not None:
-            mapl_x_values.append(x)
-        else:
-            non_mapl_labels.append(lab)
-    unique_x = list(dict.fromkeys(mapl_x_values))  # preserve order
-
-    color_by_x: Dict[str, Any] = {x: cmap(i % 10) for i, x in enumerate(unique_x)}
+        (mapl_x_values if x is not None else non_mapl).append(x or lab)
+    unique_x = list(dict.fromkeys([x for x in mapl_x_values]))  # preserve order
+    color_by_x = {x: cmap(i % 10) for i, x in enumerate(unique_x)}
     color_by_label: Dict[str, Any] = {}
-
-    # First map all MAPL labels by their X
     for lab in labels:
         x = _extract_mapl_x(lab)
-        if x is not None:
-            color_by_label[lab] = color_by_x[x]
-
-    # Then assign remaining colors to non-MAPL labels
-    next_color_idx = len(unique_x)
+        if x is not None: color_by_label[lab] = color_by_x[x]
+    next_idx = len(unique_x)
     for lab in labels:
         if lab not in color_by_label:
-            color_by_label[lab] = cmap(next_color_idx % 10)
-            next_color_idx += 1
-
+            color_by_label[lab] = cmap(next_idx % 10)
+            next_idx += 1
     return color_by_label
 
 def _linestyle_for(label: str) -> str:
     v = _extract_mapl_variant(label)
-    if v == "S":
-        return "-"   # solid
-    if v == "C":
-        return "--"  # dashed
-    return "-"       # default solid for non-MAPL
+    if v == "S": return "-"
+    if v == "C": return "--"
+    return "-"
 
-# ---------- Plotting (Figure 1: faceted by client_net_type_name, CIFAR100 only) ----------
-def plot_faceted_by_client_net(df: pd.DataFrame, outdir: Path):
-    if df.empty:
-        print("[WARN] No usable rows to plot.")
-        return
-    if "client_net_type_name" not in df.columns:
-        print("[WARN] No 'client_net_type_name' field found; skipping faceted figure.")
-        return
+# --------------------- helpers for combined figures ---------------------
 
-    # Precompute per-label colors globally so they stay consistent across facets
-    all_labels = sorted(df["algorithm_display"].unique())
+def _concat_or_empty(frames: List[pd.DataFrame]) -> pd.DataFrame:
+    frames = [f for f in frames if f is not None and not f.empty]
+    return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame(
+        columns=["dataset","algorithm_display","measure","seed","client_id",
+                 "iteration","accuracy","client_net_type_name","alpha_dich","_path","algorithm"]
+    )
+
+def _load_subfig_df(subfig_dir: Path, inspect: bool) -> pd.DataFrame:
+    """Load and concat all algorithm folders under one subfig directory into a single DataFrame."""
+    alg_dirs = [a for a in sorted(subfig_dir.iterdir()) if a.is_dir()]
+    frames = []
+    for alg_dir in alg_dirs:
+        frames.append(load_rows_from_dir(alg_dir, inspect=inspect, alg_hint=alg_dir.name))
+    return _concat_or_empty(frames)
+
+def _legend_from_axes_row(axes):
+    handles, labels = [], []
+    for a in axes:
+        h, l = a.get_legend_handles_labels()
+        handles += h; labels += l
+    seen = set()
+    uniq = [(h, l) for h, l in zip(handles, labels) if not (l in seen or seen.add(l))]
+    return [h for h,_ in uniq], [l for _,l in uniq]
+
+# --------------------- plotting (ONE FIGURE per FIGSET) ---------------------
+
+def figure_diff_benchmarks(figset_dir: Path, out_root: Path, *, alpha_value: int, inspect: bool):
+    """One ROW, each subplot is a subfig folder; independent Y axes, one legend."""
+    if not figset_dir.exists():
+        print(f"[SKIP] {figset_dir} (missing)"); return
+
+    subfigs = [d for d in sorted(figset_dir.iterdir()) if d.is_dir()]
+    if not subfigs:
+        print(f"[WARN] No subfig folders under {figset_dir}"); return
+
+    # Load all once
+    loaded = [(sf, _load_subfig_df(sf, inspect)) for sf in subfigs]
+    # Filter & keep only non-empty after filtering condition
+    filtered = []
+    for sf, df in loaded:
+        if df.empty:
+            continue
+        sub = df[
+                 (df["alpha_dich"] == alpha_value)]
+        if not sub.empty:
+            filtered.append((sf, sub))
+    if not filtered:
+        print(f"[WARN] No rows for rndWeak & alpha={alpha_value} in {figset_dir}."); return
+
+    # Limit to 4 subplots max (as requested)
+    filtered = filtered[:4]
+    n = len(filtered)
+
+    # Build labels/colors globally (consistent colors across panels)
+    all_labels = sorted(pd.concat([x[1] for x in filtered])["algorithm_display"].astype(str).unique().tolist())
     color_by_label = _build_color_map(all_labels)
 
-    # Aggregate: mean across clients & seeds per (label, iteration, client_net_type_name)
-    grp = (
-        df.groupby(["client_net_type_name", "algorithm_display", "iteration"], dropna=False)["accuracy"]
-          .mean()
-          .reset_index()
-          .rename(columns={"accuracy": "avg_accuracy"})
-    )
+    fig_w = max(5.0 * n, 5.0)
+    fig, axes = plt.subplots(1, n, figsize=(fig_w, 4.5), sharex=False, sharey=False, squeeze=False)
+    axes = axes.flatten()
 
-    nets = sorted(grp["client_net_type_name"].unique(), key=lambda x: (str(x).lower() if x is not None else ""))
-    n = len(nets)
-    if n == 0:
-        print("[WARN] No unique client_net_type_name values found.")
-        return
+    for ax, (sf, df) in zip(axes, filtered):
+        # If multiple datasets are present within this subfig, prefer CIFAR100; else use the most frequent dataset
+        ds_counts = df["dataset"].astype(str).value_counts()
+        dataset_choice = "CIFAR100" if "CIFAR100" in ds_counts.index else ds_counts.index[0]
 
-    # Compute global x/y limits for consistent scales across facets
-    global_xmin = int(grp["iteration"].min())
-    global_xmax = int(grp["iteration"].max())
-    global_ymin = float(grp["avg_accuracy"].min())
-    global_ymax = float(grp["avg_accuracy"].max())
-
-    # One row, n columns; share both axes
-    ncols = n
-    nrows = 1
-    fig, axes = plt.subplots(
-        nrows=nrows, ncols=ncols, figsize=(5.0 * ncols, 4.0),
-        sharex=True, sharey=True, squeeze=False
-    )
-    axes_flat = axes.flatten()
-
-    for ax, net in zip(axes_flat, nets):
-        sub = grp[grp["client_net_type_name"] == net]
-        labels_here = sorted(sub["algorithm_display"].unique())
-
-        for lab in labels_here:
-            sub_lab = sub[sub["algorithm_display"] == lab].sort_values("iteration")
-            ax.plot(
-                sub_lab["iteration"],
-                sub_lab["avg_accuracy"],
-                marker=None,           # curves only
-                linewidth=2.0,
-                label=str(lab),
-                color=color_by_label.get(lab, None),
-                linestyle=_linestyle_for(lab),
-            )
-
-        ax.set_title(TITLE_MAP.get(str(net), str(net)))
-        ax.grid(False)
-        ax.set_xlim(global_xmin, global_xmax)
-        ax.set_ylim(global_ymin, global_ymax)
-
-    # Hide any unused axes
-    for ax in axes_flat[len(nets):]:
-        ax.axis("off")
-
-    # Shared axis labels
-    try:
-        fig.supxlabel("Iteration")
-        fig.supylabel("Average Accuracy")
-    except Exception:
-        axes_flat[0].set_ylabel("Average Accuracy")
-        axes_flat[-1].set_xlabel("Iteration")
-
-    # De-duplicated legend
-    handles, labels_leg = [], []
-    for a in axes_flat[:n]:
-        h, l = a.get_legend_handles_labels()
-        handles += h; labels_leg += l
-    seen = set()
-    uniq = [(h, l) for h, l in zip(handles, labels_leg) if not (l in seen or seen.add(l))]
-
-    fig.tight_layout(rect=[0.0, 0.0, 1.0, 0.80])  # reserve top
-    if uniq:
-        fig.legend(
-            [h for h, _ in uniq], [l for _, l in uniq],
-            loc="upper center", ncol=min(4, len(uniq)), frameon=False, bbox_to_anchor=(0.5, 0.92)
+        g = (
+            df[df["dataset"].astype(str) == dataset_choice]
+            .groupby(["algorithm_display","iteration"], dropna=False)["accuracy"]
+            .mean()
+            .reset_index()
+            .rename(columns={"accuracy":"avg_accuracy"})
+            .sort_values(["algorithm_display","iteration"])
         )
 
-    outdir.mkdir(parents=True, exist_ok=True)
-    outfile = outdir / "algorithms_avg_accuracy_by_client_net_type.pdf"
-    fig.savefig(outfile, bbox_inches="tight")
-    plt.close(fig)
-    print(f"[OK] Saved figure: {outfile}")
-
-# ---------- Plotting (Figure 2: rndWeak only, faceted by dataset, independent y-axes, alpha filter) ----------
-def plot_rndweak_by_dataset_alpha(df: pd.DataFrame, outdir: Path, alpha_value: int):
-    if df.empty:
-        print("[WARN] No usable rows to plot for rndWeak-by-dataset.")
-        return
-
-    need_cols = {"dataset", "client_net_type_name", "alpha_dich"}
-    if not need_cols.issubset(df.columns):
-        missing = need_cols - set(df.columns)
-        print(f"[WARN] Missing columns for rndWeak figure: {missing}; skipping.")
-        return
-
-    # Filter
-    sub = df[(df["client_net_type_name"].astype(str) == "rndWeak") & (df["alpha_dich"] == alpha_value)]
-    if sub.empty:
-        print(f"[WARN] No rows where client_net_type_name='rndWeak' and alpha_dich=={alpha_value}.")
-        return
-
-    # Aggregate: mean across clients & seeds per (dataset, label, iteration)
-    grp = (
-        sub.groupby(["dataset", "algorithm_display", "iteration"], dropna=False)["accuracy"]
-           .mean()
-           .reset_index()
-           .rename(columns={"accuracy": "avg_accuracy"})
-    )
-
-    datasets = sorted(grp["dataset"].unique(), key=lambda x: (str(x).lower() if x is not None else ""))
-    n = len(datasets)
-    if n == 0:
-        print("[WARN] No datasets found for rndWeak figure.")
-        return
-
-    # Colors: consistent across datasets
-    all_labels = sorted(grp["algorithm_display"].unique())
-    color_by_label = _build_color_map(all_labels)
-
-    # Grid: choose 2 columns for nicer layout
-    ncols = 2 if n >= 2 else 1
-    nrows = math.ceil(n / ncols)
-    fig, axes = plt.subplots(nrows=nrows, ncols=ncols, figsize=(6.0 * ncols, 4.2 * nrows), squeeze=False)
-    axes_flat = axes.flatten()
-
-    for ax, ds in zip(axes_flat, datasets):
-        gds = grp[grp["dataset"] == ds]
-        labels_here = sorted(gds["algorithm_display"].unique())
-        for lab in labels_here:
-            sub_lab = gds[gds["algorithm_display"] == lab].sort_values("iteration")
-            ax.plot(
-                sub_lab["iteration"],
-                sub_lab["avg_accuracy"],
-                marker=None,
-                linewidth=2.0,
-                label=str(lab),
-                color=color_by_label.get(lab, None),
-                linestyle=_linestyle_for(lab),
-            )
-        ax.set_title(str(ds))
+        for lab in sorted(g["algorithm_display"].astype(str).unique().tolist()):
+            sub_lab = g[g["algorithm_display"].astype(str) == lab]
+            ax.plot(sub_lab["iteration"], sub_lab["avg_accuracy"],
+                    marker=None, linewidth=2.0, label=str(lab),
+                    color=color_by_label.get(lab, None), linestyle=_linestyle_for(lab))
+        ax.set_title(f"{dataset_choice}")
         ax.set_xlabel("Iteration")
         ax.set_ylabel("Average Accuracy")
         ax.grid(False)
 
-    # Hide any unused axes
-    for ax in axes_flat[len(datasets):]:
-        ax.axis("off")
-
-    # Single de-duplicated legend
-    handles, labels_leg = [], []
-    for a in axes_flat[:n]:
-        h, l = a.get_legend_handles_labels()
-        handles += h; labels_leg += l
-    seen = set()
-    uniq = [(h, l) for h, l in zip(handles, labels_leg) if not (l in seen or seen.add(l))]
-
+    # One legend
+    h, l = _legend_from_axes_row(axes)
     fig.tight_layout(rect=[0.0, 0.0, 1.0, 0.82])
-    if uniq:
-        fig.legend(
-            [h for h, _ in uniq], [l for _, l in uniq],
-            loc="upper center", ncol=min(4, len(uniq)), frameon=False, bbox_to_anchor=(0.5, 0.98)
+    if h:
+        fig.legend(h, l, loc="upper center", ncol=min(6, len(h)), frameon=False, bbox_to_anchor=(0.5, 0.98))
+
+    outfile = out_root /  f"{figset_dir.name}.pdf"
+    _savefig_longpath(fig, outfile); plt.close(fig)
+    print(f"[OK] Saved: {outfile}")
+
+def figure_diff_clients_nets(figset_dir: Path, out_root: Path, *, inspect: bool):
+    """One ROW, each subplot is a subfig folder; SHARED Y axis, one legend."""
+    if not figset_dir.exists():
+        print(f"[SKIP] {figset_dir} (missing)"); return
+
+    subfigs = [d for d in sorted(figset_dir.iterdir()) if d.is_dir()]
+    if not subfigs:
+        print(f"[WARN] No subfig folders under {figset_dir}"); return
+
+    # Load all once
+    loaded = [(sf, _load_subfig_df(sf, inspect)) for sf in subfigs]
+    loaded = [(sf, df) for sf, df in loaded if not df.empty]
+    if not loaded:
+        print(f"[WARN] No data for client_net_type row figure."); return
+
+    # Prefer CIFAR100 rows for consistency
+    def _prefer_cifar(df: pd.DataFrame) -> pd.DataFrame:
+        return df[df["dataset"].astype(str).str.lower() == "cifar100"] if (df["dataset"].astype(str).str.lower() == "cifar100").any() else df
+
+    loaded = [(sf, _prefer_cifar(df)) for sf, df in loaded if not _prefer_cifar(df).empty]
+    if not loaded:
+        print(f"[WARN] No usable rows (after CIFAR100 preference) for {figset_dir}."); return
+
+    # Limit to 4 subplots max (as requested)
+    loaded = loaded[:4]
+    n = len(loaded)
+
+    # Global colors by algorithm (consistent across subplots)
+    all_labels = sorted(pd.concat([x[1] for x in loaded])["algorithm_display"].astype(str).unique().tolist())
+    color_by_label = _build_color_map(all_labels)
+
+    fig_w = max(5.0 * n, 5.0)
+    fig, axes = plt.subplots(1, n, figsize=(fig_w, 4.5), sharex=True, sharey=True, squeeze=False)
+    axes = axes.flatten()
+
+    # Compute global y-limits (shared y)
+    all_grp = []
+    for _, df in loaded:
+        g = (df.groupby(["algorithm_display","iteration"], dropna=False)["accuracy"]
+                .mean().reset_index().rename(columns={"accuracy":"avg_accuracy"}))
+        all_grp.append(g)
+    big = pd.concat(all_grp, ignore_index=True)
+    ymin = float(big["avg_accuracy"].min())
+    ymax = float(big["avg_accuracy"].max())
+
+    for ax, (sf, df) in zip(axes, loaded):
+        g = (
+            df.groupby(["algorithm_display","iteration"], dropna=False)["accuracy"]
+              .mean().reset_index().rename(columns={"accuracy":"avg_accuracy"})
+              .sort_values(["algorithm_display","iteration"])
         )
+        # Optional: if you want to show the client_net facet in the title (not faceting inside),
+        # show the dominant client_net_type_name in this subfig
+        dom_net = df["client_net_type_name"].astype(str).value_counts().index[0] if "client_net_type_name" in df.columns and not df.empty else "clients"
+        dom_net_disp = TITLE_MAP.get(dom_net, dom_net)
 
-    outdir.mkdir(parents=True, exist_ok=True)
-    outfile = outdir / f"algorithms_avg_accuracy_rndWeak_by_dataset_alpha{alpha_value}.pdf"
-    fig.savefig(outfile, bbox_inches="tight")
-    plt.close(fig)
-    print(f"[OK] Saved figure: {outfile}")
+        for lab in sorted(g["algorithm_display"].astype(str).unique().tolist()):
+            sub_lab = g[g["algorithm_display"].astype(str) == lab]
+            ax.plot(sub_lab["iteration"], sub_lab["avg_accuracy"],
+                    marker=None, linewidth=2.0, label=str(lab),
+                    color=color_by_label.get(lab, None), linestyle=_linestyle_for(lab))
+        ax.set_title(f"{dom_net_disp}")
+        ax.set_xlabel("Iteration")
+        ax.set_ylabel("Average Accuracy")
+        ax.grid(False)
+        ax.set_ylim(ymin, ymax)
 
-# ---------- CLI ----------
+    # One legend
+    h, l = _legend_from_axes_row(axes)
+    fig.tight_layout(rect=[0.0, 0.0, 1.0, 0.82])
+    if h:
+        fig.legend(h, l, loc="upper center", ncol=min(6, len(h)), frameon=False, bbox_to_anchor=(0.5, 0.98))
+
+    outfile = out_root /  f"{figset_dir.name}.pdf"
+    _savefig_longpath(fig, outfile); plt.close(fig)
+    print(f"[OK] Saved: {outfile}")
+
+# --------------------- CLI ---------------------
+
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--root", type=Path, default=Path("results"), help="Root results folder")
-    ap.add_argument("--figdir", type=Path, default=Path("figures"), help="Where to save the PDFs")
-    ap.add_argument("--inspect", action="store_true", help="Print per-file detected paths/keys")
-    ap.add_argument("--alpha", type=int, default=5, help="alpha_dich value to filter for rndWeak-by-dataset figure")
+    ap.add_argument("--root", type=Path, default=Path("results"), help="Root results folder (contains figure-set folders)")
+    ap.add_argument("--figdir", type=Path, default=Path("figures"), help="Where to save PDFs")
+
+    ap.add_argument("--inspect", action="store_true", help="Print detected paths/keys while loading")
+
     args = ap.parse_args()
 
-    # Figure 1 (CIFAR100 only)
-    df_cifar100 = load_rows(args.root, dataset_filter="CIFAR100", inspect=args.inspect)
-    print(f"[CIFAR100] Loaded rows: {len(df_cifar100):,}")
-    if not args.inspect and not df_cifar100.empty:
-        plot_faceted_by_client_net(df_cifar100, args.figdir)
-
-    # Figure 2 (all datasets, then filtered inside the plot function)
-    df_all = load_rows(args.root, dataset_filter=None, inspect=False if args.inspect else False)
-    print(f"[ALL DATASETS] Loaded rows: {len(df_all):,}")
-    if not args.inspect and not df_all.empty:
-        plot_rndweak_by_dataset_alpha(df_all, args.figdir, alpha_value=args.alpha)
+    figure_diff_clients_nets(args.root / "diff_clients_nets", args.figdir, inspect=args.inspect)
+    figure_diff_benchmarks(args.root / "diff_benchmarks_05", args.figdir, alpha_value=5, inspect=args.inspect)
+    figure_diff_benchmarks(args.root / "same_client_nets", args.figdir, alpha_value=5, inspect=args.inspect)
 
 if __name__ == "__main__":
     main()
