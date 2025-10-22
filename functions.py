@@ -1,4 +1,5 @@
 import copy
+import enum
 import numbers
 import os
 import shutil
@@ -988,58 +989,42 @@ except Exception:
     torch = None
 
 
-def _to_serializable(obj):
-    """
-    Robust fallback for json.dump(default=...):
-    - torch.Tensor -> list
-    - numpy arrays/scalars -> list/py scalar
-    - enums -> name or value
-    - pathlib.Path -> str
-    - objects with __dict__ -> dict
-    """
-    # torch
-    if torch is not None:
-        if isinstance(obj, (torch.Tensor,)):
-            return obj.detach().cpu().tolist()
-        if isinstance(obj, (torch.device,)):
-            return str(obj)
+def _to_serializable(x):
+    """Recursively convert objects to JSON-safe types."""
+    # Primitives
+    if x is None or isinstance(x, (bool, int, float, str)):
+        return x
 
-    # numpy
+    # Dicts (force string keys)
+    if isinstance(x, dict):
+        out = {}
+        for k, v in x.items():
+            key = k if isinstance(k, str) else str(k)
+            out[key] = _to_serializable(v)
+        return out
+
+    # Iterables
+    if isinstance(x, (list, tuple, set)):
+        return [_to_serializable(v) for v in x]
+
+    # NumPy
     if np is not None:
-        if isinstance(obj, (np.ndarray,)):
-            return obj.tolist()
-        if isinstance(obj, (np.generic,)):
-            return obj.item()
+        if isinstance(x, np.generic):   # e.g., np.int64
+            return x.item()
+        if isinstance(x, np.ndarray):
+            return x.tolist()
 
-    # enums
-    if isinstance(obj, enum.Enum):
-        return getattr(obj, "name", obj.value)
+    # PyTorch
+    if torch is not None:
+        if isinstance(x, torch.Tensor):
+            return x.detach().cpu().tolist()
 
-    # pathlib
-    if isinstance(obj, Path):
-        return str(obj)
+    # Objects with __dict__
+    if hasattr(x, "__dict__"):
+        return _to_serializable(vars(x))
 
-    # sets/tuples
-    if isinstance(obj, (set, tuple)):
-        return list(obj)
-
-    # objects with a to_json / to_dict method
-    for meth in ("to_json", "to_dict", "__json__", "__data__"):
-        if hasattr(obj, meth) and callable(getattr(obj, meth)):
-            try:
-                return getattr(obj, meth)()
-            except Exception:
-                pass
-
-    # generic objects
-    if hasattr(obj, "__dict__"):
-        try:
-            return dict(obj.__dict__)
-        except Exception:
-            pass
-
-    # last resort: string
-    return str(obj)
+    # Fallback
+    return repr(x)
 
 
 def to_json_dict(obj) -> dict:
@@ -1084,58 +1069,35 @@ def _normalize_target(path: Union[str, Path]) -> Path:
 
 
 
-
-def _slugify(x) -> str:
-    """
-    Conservative slugify: ASCII, alnum + underscores only.
-    Keeps existing strings mostly intact while staying filesystem-safe.
-    """
-    s = str(x)
-    out = []
-    for ch in s:
-        if ch.isalnum():
-            out.append(ch)
-        elif ch in ("-", "_"):
-            out.append(ch)
-        else:
-            out.append("_")
-    # collapse consecutive underscores
-    slug = []
-    prev_us = False
-    for ch in out:
-        if ch == "_" and prev_us:
-            continue
-        prev_us = (ch == "_")
-        slug.append(ch)
-    return "".join(slug).strip("_") or "NA"
+# ============ path helpers for results/seed/alg/alpha ============
+def _slugify(v) -> str:
+    """Filesystem-safe string: keep letters, digits, _, -, ."""
+    s = str(v).strip().replace(" ", "_")
+    s = re.sub(r"[^A-Za-z0-9._-]", "", s)
+    s = re.sub(r"[_-]{2,}", "_", s)
+    return s or "unknown"
 
 
-def _fmt_alpha(alpha) -> str:
-    """
-    Formats alpha-like values compactly (e.g., 0.5000 -> 0.5).
-    Leaves non-numerics as-is.
-    """
-    if alpha is None:
-        return "None"
-    if isinstance(alpha, numbers.Number):
-        # show up to 6 significant digits without trailing zeros
-        s = f"{alpha:.6g}"
-        return s
-    return _slugify(alpha)
-
+def _fmt_alpha(v):
+    """Format alpha for filenames/paths, e.g. 0.5 -> 0p5."""
+    try:
+        f = float(v)
+        s = f"{f:.6g}"      # compact, trims trailing zeros
+        return s.replace(".", "p")
+    except Exception:
+        return _slugify(v)
 
 
 
 import re
 
-def save_record_to_results(record, *, addition_to_name="", filename=None, indent=2):
+def save_record_to_results(record, *, addition_to_name = "",filename= None, indent = 2) :
     """
     Save under:
       results/
-        <prefix_if_any>_data_set{data_set}_alg{alg}_clusters{clusters}_server{server}_clients{clients}_client{client}_alpha{alpha}_ratio{ratio}/
-          <same>_seed{seed}.json
-
-    (seed appears only in the FILENAME, not in the folder)
+        data_set{data_set}_alg{alg}_clusters{clusters}_server{server}_clients{clients}_client{client}_alpha{alpha}_ratio{ratio}/
+          data_set{data_set}_alg{alg}_clusters{clusters}_server{server}_clients{clients}_client{client}_alpha{alpha}_ratio{ratio}_seed{seed}.json
+    (i.e., seed appears only in the FILENAME, not in the folder)
     """
     if not hasattr(record, "summary"):
         raise ValueError("record has no 'summary' attribute")
@@ -1146,7 +1108,7 @@ def save_record_to_results(record, *, addition_to_name="", filename=None, indent
     def _name_or_str(x):
         return "None" if x is None else getattr(x, "name", str(x))
 
-    # Extract (keep your original keys)
+    # Extract
     seed               = summary.get("seed_num", "unknown_seed")
     alg_val            = summary.get("algorithm_selection", "unknown_alg")
     alpha              = summary.get("alpha_dich", "unknown_alpha")
@@ -1175,28 +1137,27 @@ def save_record_to_results(record, *, addition_to_name="", filename=None, indent
     client_s    = _slugify(client_str)
     ratio_s     = _slugify(server_ratio_scaled)
 
-    # Safe prefix with an underscore if provided
-    prefix = (addition_to_name.rstrip("_") + "_") if addition_to_name else ""
-
     # Folder WITHOUT seed
-    folder_name = (
-        f"data_set{data_set_s}_alg{alg_s}_clusters{clusters_s}"
+    folder_ = (
+        f"{addition_to_name}"
+        f"data_set{data_set_s}_alg{alg_s}"
         f"_server{server_s}_clients{clients_s}_client{client_s}"
-        f"_alpha{alpha_s}_ratio{ratio_s}"
+        f"_ratio{ratio_s}"
     )
-    folder_ = f"{prefix}{folder_name}"
 
     out_dir = Path("results") / folder_
-    out_dir.mkdir(parents=True, exist_ok=True)  # ensure exists
+    out_dir.mkdir(parents=True, exist_ok=True)
 
     # Filename WITH seed (default)
     if filename is None:
-        filename = f"{folder_name}_seed{seed_s}.json"
+        filename = f"{folder_}_seed{seed_s}.json"
 
     out_path = out_dir / filename
 
-    # Write
-    return save_json(record, out_path, indent=indent, overwrite=True)
+    # Write (your save_json creates parents too; overwrite to avoid __1, __2 suffixes)
+    save_json(record, out_path, indent=indent, overwrite=True)
+    return out_path
+
 # ---------------- Example usage ----------------
 # record = RecordData(clients=clients, server=server)
 # path = save_record_to_results(record)  # writes under results/<seed>/<alg>/<alpha>/...
@@ -1206,51 +1167,53 @@ import json
 import os
 import time
 
-
-import os
-from pathlib import Path
-import json
-
-def _is_windows() -> bool:
-    return os.name == "nt"
-
-def _win_longpath(p: Path) -> Path:
+def save_json(obj, path, *, indent= 2, overwrite = True):
     """
-    Add the \\?\ prefix on Windows for absolute paths to bypass MAX_PATH.
-    No-op on non-Windows.
-    """
-    if not _is_windows():
-        return p
-    # Make absolute, then prefix if not already
-    abs_str = str(p.resolve())
-    if abs_str.startswith("\\\\?\\"):
-        return Path(abs_str)
-    return Path("\\\\?\\" + abs_str)
+    Serialize `obj` to JSON at `path`.
 
-def save_json(obj, path, indent=2, overwrite=True):
-    """
-    Write JSON safely; ensures parent directory exists.
-    Preserves your folder structure; uses Windows long-path prefix when needed.
-    """
-    path = Path(path)
+    - Creates all missing parent folders.
+    - If `path` is a directory (no filename/suffix), writes to data_YYYYmmdd_HHMMSS.json inside it.
+    - If file exists and overwrite=False, appends __N before the suffix.
+    - Uses to_json_dict(obj) if available; otherwise dumps obj directly.
 
-    # Ensure parent dir exists (with long-path support on Windows)
-    parent = path.parent
-    parent_long = _win_longpath(parent)
-    os.makedirs(str(parent_long), exist_ok=True)  # works for both Win/Posix
+    Returns:
+        Path to the written file.
+    """
+    # Build JSON-safe payload if helper exists
+    try:
+        payload = to_json_dict(obj)
+    except NameError:
+        payload = obj
 
-    # Handle overwrite=False naming if you ever use it
-    if not overwrite and path.exists():
+    p = Path(path)
+
+    # If given a directory, create a timestamped filename inside it
+    if p.suffix == "":
+        ts = time.strftime("%Y%m%d_%H%M%S")
+        p = p / f"data_{ts}.json"
+
+    # Ensure parent folders exist (double-safe on Windows)
+    try:
+        p.parent.mkdir(parents=True, exist_ok=True)
+    except Exception:
+        os.makedirs(p.parent, exist_ok=True)
+
+    if not p.parent.exists():
+        raise FileNotFoundError(f"Parent directory could not be created: {p.parent}")
+
+    # Handle collisions if not overwriting
+    if p.exists() and not overwrite:
+        stem, suf = p.stem, p.suffix
         i = 1
         while True:
-            candidate = path.with_name(f"{path.stem}__{i}{path.suffix}")
-            if not candidate.exists():
-                path = candidate
+            cand = p.with_name(f"{stem}__{i}{suf}")
+            if not cand.exists():
+                p = cand
                 break
             i += 1
 
-    # Open the file with long-path support on Windows
-    path_long = _win_longpath(path)
-    with open(str(path_long), "w", encoding="utf-8") as f:
-        json.dump(obj, f, indent=indent, default=_to_serializable)
-    return path
+    # Write directly to the final file (avoid .tmp to keep path short)
+    with p.open("w", encoding="utf-8") as f:
+        json.dump(payload, f, ensure_ascii=False, indent=indent)
+
+    return p
