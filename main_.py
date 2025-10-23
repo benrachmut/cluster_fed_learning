@@ -592,7 +592,22 @@ if __name__ == '__main__':
     server_data_ratios = [1]#[-4,-3,-2,-1,0,1,2,3,4] #  # 0.96,0.5,0.75,1,1.25,1.5,1.75,2]
     print("epsilons:", cluster_additions)
     print(("alpha_dichts", alpha_dichts))
-    algorithm_selection_list =[AlgorithmSelected.pFedCK]#,AlgorithmSelected.pFedCK,AlgorithmSelected.pFedCK,AlgorithmSelected.COMET,AlgorithmSelected.FedMD]
+    algorithm_selection_list =[AlgorithmSelected.pFedCK]
+
+    #pFedMe = 11
+    #FedBABU = 10
+    #MAPL = 1
+    #FedMD = 2
+    #NoFederatedLearning = 3
+    #PseudoLabelsClusters_with_division = 4
+    #Centralized = 5
+    #FedAvg = 6
+    #pFedCK = 7
+    #COMET = 8
+    #Ditto = 9
+
+
+
     #AlgorithmSelected.FedAvg,AlgorithmSelected.NoFederatedLearning,AlgorithmSelected.pFedCK
     #AlgorithmSelected.PseudoLabelsClusters
     #AlgorithmSelected.COMET,AlgorithmSelected.PseudoLabelsNoServerModel
