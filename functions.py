@@ -920,6 +920,16 @@ def create_clients(client_data_dict,server_data,test_set,server_test_data):
                 c = Client_Ditto(id_=id_, client_data=data_, global_data=server_data,
                                   global_test_data=server_test_data,
                                   local_test_data=test_set[group_name][data_index],lam_ditto = experiment_config.lambda_ditto)
+
+            if experiment_config.algorithm_selection == AlgorithmSelected.FedBABU:
+                c = Client_FedBABU(id_=id_, client_data=data_, global_data=server_data,
+                                 global_test_data=server_test_data,
+                                 local_test_data=test_set[group_name][data_index])
+            if experiment_config.algorithm_selection ==AlgorithmSelected.pFedMe:
+                c = Client_pFedMe(id_=id_, client_data=data_, global_data=server_data,
+                                   global_test_data=server_test_data,
+                                   local_test_data=test_set[group_name][data_index])
+
             ans.append(c)
             clients_test_by_id_dict[id_] = test_set[group_name][data_index]
             data_index = data_index+1

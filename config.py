@@ -144,6 +144,8 @@ class InputConsistency(Enum):
     withInputConsistency = 1
     withoutInputConsistency = 2
 class AlgorithmSelected(Enum):
+    pFedMe = 11
+    FedBABU = 10
     MAPL = 1
     FedMD = 2
     NoFederatedLearning = 3

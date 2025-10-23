@@ -1,16 +1,4 @@
-import pickle
 
-import torch
-import torchvision
-import torchvision.transforms as transforms
-from torch import nn, optim
-from torch.utils.data import DataLoader, random_split
-from torch.utils.data.datapipes.dataframe.dataframe_wrapper import iterate
-from torchvision.datasets import CIFAR10
-
-import config
-
-from config import *
 from functions import *
 from entities import *
 
@@ -82,7 +70,7 @@ def clients_and_server_use_pseudo_labels():
 
 
 def run_Ditto():
-    for net_type in [NetsType.C_Mobile_S_alex]:
+    for net_type in homo_models:
         experiment_config.update_net_type(net_type)
         for net_cluster_technique in net_cluster_technique_list:
             experiment_config.net_cluster_technique = net_cluster_technique
@@ -128,7 +116,7 @@ def run_Ditto():
 
 def run_FedAvg():
 
-    for net_type in [NetsType.C_Mobile_S_alex]:
+    for net_type in homo_models:
         experiment_config.update_net_type(net_type)
         for net_cluster_technique in net_cluster_technique_list:
             experiment_config.net_cluster_technique = net_cluster_technique
@@ -171,6 +159,156 @@ def run_FedAvg():
                                                        addition_to_name="lam_" + str(experiment_config.lambda_ditto))
 
 
+
+
+def _clone_state_dict(sd):
+    return {k: v.detach().clone() for k, v in sd.items()}
+
+def _assign_state_dict_(model, sd):
+    cur = model.state_dict()
+    for k, v in sd.items():
+        cur[k].copy_(v.to(cur[k].dtype).to(cur[k].device))
+    model.load_state_dict(cur)
+
+def run_PFedMe():
+
+    for net_type in [NetsType.C_Mobile_S_alex]:
+        experiment_config.update_net_type(net_type)
+        for net_cluster_technique in net_cluster_technique_list:
+            experiment_config.net_cluster_technique = net_cluster_technique
+            for server_input_tech in [ServerInputTech.mean]:
+                experiment_config.server_input_tech = server_input_tech
+                for cluster_technique in [ClusterTechnique.kmeans]:
+                    experiment_config.cluster_technique = cluster_technique
+                    for server_feedback_technique in server_feedback_technique_list:
+                        experiment_config.server_feedback_technique = server_feedback_technique
+                        for num_cluster in num_cluster_list_fedAVG:
+                            experiment_config.num_clusters = num_cluster
+
+
+
+                            clients, clients_ids, clients_test_by_id_dict = create_clients(clients_train_data_dict,
+                                                                                           server_train_data,
+                                                                                           clients_test_data_dict,
+                                                                                           server_test_data)
+                            server = ServerFedAvg(
+                                id_="server",
+                                global_data=server_train_data,
+                                test_data=server_test_data,
+                                clients_ids=clients_ids,
+                                clients_test_data_dict=clients_test_by_id_dict
+                            )
+
+                            # --- Initialize all clients to the same starting model ---
+                            with torch.no_grad():
+                                w0 = copy.deepcopy(clients[0].model.state_dict())
+
+                            # Initialize all models identically
+                            with torch.no_grad():
+                                w0 = copy.deepcopy(clients[0].model.state_dict())
+                            for c in clients:
+                                _assign_state_dict_(c.model, w0)
+                                c.global_sd = _clone_state_dict(w0)
+                                c.personal_sd = _clone_state_dict(w0)
+
+
+
+                            # Optionally set data-size weights for server averaging (if you track them)
+                            # server.client_num_examples = {c.id_: len(c.local_data) for c in clients}
+
+                            # ---------------- Main FL loop ----------------
+                            for t in range(experiment_config.iterations):
+                                print("----------------------------iter number:", t)
+
+                                # Each client does: load body -> train body (head frozen) -> send body -> personalize head -> eval
+                                for c in clients:
+                                    c.iteration_context(t)
+
+                                # Collect BODY-ONLY weights to server
+                                for c in clients:
+                                    server.received_weights[c.id_] = c.weights_to_send
+
+                                # Aggregate per cluster and broadcast BODY-ONLY means
+                                server.iterate(t)
+
+                                # Push aggregated BODY-ONLY back to clients
+                                for c in clients:
+                                    c.weights_received = server.weights_to_send[c.id_]
+
+                                # Log
+                                rd = RecordData(clients, server)
+                                save_record_to_results(rd)
+
+def run_FedBABU():
+
+    for net_type in homo_models:
+        experiment_config.update_net_type(net_type)
+        for net_cluster_technique in net_cluster_technique_list:
+            experiment_config.net_cluster_technique = net_cluster_technique
+            for server_input_tech in [ServerInputTech.mean]:
+                experiment_config.server_input_tech = server_input_tech
+                for cluster_technique in [ClusterTechnique.kmeans]:
+                    experiment_config.cluster_technique = cluster_technique
+                    for server_feedback_technique in server_feedback_technique_list:
+                        experiment_config.server_feedback_technique = server_feedback_technique
+                        for num_cluster in num_cluster_list_fedAVG:
+                            experiment_config.num_clusters = num_cluster
+
+
+
+                            clients, clients_ids, clients_test_by_id_dict = create_clients(clients_train_data_dict,
+                                                                                           server_train_data,
+                                                                                           clients_test_data_dict,
+                                                                                           server_test_data)
+                            server = ServerFedBABU(
+                                id_="server",
+                                global_data=server_train_data,
+                                test_data=server_test_data,
+                                clients_ids=clients_ids,
+                                clients_test_data_dict=clients_test_by_id_dict
+                            )
+
+                            # --- Initialize all clients to the same starting model ---
+                            with torch.no_grad():
+                                w0 = copy.deepcopy(clients[0].model.state_dict())
+
+                            for c in clients:
+                                # full model init for identical start
+                                c.model.load_state_dict(w0, strict=True)
+
+                            # Prepare a BODY-ONLY dict for the initial "weights_received"
+                            # (use one client to compute it after model init)
+                            body_sd0 = clients[0]._extract_body_state_dict()
+
+                            for c in clients:
+                                # IMPORTANT: give body-only weights here (NOT full w0)
+                                c.weights_received = copy.deepcopy(body_sd0)
+
+                            # Optionally set data-size weights for server averaging (if you track them)
+                            # server.client_num_examples = {c.id_: len(c.local_data) for c in clients}
+
+                            # ---------------- Main FL loop ----------------
+                            for t in range(experiment_config.iterations):
+                                print("----------------------------iter number:", t)
+
+                                # Each client does: load body -> train body (head frozen) -> send body -> personalize head -> eval
+                                for c in clients:
+                                    c.iteration_context(t)
+
+                                # Collect BODY-ONLY weights to server
+                                for c in clients:
+                                    server.received_weights[c.id_] = c.weights_to_send
+
+                                # Aggregate per cluster and broadcast BODY-ONLY means
+                                server.iterate(t)
+
+                                # Push aggregated BODY-ONLY back to clients
+                                for c in clients:
+                                    c.weights_received = server.weights_to_send[c.id_]
+
+                                # Log
+                                rd = RecordData(clients, server)
+                                save_record_to_results(rd)
 def iterate_fl_clusters(clients,server,net_type,net_cluster_technique,server_input_tech,cluster_technique,server_feedback_technique,
                         num_cluster,weights_for_ps=None,input_consistency=None,epsilon =None):
     for t in range(experiment_config.iterations):
@@ -298,7 +436,7 @@ def run_Centralized():
 
 
 def run_pFedCK():
-    for net_type in [NetsType.C_alex_S_vgg]:
+    for net_type in homo_models:
         experiment_config.update_net_type(net_type)
 
 
@@ -429,6 +567,10 @@ def run_exp_by_algo():
 
     if algorithm_selection == AlgorithmSelected.FedAvg :
         run_FedAvg()
+    if algorithm_selection == AlgorithmSelected.FedBABU:
+        run_FedBABU()
+    if algorithm_selection == AlgorithmSelected.pFedMe:
+        run_PFedMe()
     if algorithm_selection == algorithm_selection.Ditto:
         run_Ditto()
     if algorithm_selection == AlgorithmSelected.pFedCK:
@@ -439,7 +581,7 @@ def run_exp_by_algo():
 
 if __name__ == '__main__':
     print(device)
-    seed_num_list = [1]
+    seed_num_list = [2,3]
     data_sets_list = [DataSet.CIFAR100]
     num_clients_list = [25]#[25]
     num_opt_clusters_list =[5] #[5]
@@ -456,7 +598,10 @@ if __name__ == '__main__':
     #AlgorithmSelected.COMET,AlgorithmSelected.PseudoLabelsNoServerModel
 
     # parameters for PseudoLabelsClusters
-    nets_types_list_PseudoLabelsClusters  = [NetsType.C_Mobile_S_VGG]#,NetsType.C_alex_S_vgg,NetsType.C_alex_S_alex]#,NetsType.C_alex_S_vgg]# ,NetsType.C_alex_S_vgg]#,NetsType.C_alex_S_vgg]#,NetsType.C_alex_S_vgg]
+    nets_types_list_PseudoLabelsClusters  = [NetsType.C_Mobile_S_alex]#,NetsType.C_alex_S_vgg,NetsType.C_alex_S_alex]#,NetsType.C_alex_S_vgg]# ,NetsType.C_alex_S_vgg]#,NetsType.C_alex_S_vgg]#,NetsType.C_alex_S_vgg]
+    homo_models =nets_types_list_PseudoLabelsClusters
+
+
     net_cluster_technique_list = [NetClusterTechnique.multi_model]#,NetClusterTechnique.multi_head]
     server_input_tech_list = [ServerInputTech.max]
     cluster_technique_list = [ClusterTechnique.greedy_elimination_L2]#[ClusterTechnique.greedy_elimination_cross_entropy]#[ClusterTechnique.manual_single_iter,ClusterTechnique.manual,ClusterTechnique.kmeans]
@@ -470,16 +615,14 @@ if __name__ == '__main__':
     net_cluster_technique_Centralized_list = [NetClusterTechnique.multi_model]#,NetClusterTechnique.multi_head]
 
     #NoFederatedLearning
-    nets_types_list_NoFederatedLearning  = [NetsType.C_alex_S_alex]#,NetsType.C_alex_S_vgg]#,NetsType.C_alex_S_vgg]
-
+    nets_types_list_NoFederatedLearning  = nets_types_list_PseudoLabelsClusters#,NetsType.C_alex_S_vgg]#,NetsType.C_alex_S_vgg]
 
 
     # parameters for fedAvg
     num_cluster_list_fedAVG = [1]
-    nets_types_list_fedAVG  = [NetsType.C_Mobile_S_alex] # dont touch
+    #nets_types_list_fedAVG  = [NetsType.C_Mobile_S_alex]  #run_FedBABU,FedAvg,Ditto
     cluster_technique_list_fedAVG = [ClusterTechnique.kmeans] # we need this because of logic in num_cluster_list_fedAVG
-    lambda_dittos = [1,0.5,0.8,1.2,1.5,2]
-
+    lambda_dittos = [1]
 
 
     ##### create Data #######
@@ -517,3 +660,6 @@ if __name__ == '__main__':
                                     torch.manual_seed(experiment_config.seed_num)
 
                                     run_exp_by_algo()
+
+
+

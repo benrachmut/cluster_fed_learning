@@ -1283,18 +1283,15 @@ class Client(LearningEntity):
 class Client_pFedCK(Client):
     def __init__(self, id_, client_data, global_data, global_test_data, local_test_data):
         super().__init__(id_, client_data, global_data, global_test_data, local_test_data)
-        self.personalized_model = MobileNetV2Server (num_classes=experiment_config.num_classes).to(device)
-        self.interactive_model = MobileNetV2Server(num_classes=experiment_config.num_classes).to(device)
+        self.personalized_model = self.get_client_model()
+        self.interactive_model = self.get_client_model()
         self.initial_state = None  # To store interactive model's state before training
 
     def set_models(self, personalized_state, interactive_state):
         self.personalized_model.load_state_dict(personalized_state)
         self.interactive_model.load_state_dict(interactive_state)
 
-
-
-
-    def train(self,t):
+    def train(self, t):
         self.current_iteration = t
 
         # Save initial interactive model state for variation calculation
@@ -1341,15 +1338,19 @@ class Client_pFedCK(Client):
                 # Sync personalized model with updated interactive model
                 self.personalized_model.load_state_dict(self.interactive_model.state_dict())
 
-            print(f"Epoch {epoch+1}/5 | Personalized Loss: {total_loss_personalized/batch_count:.4f} "
-                  f"| Interactive Loss: {total_loss_interactive/batch_count:.4f}")
+            print(f"Epoch {epoch + 1}/5 | Personalized Loss: {total_loss_personalized / batch_count:.4f} "
+                  f"| Interactive Loss: {total_loss_interactive / batch_count:.4f}")
 
-        self.accuracy_per_client_1[t] = self.evaluate_accuracy_single(data_ = self.local_test_set,model=self.personalized_model, k=1)
-        self.accuracy_per_client_5[t] = self.evaluate_accuracy(data_ = self.local_test_set,model=self.personalized_model, k=5)
-        self.accuracy_per_client_10[t] = self.evaluate_accuracy(data_ = self.local_test_set,model=self.personalized_model, k=10)
-        self.accuracy_per_client_100[t] = self.evaluate_accuracy(data_ = self.local_test_set,model=self.personalized_model, k=100)
+        self.accuracy_per_client_1[t] = self.evaluate_accuracy_single(data_=self.local_test_set,
+                                                                      model=self.personalized_model, k=1)
+        self.accuracy_per_client_5[t] = self.evaluate_accuracy(data_=self.local_test_set, model=self.personalized_model,
+                                                               k=5)
+        self.accuracy_per_client_10[t] = self.evaluate_accuracy(data_=self.local_test_set,
+                                                                model=self.personalized_model, k=10)
+        self.accuracy_per_client_100[t] = self.evaluate_accuracy(data_=self.local_test_set,
+                                                                 model=self.personalized_model, k=100)
 
-        print("accuracy_per_client_1",self.accuracy_per_client_1[t])
+        print("accuracy_per_client_1", self.accuracy_per_client_1[t])
         return self.calculate_param_variation()
 
     def calculate_param_variation(self):
@@ -1369,6 +1370,7 @@ class Client_pFedCK(Client):
                 updated_state[key] += variation
         self.interactive_model.load_state_dict(updated_state)
         print(f"Client {self.id_}: Updated interactive model with average parameter variations.")
+
 
 class Client_FedAvg(Client):
     def __init__(self, id_, client_data, global_data, global_test_data, local_test_data):
@@ -2768,6 +2770,7 @@ class Server(LearningEntity):
 
 
 
+
 class Server_pFedCK(Server):
     def __init__(self, id_, global_data, test_data, clients_ids, clients_test_data_dict, clients):
         super().__init__(id_, global_data, test_data, clients_ids, clients_test_data_dict)
@@ -2814,6 +2817,7 @@ class Server_pFedCK(Server):
         cluster_labels = self.cluster_clients(delta_ws, num_clusters=5)
         cluster_avg = self.average_parameter_variations(delta_ws, cluster_labels)
         self.send_avg_delta_to_clients(cluster_avg, cluster_labels)
+
 
 
 class Server_PseudoLabelsClusters_with_division(Server):
@@ -3135,3 +3139,372 @@ class ServerFedAvg(Server):
                 avg[k] = m.to(dtype=weights_list[0][k].dtype)
             return avg
 
+# ---------------- FedBABU: Client & Server ----------------
+# Assumes your imports / globals are already present:
+# import torch, torch.nn as nn, torch.nn.functional as F
+# from torch.utils.data import DataLoader
+# device, experiment_config, DataSet, etc. exist
+# Base classes: Client, Server (or ServerFedAvg)
+
+class Client_FedBABU(Client):
+    """
+    FedBABU client:
+      - In each round, re-init & freeze head, train body only on local CE.
+      - Send only body weights to server.
+      - After server aggregation, optionally fine-tune head only for eval.
+    """
+    def __init__(self, id_, client_data, global_data, global_test_data, local_test_data):
+        super().__init__(id_, client_data, global_data, global_test_data, local_test_data)
+        self.body_keys_cache = None  # set of state_dict keys for "body"
+        self.head_prefixes = None    # tuple of prefixes that define the head subtree in state_dict
+        self.weights_to_send = None
+        self.weights_received = None  # server sends back BODY-ONLY state_dict
+        # identify head subtree once
+        self._identify_head_prefixes()
+
+    # ------ Model partition helpers ------
+    def _identify_head_prefixes(self):
+        """
+        Locate the final nn.Linear layer's qualified name.
+        We'll treat that whole module subtree as the 'head'.
+        Works for AlexNet/VGG/MobileNet etc.; falls back to last Linear seen.
+        """
+        last_linear_name = None
+        for name, module in self.model.named_modules():
+            if isinstance(module, nn.Linear):
+                last_linear_name = name
+        if last_linear_name is None:
+            print("[FedBABU][warn] No Linear head found; treating last module as head.")
+            # Fallback: treat the last module (by traversal order) as head:
+            names = [n for n, _ in self.model.named_modules()]
+            last_linear_name = names[-1] if names else ""
+
+        # Prefix(es) that mark all params/buffers of the head subtree in state_dict
+        self.head_prefixes = (last_linear_name,) if last_linear_name != "" else tuple()
+
+        # Pre-compute body keys
+        sd = self.model.state_dict()
+        head_keys = set()
+        for k in sd.keys():
+            if any(k == p or k.startswith(p + ".") for p in self.head_prefixes):
+                head_keys.add(k)
+        self.body_keys_cache = set(sd.keys()) - head_keys
+
+        if len(self.body_keys_cache) == 0:
+            print("[FedBABU][error] Body detected as empty; check model structure.")
+        else:
+            print(f"[FedBABU] Head prefixes: {self.head_prefixes}")
+            print(f"[FedBABU] Body params/buffers: {len(self.body_keys_cache)} / {len(sd)}")
+
+    def _reinit_head(self):
+        """
+        Randomly re-initialize the head module (final classifier).
+        """
+        if not self.head_prefixes:
+            return
+        # find module by name (first prefix)
+        head_name = self.head_prefixes[0]
+        module = dict(self.model.named_modules()).get(head_name, None)
+        if module is None:
+            print("[FedBABU][warn] Head module not found by name; skipping reinit.")
+            return
+        for m in module.modules():
+            if isinstance(m, nn.Linear):
+                nn.init.normal_(m.weight, mean=0.0, std=0.02)
+                if m.bias is not None:
+                    nn.init.zeros_(m.bias)
+
+    def _freeze_head_unfreeze_body(self):
+        """
+        Freeze head (requires_grad=False) and unfreeze body (True).
+        """
+        head_name = self.head_prefixes[0] if self.head_prefixes else None
+        for name, p in self.model.named_parameters():
+            if head_name and (name.startswith(head_name + ".") or name == head_name):
+                p.requires_grad = False
+            else:
+                p.requires_grad = True
+
+    def _freeze_body_unfreeze_head(self):
+        """
+        Freeze body (requires_grad=False) and unfreeze head (True) for personalization.
+        """
+        head_name = self.head_prefixes[0] if self.head_prefixes else None
+        for name, p in self.model.named_parameters():
+            if head_name and (name.startswith(head_name + ".") or name == head_name):
+                p.requires_grad = True
+            else:
+                p.requires_grad = False
+
+    def _extract_body_state_dict(self):
+        """
+        Return a state_dict with only BODY keys.
+        """
+        full = self.model.state_dict()
+        return {k: v.detach().clone() for k, v in full.items() if k in self.body_keys_cache}
+
+    def _load_body_state_dict(self, body_sd):
+        """
+        Load BODY weights from server into current model, leaving head intact.
+        """
+        with torch.no_grad():
+            cur = self.model.state_dict()
+            for k, v in body_sd.items():
+                if k in cur:
+                    cur[k].copy_(v.to(cur[k].dtype).to(cur[k].device))
+            self.model.load_state_dict(cur)
+
+    # ------ One round on the client ------
+    def iteration_context(self, t):
+        self.current_iteration = t
+
+        # Load server-provided body (if any)
+        if self.weights_received is not None:
+            self._load_body_state_dict(self.weights_received)
+
+        # FedBABU step 1: reset + freeze head, train body only
+        self._reinit_head()
+        self._freeze_head_unfreeze_body()
+
+        self._train_body_only()
+
+        # Prepare upload: only body weights
+        self.weights_to_send = self._extract_body_state_dict()
+        total_size = sum(p.numel() * p.element_size() for p in self.weights_to_send.values())
+        self.size_sent[t] = total_size / (1024 * 1024)
+
+        # FedBABU personalization for evaluation: freeze body, fine-tune head only
+        self._freeze_body_unfreeze_head()
+        self._personalize_head_only()
+
+        # Evaluate & store metrics
+        self.accuracy_per_client_1[t]   = self.evaluate_accuracy_single(self.local_test_set, k=1)
+        self.accuracy_per_client_5[t]   = self.evaluate_accuracy(self.local_test_set, k=5)
+        self.accuracy_per_client_10[t]  = self.evaluate_accuracy(self.local_test_set, k=10)
+        self.accuracy_per_client_100[t] = self.evaluate_accuracy(self.local_test_set, k=100)
+
+    # ------ Local training routines ------
+    def _train_body_only(self):
+        """
+        Standard supervised CE on local_data, but optimizer sees ONLY body params.
+        Head is frozen (random), so gradients won't flow into it.
+        """
+        print(f"*** {self} FedBABU body-train (head frozen) ***")
+        loader = DataLoader(self.local_data,
+                            batch_size=experiment_config.batch_size,
+                            shuffle=True, num_workers=0, drop_last=False)
+        self.model.train()
+        criterion = nn.CrossEntropyLoss()
+        # Only params with requires_grad=True are optimized (body)
+        optimizer = torch.optim.Adam(filter(lambda p: p.requires_grad, self.model.parameters()),
+                                     lr=getattr(experiment_config, "learning_rate_fedbabu_body",
+                                                experiment_config.learning_rate_fine_tune_c))
+
+        epochs = getattr(experiment_config, "epochs_num_fedbabu_body",
+                         experiment_config.epochs_num_input_fine_tune_clients)
+        last_loss = float("nan")
+
+        for epoch in range(epochs):
+            self.epoch_count += 1
+            epoch_loss = 0.0
+            for x, y in loader:
+                x, y = x.to(device), y.to(device)
+                optimizer.zero_grad(set_to_none=True)
+                logits = self.model(x)
+                loss = criterion(logits, y)
+                loss.backward()
+                torch.nn.utils.clip_grad_norm_(filter(lambda p: p.requires_grad, self.model.parameters()), 1.0)
+                optimizer.step()
+                epoch_loss += float(loss.item())
+            last_loss = epoch_loss / max(1, len(loader))
+            print(f"[FedBABU][body] epoch {epoch+1}/{epochs} loss {last_loss:.4f}")
+        return last_loss
+
+    def _personalize_head_only(self):
+        """
+        Fine-tune head only (body frozen) on local data for personalization/eval.
+        """
+        print(f"*** {self} FedBABU personalize head-only ***")
+        loader = DataLoader(self.local_data,
+                            batch_size=experiment_config.batch_size,
+                            shuffle=True, num_workers=0, drop_last=False)
+        self.model.train()
+        criterion = nn.CrossEntropyLoss()
+        optimizer = torch.optim.Adam(filter(lambda p: p.requires_grad, self.model.parameters()),
+                                     lr=getattr(experiment_config, "learning_rate_fedbabu_head",
+                                                experiment_config.learning_rate_fine_tune_c))
+
+        epochs = getattr(experiment_config, "epochs_num_fedbabu_head",
+                         max(1, experiment_config.epochs_num_input_fine_tune_clients // 2))
+        last_loss = float("nan")
+
+        for epoch in range(epochs):
+            self.epoch_count += 1
+            epoch_loss = 0.0
+            for x, y in loader:
+                x, y = x.to(device), y.to(device)
+                optimizer.zero_grad(set_to_none=True)
+                logits = self.model(x)
+                loss = criterion(logits, y)
+                loss.backward()
+                torch.nn.utils.clip_grad_norm_(filter(lambda p: p.requires_grad, self.model.parameters()), 1.0)
+                optimizer.step()
+                epoch_loss += float(loss.item())
+            last_loss = epoch_loss / max(1, len(loader))
+            print(f"[FedBABU][head] epoch {epoch+1}/{epochs} loss {last_loss:.4f}")
+        return last_loss
+
+    def __str__(self):
+        return f"Client_FedBABU {self.id_}"
+
+
+class ServerFedBABU(ServerFedAvg):
+    """
+    Same averaging mechanics as ServerFedAvg, but expects *body-only* state_dicts.
+    The .weights_to_send per client is body-only; clients load into body and keep their head.
+    """
+    def iterate(self, t):
+        self.current_iteration = t
+        if len(self.received_weights) != len(self.clients_ids):
+            missing = set(self.clients_ids) - set(self.received_weights.keys())
+            raise RuntimeError(f"ServerFedBABU: missing body weights from clients: {sorted(missing)}")
+
+        # Single cluster or your existing clustering logic:
+        weights_per_cluster, clusters_client_id_dict = self.get_weights_per_cluster(t)
+
+        with torch.no_grad():
+            mean_per_cluster = {}
+            for cluster_id, weight_list in weights_per_cluster.items():
+                cids  = clusters_client_id_dict[cluster_id]
+                sizes = [float(self.client_num_examples.get(cid, 1)) for cid in cids]
+                mean_per_cluster[cluster_id] = self.average_weights(weight_list, sizes)
+
+            self.weights_to_send = {}
+            for cluster_id, cids in clusters_client_id_dict.items():
+                mean_sd = mean_per_cluster[cluster_id]
+                for cid in cids:
+                    self.weights_to_send[cid] = copy.deepcopy(mean_sd)
+
+        self.received_weights = {}
+
+
+
+def _clone_state_dict(sd):
+    return {k: v.detach().clone() for k, v in sd.items()}
+
+def _assign_state_dict_(model, sd):
+    cur = model.state_dict()
+    for k, v in sd.items():
+        cur[k].copy_(v.to(cur[k].dtype).to(cur[k].device))
+    model.load_state_dict(cur)
+
+class Client_pFedMe(Client):
+    """
+    pFedMe client:
+      - Keep two models conceptually:
+          * personalized params x_i  (we keep as state_dict self.personal_sd)
+          * global params w_i        (we keep as state_dict self.global_sd)
+      - Each round:
+          1) Inner loop (K): update x_i by SGD on CE + (λ/2)||x - w||^2
+          2) Meta loop (M):  w_i <- w_i - β (w_i - x_i)
+      - Send: w_i (FULL state_dict)
+      - Receive: server-averaged w (FULL state_dict)
+      - Evaluate with x_i
+    """
+    def __init__(self, id_, client_data, global_data, global_test_data, local_test_data):
+        super().__init__(id_, client_data, global_data, global_test_data, local_test_data)
+        # initialize both copies from current model
+        base_sd = self.model.state_dict()
+        self.personal_sd = _clone_state_dict(base_sd)  # x_i
+        self.global_sd   = _clone_state_dict(base_sd)  # w_i
+
+        self.weights_to_send = None      # full dict (w_i)
+        self.weights_received = None     # full dict (server-averaged w)
+
+        # hyperparams (fallbacks if not in experiment_config)
+        self.pfedme_lambda = getattr(experiment_config, "pfedme_lambda", 15.0)  # λ
+        self.pfedme_K      = getattr(experiment_config, "pfedme_K", 5)         # inner steps
+        self.pfedme_M      = getattr(experiment_config, "pfedme_M", 1)         # meta steps
+        self.pfedme_lr     = getattr(experiment_config, "pfedme_lr", 1e-3)     # inner lr (η)
+        self.pfedme_beta   = getattr(experiment_config, "pfedme_beta", 1.0)    # meta step (β)
+
+        self.batch_size    = getattr(experiment_config, "batch_size", 64)
+
+    # ---- one communication round ----
+    def iteration_context(self, t):
+        self.current_iteration = t
+
+        # 0) Sync local global copy with server-averaged global if provided
+        if self.weights_received is not None:
+            self.global_sd = _clone_state_dict(self.weights_received)
+
+        # 1) INNER LOOP: optimize x_i w.r.t CE + (λ/2)||x - w||^2 (K steps)
+        self._inner_update_personal()
+
+        # 2) META LOOP: pull w_i toward x_i (M times): w <- w - β (w - x)
+        for _ in range(self.pfedme_M):
+            for k in self.global_sd.keys():
+                self.global_sd[k] = self.global_sd[k] - self.pfedme_beta * (self.global_sd[k] - self.personal_sd[k])
+
+        # 3) Upload full global dict (w_i) to server
+        self.weights_to_send = _clone_state_dict(self.global_sd)
+        total_size = sum(p.numel() * p.element_size() for p in self.weights_to_send.values())
+        self.size_sent[t] = total_size / (1024 * 1024)
+
+        # 4) Evaluate using PERSONALIZED params x_i
+        _assign_state_dict_(self.model, self.personal_sd)
+        self.accuracy_per_client_1[t]   = self.evaluate_accuracy_single(self.local_test_set, k=1)
+        self.accuracy_per_client_5[t]   = self.evaluate_accuracy(self.local_test_set, k=5)
+        self.accuracy_per_client_10[t]  = self.evaluate_accuracy(self.local_test_set, k=10)
+        self.accuracy_per_client_100[t] = self.evaluate_accuracy(self.local_test_set, k=100)
+
+    # ---- inner loop helper ----
+    def _inner_update_personal(self):
+        """
+        Do K steps of SGD on:
+            L_i(x) = CE(model(x), y) + (λ/2) ||x - w||^2
+        where x are the model parameters and w are self.global_sd.
+        """
+        loader = DataLoader(self.local_data, batch_size=self.batch_size,
+                            shuffle=True, num_workers=0, drop_last=False)
+
+        # start inner loop from previous personalized params (warm start)
+        _assign_state_dict_(self.model, self.personal_sd)
+        self.model.train()
+        criterion = nn.CrossEntropyLoss()
+        # We'll do manual per-step parameter updates to add the proximal gradient.
+        # Build a map to parameters for fast access
+        params = {n: p for n, p in self.model.named_parameters() if p.requires_grad}
+        optimizer = torch.optim.SGD(params.values(), lr=self.pfedme_lr, momentum=0.0)  # momentum optional
+
+        steps_done = 0
+        for epoch in range(10**9):  # we'll break when K steps reached
+            for x, y in loader:
+                if steps_done >= self.pfedme_K:
+                    break
+                x, y = x.to(device), y.to(device)
+
+                optimizer.zero_grad(set_to_none=True)
+                logits = self.model(x)
+                ce = criterion(logits, y)
+
+                # Add proximal term gradient: λ (θ - w)
+                ce.backward()
+
+                with torch.no_grad():
+                    for name, p in params.items():
+                        if p.grad is None:
+                            continue
+                        # gradient step on CE
+                        p.grad.add_( self.pfedme_lambda * (p.data - self.global_sd[name].to(p.data.device)) )
+                optimizer.step()
+
+                steps_done += 1
+            if steps_done >= self.pfedme_K:
+                break
+
+        # save back personalized params x_i
+        self.personal_sd = _clone_state_dict(self.model.state_dict())
+
+    def __str__(self):
+        return f"Client_pFedMe {self.id_}"
