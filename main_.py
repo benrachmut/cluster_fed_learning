@@ -185,59 +185,41 @@ def run_PFedMe():
                         for num_cluster in num_cluster_list_fedAVG:
                             experiment_config.num_clusters = num_cluster
 
+                            # --- build clients as Client_pFedMe ---
+                            clients, clients_ids, clients_test_by_id_dict = create_clients(
+                                clients_train_data_dict,
+                                server_train_data,
+                                clients_test_data_dict,
+                                server_test_data,
+                            )
 
-
-                            clients, clients_ids, clients_test_by_id_dict = create_clients(clients_train_data_dict,
-                                                                                           server_train_data,
-                                                                                           clients_test_data_dict,
-                                                                                           server_test_data)
-                            server = ServerFedAvg(
+                            server = Server_pFedMe(  # <-- the model-free server class
                                 id_="server",
                                 global_data=server_train_data,
                                 test_data=server_test_data,
                                 clients_ids=clients_ids,
-                                clients_test_data_dict=clients_test_by_id_dict
+                                clients_test_data_dict=clients_test_by_id_dict,
+                                clients=clients
                             )
 
-                            # --- Initialize all clients to the same starting model ---
-                            with torch.no_grad():
-                                w0 = copy.deepcopy(clients[0].model.state_dict())
-
-                            # Initialize all models identically
-                            with torch.no_grad():
-                                w0 = copy.deepcopy(clients[0].model.state_dict())
+                            # --- initialize global and broadcast once (optional; run_round does it anyway) ---
+                            g0 = copy.deepcopy(server.global_state)  # <-- use global_state, not global_model
                             for c in clients:
-                                _assign_state_dict_(c.model, w0)
-                                c.global_sd = _clone_state_dict(w0)
-                                c.personal_sd = _clone_state_dict(w0)
+                                c.set_model_from_global(g0)  # fills c.w_model
 
-
-
-                            # Optionally set data-size weights for server averaging (if you track them)
-                            # server.client_num_examples = {c.id_: len(c.local_data) for c in clients}
-
-                            # ---------------- Main FL loop ----------------
+                            # ---------------- Main FL loop (pFedMe) ----------------
                             for t in range(experiment_config.iterations):
-                                print("----------------------------iter number:", t)
+                                print("---------------------------- iter:", t)
+                                # One round = broadcast global -> each client runs pFedMe local solve -> aggregate
+                                server.run_round(t)  # calls: set_model_from_global -> client.train -> aggregate
 
-                                # Each client does: load body -> train body (head frozen) -> send body -> personalize head -> eval
-                                for c in clients:
-                                    c.iteration_context(t)
+                                # (optional) evaluate global model by instantiating a temp model on demand
+                                # global_top1 = server.eval_global_top1()
 
-                                # Collect BODY-ONLY weights to server
-                                for c in clients:
-                                    server.received_weights[c.id_] = c.weights_to_send
-
-                                # Aggregate per cluster and broadcast BODY-ONLY means
-                                server.iterate(t)
-
-                                # Push aggregated BODY-ONLY back to clients
-                                for c in clients:
-                                    c.weights_received = server.weights_to_send[c.id_]
-
-                                # Log
+                                # log results
                                 rd = RecordData(clients, server)
                                 save_record_to_results(rd)
+
 
 def run_FedBABU():
 
@@ -581,7 +563,7 @@ def run_exp_by_algo():
 
 if __name__ == '__main__':
     print(device)
-    seed_num_list = [3]
+    seed_num_list = [1,2,3]
     data_sets_list = [DataSet.CIFAR100]
     num_clients_list = [25]#[25]
     num_opt_clusters_list =[5] #[5]
@@ -592,7 +574,7 @@ if __name__ == '__main__':
     server_data_ratios = [1]#[-4,-3,-2,-1,0,1,2,3,4] #  # 0.96,0.5,0.75,1,1.25,1.5,1.75,2]
     print("epsilons:", cluster_additions)
     print(("alpha_dichts", alpha_dichts))
-    algorithm_selection_list =[AlgorithmSelected.FedBABU]
+    algorithm_selection_list =[AlgorithmSelected.MAPL]
 
     #pFedMe = 11
     #FedBABU = 10
@@ -613,7 +595,7 @@ if __name__ == '__main__':
     #AlgorithmSelected.COMET,AlgorithmSelected.PseudoLabelsNoServerModel
 
     # parameters for PseudoLabelsClusters
-    nets_types_list_PseudoLabelsClusters  = [NetsType.C_Mobile_S_alex]#,NetsType.C_alex_S_vgg,NetsType.C_alex_S_alex]#,NetsType.C_alex_S_vgg]# ,NetsType.C_alex_S_vgg]#,NetsType.C_alex_S_vgg]#,NetsType.C_alex_S_vgg]
+    nets_types_list_PseudoLabelsClusters  = [NetsType.C_alex_S_vgg]#,NetsType.C_alex_S_vgg,NetsType.C_alex_S_alex]#,NetsType.C_alex_S_vgg]# ,NetsType.C_alex_S_vgg]#,NetsType.C_alex_S_vgg]#,NetsType.C_alex_S_vgg]
     homo_models =nets_types_list_PseudoLabelsClusters
 
 
