@@ -910,7 +910,7 @@ def create_clients(client_data_dict,server_data,test_set,server_test_data):
                                                global_test_data=server_test_data,
                                                local_test_data=test_set[group_name][data_index])
             if experiment_config.algorithm_selection== AlgorithmSelected.FedAvg:
-                c = Client_FedAvg(id_=id_, client_data=data_, global_data=server_data,
+                c = ClientFedAvg(id_=id_, client_data=data_, global_data=server_data,
                                                               global_test_data=server_test_data,
                                                               local_test_data=test_set[group_name][data_index])
             if experiment_config.algorithm_selection == AlgorithmSelected.pFedCK:

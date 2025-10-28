@@ -3,31 +3,24 @@
 """
 make_fig_algorithms_avg_accuracy.py
 
-This builds ONE figure per figset:
+Adds a new figure that facets subplots by `client_net_type._value_`.
 
-results/
-  diff_clients_nets/                 # FIGSET 1 (one figure; 1xN subplots)
-    <subfigureA>/
-      <algorithm1>/*.json
-      <algorithm2>/*.json
-    <subfigureB>/ ...
-  diff_benchmarks_05/                # FIGSET 2 (one figure; 1xN subplots; alpha filter)
-    <subfigureA>/
-      <algorithm1>/*.json
-      <algorithm2>/*.json
-    <subfigureB>/ ...
-  examine_lambda_for_ditto/          # FIGSET 3 (one figure; multiple curves: λ_ditto per curve)
-    *.json or nested folders with *.json
+Existing figsets:
+  - diff_clients_nets/       (row of subplots by subfolder)
+  - diff_benchmarks_05/      (row of subplots by subfolder; alpha filter)
+  - examine_lambda_for_ditto (single figure; curves by λ_ditto)
 
-Outputs (one PDF per figset):
-figures/<FIGSET>/<FIGSET>.pdf
+New figure:
+  - client_net_type_value.pdf (row of subplots by distinct client_net_type._value_ found under a folder)
+
+Outputs:
+  figures/<FIGSET>/<FIGSET>.pdf
 """
 
 from __future__ import annotations
 
 import argparse
 import json
-import math
 import os
 import re
 from pathlib import Path
@@ -39,13 +32,65 @@ import pandas as pd
 Json = Union[Dict[str, Any], List[Any], str, int, float, bool, None]
 
 TITLE_MAP = {
-    "rndNet":    "{Alex, Res, Mobile, Squeeze}",
-    "rndStrong": "{Alex, Res}",
-    "rndWeak":   "{Mobile, Squeeze}",
+    "rndNet":    "{AlexNet, ResNet, MobileNet, SqueezeNet}",
+    "rndStrong": "{AlexNet, ResNet}",
+    "rndWeak":   "{MobileNet, SqueezeNet}",
 }
 
+
+TITLE_NET_MAP = {
+    "ALEXNET":"AlexNet",
+"MobileNet":"MobileNet"
+}
+
+def _net_title_from_map(*candidates: str) -> str:
+    """Return first mapped pretty title from TITLE_NET_MAP using case-insensitive keys; else first non-empty candidate."""
+    for c in candidates:
+        if c is None:
+            continue
+        k = str(c).strip()
+        if not k:
+            continue
+        # exact, then case-insensitive
+        if k in TITLE_NET_MAP:
+            return TITLE_NET_MAP[k]
+        kl = k.lower()
+        for ref in TITLE_NET_MAP.keys():
+            if ref.lower() == kl:
+                return TITLE_NET_MAP[ref]
+    # fallback to first non-empty raw candidate
+    for c in candidates:
+        if c and str(c).strip():
+            return str(c).strip()
+    return "clients"
+def _load_any_jsons_under(root_dir: Path, inspect: bool) -> pd.DataFrame:
+    """
+    Load rows from:
+      - JSONs directly under root_dir
+      - JSONs under immediate subfolders (treated as alg folders)
+      - JSONs under two-level nesting: subfig folders -> alg folders
+    """
+    frames: List[pd.DataFrame] = []
+
+    # Case A: JSONs directly in root_dir
+    frames.append(load_rows_from_dir(root_dir, inspect=inspect, alg_hint=None))
+
+    # Case B: immediate subfolders (alg folders or subfigs)
+    for sub in sorted([d for d in root_dir.iterdir() if d.is_dir()]):
+        # Try as alg folder
+        df_alg = load_rows_from_dir(sub, inspect=inspect, alg_hint=sub.name)
+        if not df_alg.empty:
+            frames.append(df_alg)
+
+        # Case C: subfig -> alg
+        for alg_dir in sorted([d for d in sub.iterdir() if d.is_dir()]):
+            df_deep = load_rows_from_dir(alg_dir, inspect=inspect, alg_hint=alg_dir.name)
+            if not df_deep.empty:
+                frames.append(df_deep)
+
+    return _concat_or_empty(frames)
+
 def _right_of_dash(s: str) -> str:
-    # split on hyphen or en/em dash; keep the part after it
     parts = re.split(r"\s*[-–—]\s*", str(s), maxsplit=1)
     return parts[1] if len(parts) > 1 else str(s)
 
@@ -122,12 +167,12 @@ def looks_like_client_accuracy_map(v: Any) -> bool:
     if not isinstance(v, dict) or not v: return False
     checked, nested = 0, 0
     for _, inner in v.items():
-        checked += 1
         if isinstance(inner, dict) and inner:
             for it_val in inner.values():
                 if isinstance(it_val, (int, float, str)):
                     nested += 1
                     break
+        checked += 1
         if checked >= 5: break
     return nested > 0
 
@@ -189,25 +234,20 @@ def find_server_net_type_value(root: Json):
     return None, None
 
 def find_client_net_type_name(root: Json):
-    # Prefer summary.client_net_type_name if present
-    cur = root
     try:
-        if isinstance(cur, dict) and "summary" in cur:
-            cur = cur["summary"]
-            if isinstance(cur, dict) and "client_net_type_name" in cur:
-                v = cur["client_net_type_name"]
+        if isinstance(root, dict) and "summary" in root:
+            s = root["summary"]
+            if isinstance(s, dict) and "client_net_type_name" in s:
+                v = s["client_net_type_name"]
                 return (str(v) if v is not None else None), ("summary","client_net_type_name")
     except Exception:
         pass
-    # Fallback: anywhere
     for p, v in walk(root):
         if p and p[-1] == "client_net_type_name":
             return (str(v) if v is not None else None), p
-    # Fallback 2: summary.client_net_type._name_ / _value_
     try:
-        cur = root
-        if isinstance(cur, dict) and "summary" in cur and isinstance(cur["summary"], dict):
-            s = cur["summary"]
+        if isinstance(root, dict) and "summary" in root and isinstance(root["summary"], dict):
+            s = root["summary"]
             if isinstance(s.get("client_net_type"), dict):
                 d = s["client_net_type"]
                 for k in ("_name_","_value_"):
@@ -215,6 +255,25 @@ def find_client_net_type_name(root: Json):
                         return str(d[k]), ("summary","client_net_type",k)
     except Exception:
         pass
+    return None, None
+
+def find_client_net_type_value(root: Json):
+    """Prefer summary.client_net_type._value_; fallback to any path that looks like it."""
+    try:
+        if isinstance(root, dict) and "summary" in root:
+            s = root["summary"]
+            if isinstance(s, dict) and isinstance(s.get("client_net_type"), dict):
+                d = s["client_net_type"]
+                if "_value_" in d and d["_value_"] is not None:
+                    return str(d["_value_"]), ("summary","client_net_type","_value_")
+    except Exception:
+        pass
+    for p, v in walk(root):
+        if not p: continue
+        if p[-1] in {"_value_", "value"} and isinstance(v, (str, int, float)):
+            pl = [seg.lower() for seg in p]
+            if any("client" in seg for seg in pl) and any("net" in seg for seg in pl):
+                return str(v), p
     return None, None
 
 def find_dataset_selected_name(root: Json):
@@ -232,12 +291,11 @@ def find_dataset_selected_name(root: Json):
     for p, v in walk(root):
         if not p or not isinstance(v, (str,int,float)): continue
         pl = [seg.lower() for seg in p]
-        if any("summary" in seg for seg in pl) and any("data_set_selected" in seg for seg in pl):
+        if any("summary" in seg for seg in pl) and any("data_set_selected" in seg for seg in p):
             if p[-1].lower() in {"_name_","name"}: return str(v), p
     return None, None
 
 def find_alpha_dich(root: Json):
-    # Prefer summary.alpha_dich
     try:
         if isinstance(root, dict) and "summary" in root:
             s = root["summary"]
@@ -249,7 +307,6 @@ def find_alpha_dich(root: Json):
                 return None, ("summary","alpha_dich")
     except Exception:
         pass
-    # Fallback: anywhere
     for p, v in walk(root):
         if p and p[-1] == "alpha_dich":
             for caster in (int, lambda x: int(float(x))):
@@ -259,7 +316,6 @@ def find_alpha_dich(root: Json):
     return None, None
 
 def find_lambda_ditto(root: Json):
-    # Prefer summary.lambda_ditto
     try:
         if isinstance(root, dict) and "summary" in root:
             s = root["summary"]
@@ -274,7 +330,6 @@ def find_lambda_ditto(root: Json):
                         return None, ("summary","lambda_ditto")
     except Exception:
         pass
-    # Fallback: anywhere
     for p, v in walk(root):
         if p and p[-1] == "lambda_ditto":
             try:
@@ -289,10 +344,6 @@ def find_lambda_ditto(root: Json):
 # --------------------- loading ---------------------
 
 def load_rows_from_dir(dir_path: Path, *, inspect: bool = False, alg_hint: Optional[str] = None) -> pd.DataFrame:
-    """
-    Build rows ONLY from JSONs under dir_path (single algorithm folder).
-    If a JSON lacks an algorithm name, fall back to `alg_hint` (usually the folder name).
-    """
     rows: List[Dict[str, Any]] = []
     files_scanned = 0
     files_used = 0
@@ -312,30 +363,18 @@ def load_rows_from_dir(dir_path: Path, *, inspect: bool = False, alg_hint: Optio
             print(f"[WARN] skipping {p}: {e}")
             continue
 
-        ds_name, ds_path = find_dataset_selected_name(raw)
-        alg_name, alg_path = find_algorithm_name(raw)
+        ds_name, _           = find_dataset_selected_name(raw)
+        alg_name, _          = find_algorithm_name(raw)
         if not alg_name:
-            alg_name = alg_hint or dir_path.name  # fallback to folder name
-
-        seed_num, seed_path = find_seed_num(raw)
-        client_map, client_path = find_client_accuracy_map_anywhere(raw)
-        server_map, server_path = find_server_accuracy_map(raw)
-        server_net_val, server_net_path = find_server_net_type_value(raw)
-        client_net_name, client_net_path = find_client_net_type_name(raw)
-        alpha_dich, alpha_path = find_alpha_dich(raw)
-        lambda_ditto, lambda_path = find_lambda_ditto(raw)
-
-        if inspect:
-            print(f"[INSPECT] {p.name}")
-            print(f"  dataset_selected._name_: {ds_name} @ {path_str(ds_path)}")
-            print(f"  algorithm: {alg_name} @ {path_str(alg_path) if alg_path else '(folder fallback)'}")
-            print(f"  seed_num : {seed_num} @ {path_str(seed_path)}")
-            print(f"  client_accuracy_per_client_1: @ {path_str(client_path)}  (found={client_map is not None})")
-            print(f"  server_accuracy_per_client_1_max: @ {path_str(server_path)} (found={server_map is not None})")
-            print(f"  server_net_type._value_: {server_net_val} @ {path_str(server_net_path)}")
-            print(f"  client_net_type_name: {client_net_name} @ {path_str(client_net_path)}")
-            print(f"  alpha_dich: {alpha_dich} @ {path_str(alpha_path)}")
-            print(f"  lambda_ditto: {lambda_ditto} @ {path_str(lambda_path)}")
+            alg_name = alg_hint or dir_path.name
+        seed_num, _          = find_seed_num(raw)
+        client_map, _        = find_client_accuracy_map_anywhere(raw)
+        server_map, _        = find_server_accuracy_map(raw)
+        server_net_val, _    = find_server_net_type_value(raw)
+        client_net_name, _   = find_client_net_type_name(raw)
+        client_net_value, _  = find_client_net_type_value(raw)
+        alpha_dich, _        = find_alpha_dich(raw)
+        lambda_ditto, _      = find_lambda_ditto(raw)
 
         is_mapl = bool(alg_name and "mapl" in str(alg_name).lower())
         used_any = False
@@ -372,6 +411,7 @@ def load_rows_from_dir(dir_path: Path, *, inspect: bool = False, alg_hint: Optio
                         "iteration": iteration,
                         "accuracy": acc,
                         "client_net_type_name": client_net_name or "unknown_client_net",
+                        "client_net_type_value": client_net_value or "unknown_client_net",
                         "alpha_dich": alpha_dich,
                         "lambda_ditto": lambda_ditto,
                     })
@@ -406,6 +446,7 @@ def load_rows_from_dir(dir_path: Path, *, inspect: bool = False, alg_hint: Optio
                         "iteration": iteration,
                         "accuracy": acc,
                         "client_net_type_name": client_net_name or "unknown_client_net",
+                        "client_net_type_value": client_net_value or "unknown_client_net",
                         "alpha_dich": alpha_dich,
                         "lambda_ditto": lambda_ditto,
                     })
@@ -419,7 +460,8 @@ def load_rows_from_dir(dir_path: Path, *, inspect: bool = False, alg_hint: Optio
 
     cols = [
         "dataset","algorithm_display","measure","seed","client_id",
-        "iteration","accuracy","client_net_type_name","alpha_dich","lambda_ditto","_path","algorithm"
+        "iteration","accuracy","client_net_type_name","client_net_type_value",
+        "alpha_dich","lambda_ditto","_path","algorithm"
     ]
     return pd.DataFrame(rows, columns=cols) if rows else pd.DataFrame(columns=cols)
 
@@ -431,30 +473,55 @@ def _extract_mapl_x(label: str) -> Optional[str]:
 def _extract_mapl_variant(label: str) -> Optional[str]:
     m = _mapl_label_re.match(label); return m.group("variant") if m else None
 
-def _build_color_map(labels: List[str]):
-    cmap = plt.get_cmap("tab10")
-    mapl_x_values, non_mapl = [], []
-    for lab in labels:
-        x = _extract_mapl_x(lab)
-        (mapl_x_values if x is not None else non_mapl).append(x or lab)
-    unique_x = list(dict.fromkeys([x for x in mapl_x_values]))  # preserve order
-    color_by_x = {x: cmap(i % 10) for i, x in enumerate(unique_x)}
-    color_by_label: Dict[str, Any] = {}
-    for lab in labels:
-        x = _extract_mapl_x(lab)
-        if x is not None: color_by_label[lab] = color_by_x[x]
-    next_idx = len(unique_x)
-    for lab in labels:
-        if lab not in color_by_label:
-            color_by_label[lab] = cmap(next_idx % 10)
-            next_idx += 1
-    return color_by_label
-
 def _linestyle_for(label: str) -> str:
     v = _extract_mapl_variant(label)
     if v == "S": return "-"
     if v == "C": return "--"
     return "-"
+
+# ===== Stable colors per algorithm (MAPL_C/MAPL_S share) =====
+
+ALG_COLOR_ORDER = [
+    "FedAvg", "FedProx", "SCAFFOLD", "Per-FedAvg",
+    "pFedMe", "FedBABU", "MAPL", "FedMD", "pFedCK", "COMET", "Ditto",
+]
+
+def _canon_algo_name(s: str) -> str:
+    t = (s or "").strip()
+    tl = t.lower().replace(" ", "")
+    if "mapl" in tl:    return "MAPL"
+    if "pfedme" in tl:  return "pFedMe"
+    if "pfedck" in tl:  return "pFedCK"
+    return t
+
+def _color_map_by_algorithm(df_all: pd.DataFrame) -> Dict[str, Any]:
+    if df_all is None or df_all.empty:
+        return {}
+    cmap = plt.get_cmap("tab10")
+    pairs = (
+        df_all[["algorithm_display", "algorithm"]]
+        .astype(str)
+        .drop_duplicates()
+        .values.tolist()
+    )
+    algos_present: List[str] = []
+    for _, a in pairs:
+        ca = _canon_algo_name(a)
+        if ca not in algos_present:
+            algos_present.append(ca)
+    color_by_algo: Dict[str, Any] = {}
+    i = 0
+    for name in ALG_COLOR_ORDER:
+        if name in algos_present and name not in color_by_algo:
+            color_by_algo[name] = cmap(i % 10); i += 1
+    for name in algos_present:
+        if name not in color_by_algo:
+            color_by_algo[name] = cmap(i % 10); i += 1
+    color_by_label: Dict[str, Any] = {}
+    for lab, a in pairs:
+        ca = _canon_algo_name(a)
+        color_by_label[lab] = color_by_algo[ca]
+    return color_by_label
 
 # --------------------- helpers for combined figures ---------------------
 
@@ -462,11 +529,11 @@ def _concat_or_empty(frames: List[pd.DataFrame]) -> pd.DataFrame:
     frames = [f for f in frames if f is not None and not f.empty]
     return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame(
         columns=["dataset","algorithm_display","measure","seed","client_id",
-                 "iteration","accuracy","client_net_type_name","alpha_dich","lambda_ditto","_path","algorithm"]
+                 "iteration","accuracy","client_net_type_name","client_net_type_value",
+                 "alpha_dich","lambda_ditto","_path","algorithm"]
     )
 
 def _load_subfig_df(subfig_dir: Path, inspect: bool) -> pd.DataFrame:
-    """Load and concat all algorithm folders under one subfig directory into a single DataFrame."""
     alg_dirs = [a for a in sorted(subfig_dir.iterdir()) if a.is_dir()]
     frames = []
     for alg_dir in alg_dirs:
@@ -485,44 +552,32 @@ def _legend_from_axes_row(axes):
 # --------------------- plotting (ONE FIGURE per FIGSET) ---------------------
 
 def figure_diff_benchmarks(figset_dir: Path, out_root: Path, *, alpha_value: int, inspect: bool):
-    """One ROW, each subplot is a subfig folder; independent Y axes, one legend."""
     if not figset_dir.exists():
         print(f"[SKIP] {figset_dir} (missing)"); return
-
     subfigs = [d for d in sorted(figset_dir.iterdir()) if d.is_dir()]
     if not subfigs:
         print(f"[WARN] No subfig folders under {figset_dir}"); return
-
-    # Load all once
     loaded = [(sf, _load_subfig_df(sf, inspect)) for sf in subfigs]
-    # Filter & keep only non-empty after filtering condition
     filtered = []
     for sf, df in loaded:
-        if df.empty:
-            continue
+        if df.empty: continue
         sub = df[(df["alpha_dich"] == alpha_value)]
         if not sub.empty:
             filtered.append((sf, sub))
     if not filtered:
         print(f"[WARN] No rows for alpha={alpha_value} in {figset_dir}."); return
-
-    # Limit to 4 subplots max (as requested)
     filtered = filtered[:4]
     n = len(filtered)
-
-    # Build labels/colors globally (consistent colors across panels)
-    all_labels = sorted(pd.concat([x[1] for x in filtered])["algorithm_display"].astype(str).unique().tolist())
-    color_by_label = _build_color_map(all_labels)
+    df_all = pd.concat([x[1] for x in filtered], ignore_index=True)
+    color_by_label = _color_map_by_algorithm(df_all)
 
     fig_w = max(5.0 * n, 5.0)
     fig, axes = plt.subplots(1, n, figsize=(fig_w, 4.5), sharex=False, sharey=False, squeeze=False)
     axes = axes.flatten()
 
-    for ax, (sf, df) in zip(axes, filtered):
-        # If multiple datasets are present within this subfig, prefer CIFAR100; else use the most frequent dataset
+    for ax, (_, df) in zip(axes, filtered):
         ds_counts = df["dataset"].astype(str).value_counts()
         dataset_choice = "CIFAR100" if "CIFAR100" in ds_counts.index else ds_counts.index[0]
-
         g = (
             df[df["dataset"].astype(str) == dataset_choice]
             .groupby(["algorithm_display","iteration"], dropna=False)["accuracy"]
@@ -531,64 +586,52 @@ def figure_diff_benchmarks(figset_dir: Path, out_root: Path, *, alpha_value: int
             .rename(columns={"accuracy":"avg_accuracy"})
             .sort_values(["algorithm_display","iteration"])
         )
-
         for lab in sorted(g["algorithm_display"].astype(str).unique().tolist()):
             sub_lab = g[g["algorithm_display"].astype(str) == lab]
             ax.plot(sub_lab["iteration"], sub_lab["avg_accuracy"],
                     marker=None, linewidth=2.0, label=str(lab),
                     color=color_by_label.get(lab, None), linestyle=_linestyle_for(lab))
-        # Title: only the part after "-" if any
         ax.set_title(_right_of_dash(dataset_choice))
         ax.set_xlabel("Iteration")
         ax.set_ylabel("Average Accuracy")
         ax.grid(False)
 
-    # One legend
     h, l = _legend_from_axes_row(axes)
     fig.tight_layout(rect=[0.0, 0.0, 1.0, 0.82])
     if h:
         fig.legend(h, l, loc="upper center", ncol=min(6, len(h)), frameon=False, bbox_to_anchor=(0.5, 0.98))
-
     outfile = out_root / f"{figset_dir.name}.pdf"
     _savefig_longpath(fig, outfile); plt.close(fig)
     print(f"[OK] Saved: {outfile}")
 
 def figure_diff_clients_nets(figset_dir: Path, out_root: Path, *, inspect: bool):
-    """One ROW, each subplot is a subfig folder; SHARED Y axis, one legend."""
     if not figset_dir.exists():
         print(f"[SKIP] {figset_dir} (missing)"); return
-
     subfigs = [d for d in sorted(figset_dir.iterdir()) if d.is_dir()]
     if not subfigs:
         print(f"[WARN] No subfig folders under {figset_dir}"); return
-
-    # Load all once
     loaded = [(sf, _load_subfig_df(sf, inspect)) for sf in subfigs]
     loaded = [(sf, df) for sf, df in loaded if not df.empty]
     if not loaded:
         print(f"[WARN] No data for client_net_type row figure."); return
 
-    # Prefer CIFAR100 rows for consistency
     def _prefer_cifar(df: pd.DataFrame) -> pd.DataFrame:
-        return df[df["dataset"].astype(str).str.lower() == "cifar100"] if (df["dataset"].astype(str).str.lower() == "cifar100").any() else df
+        mask = df["dataset"].astype(str).str.lower() == "cifar100"
+        return df[mask] if mask.any() else df
 
     loaded = [(sf, _prefer_cifar(df)) for sf, df in loaded if not _prefer_cifar(df).empty]
     if not loaded:
         print(f"[WARN] No usable rows (after CIFAR100 preference) for {figset_dir}."); return
-
-    # Limit to 4 subplots max (as requested)
     loaded = loaded[:4]
     n = len(loaded)
 
-    # Global colors by algorithm (consistent across subplots)
-    all_labels = sorted(pd.concat([x[1] for x in loaded])["algorithm_display"].astype(str).unique().tolist())
-    color_by_label = _build_color_map(all_labels)
+    df_all = pd.concat([x[1] for x in loaded], ignore_index=True)
+    color_by_label = _color_map_by_algorithm(df_all)
 
     fig_w = max(5.0 * n, 5.0)
     fig, axes = plt.subplots(1, n, figsize=(fig_w, 4.5), sharex=True, sharey=True, squeeze=False)
     axes = axes.flatten()
 
-    # Compute global y-limits (shared y)
     all_grp = []
     for _, df in loaded:
         g = (df.groupby(["algorithm_display","iteration"], dropna=False)["accuracy"]
@@ -598,13 +641,12 @@ def figure_diff_clients_nets(figset_dir: Path, out_root: Path, *, inspect: bool)
     ymin = float(big["avg_accuracy"].min())
     ymax = float(big["avg_accuracy"].max())
 
-    for ax, (sf, df) in zip(axes, loaded):
+    for ax, (_, df) in zip(axes, loaded):
         g = (
             df.groupby(["algorithm_display","iteration"], dropna=False)["accuracy"]
               .mean().reset_index().rename(columns={"accuracy":"avg_accuracy"})
               .sort_values(["algorithm_display","iteration"])
         )
-        # Title should show only the TITLE_MAP value for the dominant client_net type
         dom_net = df["client_net_type_name"].astype(str).value_counts().index[0] if "client_net_type_name" in df.columns and not df.empty else "clients"
         dom_net_disp = TITLE_MAP.get(dom_net, dom_net)
 
@@ -619,71 +661,139 @@ def figure_diff_clients_nets(figset_dir: Path, out_root: Path, *, inspect: bool)
         ax.grid(False)
         ax.set_ylim(ymin, ymax)
 
-    # One legend
+    h, l = _legend_from_axes_row(axes)
+    fig.tight_layout(rect=[0.0, 0.0, 1.0, 0.82])
+    if h:
+        fig.legend(h, l, loc="upper center", ncol=min(6, len(h)), frameon=False, bbox_to_anchor=(0.5, 0.98))
+    outfile = out_root / f"{figset_dir.name}.pdf"
+    _savefig_longpath(fig, outfile); plt.close(fig)
+    print(f"[OK] Saved: {outfile}")
+
+def figure_by_client_net_type_value(figset_dir: Path, out_root: Path, *, inspect: bool):
+    """
+    One ROW, each subplot corresponds to a distinct client_net_type._value_
+    (falls back to client_net_type_name if _value_ missing).
+    Subplot titles come from TITLE_NET_MAP (prefers NAME, then VALUE).
+    Colors are stable per algorithm across all panels.
+    """
+    if not figset_dir.exists():
+        print(f"[SKIP] {figset_dir} (missing)"); return
+
+    # Robust load up to two levels deep (handles same_client_nets layout)
+    df_all = _load_any_jsons_under(figset_dir, inspect=inspect)
+    if df_all.empty:
+        print(f"[WARN] No data under {figset_dir}"); return
+
+    # Prefer CIFAR100 if present
+    mask_cifar = df_all["dataset"].astype(str).str.lower() == "cifar100"
+    if mask_cifar.any():
+        df_all = df_all[mask_cifar]
+
+    # Ensure columns exist
+    if "client_net_type_value" not in df_all.columns:
+        df_all["client_net_type_value"] = None
+    if "client_net_type_name" not in df_all.columns:
+        df_all["client_net_type_name"] = None
+
+    # Facet key: prefer VALUE; if missing/NaN/empty, use NAME
+    facet_key = df_all["client_net_type_value"].astype(str)
+    bad = facet_key.isna() | (facet_key.str.lower().isin(["none", "nan", ""]))
+    facet_key = facet_key.mask(bad, df_all["client_net_type_name"].astype(str))
+
+    # Unique facets (cap at 4)
+    values = [v for v in facet_key.unique().tolist() if v and v.lower() not in {"none", "nan"}]
+    if not values:
+        print(f"[WARN] No usable client_net_type_value/name to facet in {figset_dir}."); return
+    values = values[:4]
+    n = len(values)
+
+    # Stable colors across panels
+    color_by_label = _color_map_by_algorithm(df_all)
+
+    # Global y-limits
+    big = (
+        df_all.assign(__facet_key__=facet_key)
+              .groupby(["__facet_key__","algorithm_display","iteration"], dropna=False)["accuracy"]
+              .mean().reset_index().rename(columns={"accuracy":"avg_accuracy"})
+    )
+    ymin = float(big["avg_accuracy"].min())
+    ymax = float(big["avg_accuracy"].max())
+
+    fig_w = max(5.0 * n, 5.0)
+    fig, axes = plt.subplots(1, n, figsize=(fig_w, 4.5), sharex=True, sharey=True, squeeze=False)
+    axes = axes.flatten()
+
+    for ax, val in zip(axes, values):
+        sub = df_all[facet_key == val]
+        if sub.empty:
+            ax.set_visible(False)
+            continue
+
+        # Title: use TITLE_NET_MAP; prefer NAME then VALUE
+        # Get mode of NAME and VALUE within this facet
+        name_mode = sub["client_net_type_name"].astype(str).value_counts().index[0] if "client_net_type_name" in sub.columns and not sub.empty else None
+        value_mode = sub["client_net_type_value"].astype(str).value_counts().index[0] if "client_net_type_value" in sub.columns and not sub.empty else None
+        title_name = _net_title_from_map(name_mode, value_mode, val)
+
+        g = (
+            sub.groupby(["algorithm_display","iteration"], dropna=False)["accuracy"]
+               .mean().reset_index().rename(columns={"accuracy":"avg_accuracy"})
+               .sort_values(["algorithm_display","iteration"])
+        )
+        for lab in sorted(g["algorithm_display"].astype(str).unique().tolist()):
+            sub_lab = g[g["algorithm_display"].astype(str) == lab]
+            ax.plot(sub_lab["iteration"], sub_lab["avg_accuracy"],
+                    marker=None, linewidth=2.0, label=str(lab),
+                    color=color_by_label.get(lab, None), linestyle=_linestyle_for(lab))
+
+        ax.set_title(title_name)
+        ax.set_xlabel("Iteration")
+        ax.set_ylabel("Average Accuracy")
+        ax.grid(False)
+        ax.set_ylim(ymin, ymax)
+
+    # One legend for the whole row
     h, l = _legend_from_axes_row(axes)
     fig.tight_layout(rect=[0.0, 0.0, 1.0, 0.82])
     if h:
         fig.legend(h, l, loc="upper center", ncol=min(6, len(h)), frameon=False, bbox_to_anchor=(0.5, 0.98))
 
-    outfile = out_root / f"{figset_dir.name}.pdf"
+    outfile = out_root / "client_net_type_value.pdf"
     _savefig_longpath(fig, outfile); plt.close(fig)
     print(f"[OK] Saved: {outfile}")
 
 def figure_examine_lambda_for_ditto(figset_dir: Path, out_root: Path, *, inspect: bool):
-    """
-    Single figure: multiple curves, one per lambda_ditto.
-    Averages accuracy across clients for each iteration, across all JSONs under figset_dir (recursively safe).
-    """
     if not figset_dir.exists():
         print(f"[SKIP] {figset_dir} (missing)"); return
-
-    # Load JSONs that may be directly under figset_dir AND/OR nested one level deeper.
     frames: List[pd.DataFrame] = []
-
-    # Case 1: JSONs directly in figset_dir
     frames.append(load_rows_from_dir(figset_dir, inspect=inspect, alg_hint=None))
-
-    # Case 2: any immediate subfolders (e.g., seeds/variants)
     for sub in sorted([d for d in figset_dir.iterdir() if d.is_dir()]):
         frames.append(load_rows_from_dir(sub, inspect=inspect, alg_hint=sub.name))
-
     df = _concat_or_empty(frames)
     if df.empty:
         print(f"[WARN] No data in {figset_dir}"); return
-
-    # Only keep rows where lambda_ditto is present
     df = df[~df["lambda_ditto"].isna()]
     if df.empty:
         print(f"[WARN] No lambda_ditto values found in {figset_dir}"); return
-
-    # Average over clients per iteration, per lambda
     grp = (
         df.groupby(["lambda_ditto","iteration"], dropna=False)["accuracy"]
           .mean().reset_index().rename(columns={"accuracy":"avg_accuracy"})
     )
-
-    # Sort lambdas numerically
     lambdas = sorted(grp["lambda_ditto"].dropna().unique().tolist())
-
-    # Build color map deterministic by lambda label
     lambda_labels = [f"λ={lmbda:g}" for lmbda in lambdas]
     cmap = plt.get_cmap("tab10")
     color_by_label = {lab: cmap(i % 10) for i, lab in enumerate(lambda_labels)}
 
     fig, ax = plt.subplots(1, 1, figsize=(6.5, 4.8))
-    for i, lmbda in enumerate(lambdas):
+    for lmbda in lambdas:
         gsub = grp[grp["lambda_ditto"] == lmbda].sort_values("iteration")
         lab = f"λ={lmbda:g}"
         ax.plot(gsub["iteration"], gsub["avg_accuracy"], linewidth=2.0, label=lab, color=color_by_label[lab])
-
     ax.set_title("Ditto: effect of λ")
     ax.set_xlabel("Iteration")
     ax.set_ylabel("Average Accuracy (across clients)")
     ax.grid(False)
-
-    # Legend
     ax.legend(loc="upper center", bbox_to_anchor=(0.5, 1.12), ncol=min(6, len(lambda_labels)), frameon=False)
-
     outfile = out_root / f"{figset_dir.name}.pdf"
     _savefig_longpath(fig, outfile); plt.close(fig)
     print(f"[OK] Saved: {outfile}")
@@ -695,16 +805,18 @@ def main():
     ap.add_argument("--root", type=Path, default=Path("results"), help="Root results folder (contains figure-set folders)")
     ap.add_argument("--figdir", type=Path, default=Path("figures"), help="Where to save PDFs")
     ap.add_argument("--inspect", action="store_true", help="Print detected paths/keys while loading")
-    # Optional: allow custom folder names if you want
     ap.add_argument("--lambda_folder", type=str, default="examine_lambda_for_ditto")
     ap.add_argument("--alpha", type=int, default=5)
+    # NEW: which folder to scan when faceting by client_net_type._value_
+    ap.add_argument("--facet_client_net_dir", type=Path, default=Path("results/diff_clients_nets"),
+                    help="Folder whose immediate subfolders are algorithm folders; used to facet by client_net_type._value_")
 
     args = ap.parse_args()
 
-    figure_diff_clients_nets(args.root /"diff_clients_nets", args.figdir, inspect=args.inspect)
-    figure_diff_benchmarks(args.root / "diff_benchmarks_05", args.figdir, alpha_value=5, inspect=args.inspect)
-    # (Optional) another benchmark set you had:
-    figure_diff_benchmarks(args.root / "same_client_nets", args.figdir, alpha_value=5, inspect=args.inspect)
+    figure_diff_clients_nets(args.root / "diff_clients_nets", args.figdir, inspect=args.inspect)
+    figure_diff_benchmarks(args.root / "diff_benchmarks_05", args.figdir, alpha_value=args.alpha, inspect=args.inspect)
+    #figure_diff_benchmarks(args.root / "same_client_nets", args.figdir, alpha_value=args.alpha, inspect=args.inspect)
+    figure_by_client_net_type_value(args.root / "same_client_nets", args.figdir, inspect=args.inspect)  # NEW
     figure_examine_lambda_for_ditto(args.root / args.lambda_folder, args.figdir, inspect=args.inspect)
 
 if __name__ == "__main__":

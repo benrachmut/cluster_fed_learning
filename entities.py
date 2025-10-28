@@ -322,7 +322,8 @@ def get_server_model():
         return AlexNet(num_classes=experiment_config.num_classes,num_clusters=num_heads).to(device)
     if experiment_config.server_net_type == NetType.VGG:
         return VGGServer(num_classes=experiment_config.num_classes,num_clusters=num_heads).to(device)
-
+    if experiment_config.server_net_type == NetType.MobileNet:
+        return MobileNetV2Server(num_classes=experiment_config.num_classes).to(device)
     if experiment_config.server_net_type == NetType.DenseNetServer:
         return DenseNetServer(num_classes=experiment_config.num_classes,num_clusters=num_heads).to(device)
 
@@ -629,6 +630,11 @@ class Client(LearningEntity):
             return AlexNet(num_classes=experiment_config.num_classes).to(device)
         if experiment_config.client_net_type == NetType.VGG:
             return VGGServer(num_classes=experiment_config.num_classes).to(device)
+        if experiment_config.client_net_type == NetType.ResNet:
+            return ResNet18Server(num_classes=experiment_config.num_classes).to(device)
+        if experiment_config.client_net_type == NetType.SqueezeNet:
+            return SqueezeNetServer(num_classes=experiment_config.num_classes).to(device)
+
         if experiment_config.client_net_type == NetType.rndStrong:
             return get_rnd_strong_net(self.rand_client)
         if  experiment_config.client_net_type == NetType.rndWeak:
@@ -1293,111 +1299,6 @@ from torch.utils.data import DataLoader
 
 
 
-class Client_FedAvg(Client):
-    def __init__(self, id_, client_data, global_data, global_test_data, local_test_data):
-        Client.__init__(self, id_, client_data, global_data, global_test_data, local_test_data)
-        self.weights_received = None
-        self.weights_to_send = None
-
-    def iteration_context(self, t):
-
-        self.current_iteration = t
-        flag = False
-        for _ in range(1000):
-            if t == 0:
-                #self.model.apply(self.initialize_weights)
-                #self.model.apply(self.initialize_weights)
-
-
-                self.model.apply(self.initialize_weights)
-
-            if t > 0:
-                if flag:
-                    self.model.apply(self.initialize_weights)
-                else:
-                    #self.model.apply(self.initialize_weights)
-
-                    self.model.load_state_dict(self.weights_received)
-
-            self.weights_to_send  = self.fine_tune()
-
-            total_size = 0
-            for param in self.weights_to_send.values():
-                total_size += param.numel() * param.element_size()
-            self.size_sent[t] =total_size / (1024 * 1024)
-            acc = self.evaluate_accuracy_single(self.local_test_set)
-
-            acc_test = self.evaluate_accuracy_single(self.test_global_data)
-            if experiment_config.data_set_selected == DataSet.CIFAR100:
-                if acc_test != 1:
-                    break
-                else:
-                    flag = True
-
-            if experiment_config.data_set_selected == DataSet.CIFAR10 or experiment_config.data_set_selected == DataSet.SVHN:
-                if acc != 10and acc_test!=10:
-                    break
-                else:
-                    flag = True
-                    #self.model.apply(self.initialize_weights)
-            if experiment_config.data_set_selected == DataSet.TinyImageNet:
-                if acc != 0.5 and acc_test!=0.5:
-                    break
-                else:
-                    flag = True
-            if experiment_config.data_set_selected == DataSet.EMNIST_balanced:
-                if acc > 2.14 and acc_test>2.14:
-                    break
-                else:
-                    flag = True
-
-        self.accuracy_per_client_1[t] = self.evaluate_accuracy_single(self.local_test_set, k=1)
-        self.accuracy_per_client_5[t] = self.evaluate_accuracy(self.local_test_set, k=5)
-        self.accuracy_per_client_10[t] = self.evaluate_accuracy(self.local_test_set, k=10)
-        self.accuracy_per_client_100[t] = self.evaluate_accuracy(self.local_test_set, k=100)
-
-
-
-    def fine_tune(self):
-        print("*** " + self.__str__() + " fine-tune ***")
-
-        # Load the weights into the model
-        #if self.weights is  None:
-        #    self.model.apply(self.initialize_weights)
-        #else:
-        #    self.model.load_state_dict(self.weights)
-
-        # Create a DataLoader for the local data
-        fine_tune_loader = DataLoader(self.local_data, batch_size=experiment_config.batch_size, shuffle=True)
-        self.model.train()  # Set the model to training mode
-
-        # Define loss function and optimizer
-
-        criterion = nn.CrossEntropyLoss()
-
-        optimizer = torch.optim.Adam(self.model.parameters(), lr=experiment_config.learning_rate_fine_tune_c)
-
-        epochs = experiment_config.epochs_num_input_fine_tune_clients
-        for epoch in range(epochs):
-            self.epoch_count += 1
-            epoch_loss = 0
-            for inputs, targets in fine_tune_loader:
-                inputs, targets = inputs.to(device), targets.to(device)
-                optimizer.zero_grad()
-                outputs = self.model(inputs)
-
-                loss = criterion(outputs, targets)
-
-                # Backward pass and optimization
-                loss.backward()
-                optimizer.step()
-                epoch_loss += loss.item()
-
-            result_to_print = epoch_loss / len(fine_tune_loader)
-            print(f"Epoch [{epoch + 1}/{epochs}], Loss: {result_to_print:.4f}")
-        ans = self.model.state_dict()
-
-        return  ans
 
 
 
@@ -3170,90 +3071,194 @@ class Server_Centralized(Server):
 import copy
 import torch
 
+import copy
+import torch
+
+
+# ===== Vanilla FedAvg Client ===============================================
+import torch
+from torch import nn
+from torch.utils.data import DataLoader
+
+class ClientFedAvg(Client):
+    """
+    Minimal FedAvg client:
+      - At t==0: start from current model (or weights_received if provided).
+      - At t>0 : load weights_received (global) then train locally.
+      - After training: set weights_to_send to model.state_dict().
+    """
+    def __init__(self, id_, client_data, global_data, global_test_data, local_test_data):
+        super().__init__(id_, client_data, global_data, global_test_data, local_test_data)
+        self.weights_received = None   # filled by coordinator from server.weights_to_send
+        self.weights_to_send  = None
+        # Expect these dicts to exist in your base; if not, init here:
+        if not hasattr(self, "size_sent"):
+            self.size_sent = {}
+        if not hasattr(self, "accuracy_per_client_1"):
+            self.accuracy_per_client_1 = {}
+        if not hasattr(self, "accuracy_per_client_5"):
+            self.accuracy_per_client_5 = {}
+        if not hasattr(self, "accuracy_per_client_10"):
+            self.accuracy_per_client_10 = {}
+        if not hasattr(self, "accuracy_per_client_100"):
+            self.accuracy_per_client_100 = {}
+        if not hasattr(self, "epoch_count"):
+            self.epoch_count = 0
+        self.current_iteration = -1
+
+    def iteration_context(self, t: int):
+        self.current_iteration = t
+        # Load server global at start of round (vanilla FedAvg)
+        if self.weights_received is not None:
+            self.model.load_state_dict(self.weights_received)
+
+        # Local training
+        self.weights_to_send = self._local_train()
+
+        # Track payload size (MB)
+        total_bytes = 0
+        for p in self.weights_to_send.values():
+            if torch.is_tensor(p):
+                total_bytes += p.numel() * p.element_size()
+        self.size_sent[t] = total_bytes / (1024 * 1024)
+
+        # Accuracy bookkeeping (on local test set; adapt if you prefer global)
+        self.accuracy_per_client_1[t]   = self.evaluate_accuracy_single(self.local_test_set, k=1)
+        self.accuracy_per_client_5[t]   = self.evaluate_accuracy(self.local_test_set, k=5)
+        self.accuracy_per_client_10[t]  = self.evaluate_accuracy(self.local_test_set, k=10)
+        self.accuracy_per_client_100[t] = self.evaluate_accuracy(self.local_test_set, k=100)
+
+    # ---- local training ----
+    def _local_train(self):
+        print(f"*** {self} local training (FedAvg) ***")
+        loader = DataLoader(self.local_data,
+                            batch_size=experiment_config.batch_size,
+                            shuffle=True)
+        self.model.train()
+
+        criterion = nn.CrossEntropyLoss()
+        optimizer = torch.optim.Adam(self.model.parameters(),
+                                     lr=experiment_config.learning_rate_fine_tune_c)
+
+        epochs = experiment_config.epochs_num_input_fine_tune_clients
+        for epoch in range(epochs):
+            self.epoch_count += 1
+            running = 0.0
+            for x, y in loader:
+                x = x.to(device)
+                y = y.to(device)
+                optimizer.zero_grad()
+                logits = self.model(x)
+                loss = criterion(logits, y)
+                loss.backward()
+                optimizer.step()
+                running += loss.item()
+            print(f"[{self.id_}] epoch {epoch+1}/{epochs}  loss={running/ max(1,len(loader)):.4f}")
+
+        return {k: (v.detach().cpu() if torch.is_tensor(v) else v)
+                for k, v in self.model.state_dict().items()}
+
+# ===== Vanilla FedAvg Server (no clustering) ===============================
+import copy
+import torch
+
 class ServerFedAvg(Server):
+    """
+    Vanilla FedAvg server:
+      - Keep one global state_dict.
+      - Each round, aggregate client uploads (size-weighted).
+      - Broadcast the same global model to all clients.
+    Back-compat: accepts received_weights[cid] as either (state_dict, n) or plain state_dict.
+    """
     def __init__(self, id_, global_data, test_data, clients_ids, clients_test_data_dict,
                  client_num_examples: dict = None):
         super().__init__(id_, global_data, test_data, clients_ids, clients_test_data_dict)
-        self.received_weights = {}   # filled each round: client_id -> state_dict
-        self.weights_to_send  = {}   # what we push back to each client
+        self.received_weights = {}      # round buffer: cid -> (state_dict_on_cpu, n) OR state_dict_on_cpu
+        self.weights_to_send  = {}      # cid -> global_state_dict (deepcopy)
         self.client_num_examples = client_num_examples or {cid: 1 for cid in clients_ids}
+        self.current_iteration = -1
+        self.global_state_dict = None   # optional snapshot
 
-    # Main round entry (called from your loop)
-    def iterate(self, t):
+    # Optional convenience API (use in your coordinator loop if you like)
+    def receive(self, client_id: str, state_dict: dict, num_examples: int = None):
+        if num_examples is None:
+            num_examples = int(self.client_num_examples.get(client_id, 1))
+        sd_cpu = {k: (v.detach().cpu() if torch.is_tensor(v) else v) for k, v in state_dict.items()}
+        self.received_weights[client_id] = (sd_cpu, int(num_examples))
+
+    def iterate(self, t: int):
+        """Aggregate one global model and prep it for broadcast to all clients."""
         self.current_iteration = t
 
-        # basic sanity
-        if len(self.received_weights) != len(self.clients_ids):
-            missing = set(self.clients_ids) - set(self.received_weights.keys())
-            raise RuntimeError(f"ServerFedAvg: missing weights from clients: {sorted(missing)}")
+        # Require all clients for vanilla FedAvg
+        missing = set(self.clients_ids) - set(self.received_weights.keys())
+        if missing:
+            raise RuntimeError(f"FedAvg: missing client uploads: {sorted(missing)}")
 
-        # organize weights by cluster
-        weights_per_cluster, clusters_client_id_dict = self.get_weights_per_cluster(t)
+        # Collect aligned lists
+        weights_list, size_weights = [], []
+        for cid in self.clients_ids:
+            val = self.received_weights[cid]
+            if isinstance(val, tuple) and len(val) == 2:
+                sd, n = val
+            else:
+                # Back-compat (plain state_dict)
+                sd = val
+                n  = int(self.client_num_examples.get(cid, 1))
 
-        with torch.no_grad():
-            mean_per_cluster = {}
-            for cluster_id, weight_list in weights_per_cluster.items():
-                cids  = clusters_client_id_dict[cluster_id]
-                sizes = [float(self.client_num_examples.get(cid, 1)) for cid in cids]
-                mean_per_cluster[cluster_id] = self.average_weights(weight_list, sizes)
+            # ensure CPU tensors
+            sd_cpu = {k: (v.detach().cpu() if torch.is_tensor(v) else v) for k, v in sd.items()}
+            weights_list.append(sd_cpu)
+            size_weights.append(float(n))
 
-            # send the cluster mean back to each client
-            self.weights_to_send = {}
-            for cluster_id, cids in clusters_client_id_dict.items():
-                mean_sd = mean_per_cluster[cluster_id]
-                for cid in cids:
-                    self.weights_to_send[cid] = copy.deepcopy(mean_sd)
+        self._check_compatibility(weights_list)
+        global_sd = self._average_weights(weights_list, size_weights)
 
-        # ready for next round
-        self.received_weights = {}
+        self.global_state_dict = global_sd
+        self.weights_to_send = {cid: copy.deepcopy(global_sd) for cid in self.clients_ids}
 
-    # keep for compatibility if base calls iteration_context()
-    def iteration_context(self, t):
+        self.received_weights.clear()
+
+    # Some frameworks call this instead
+    def iteration_context(self, t: int):
         self.iterate(t)
 
-    def get_weights_per_cluster(self, t):
-        if experiment_config.num_clusters == "Optimal":
-            clusters_client_id_dict = experiment_config.known_clusters
-        elif experiment_config.num_clusters == 1:
-            clusters_client_id_dict = {0: list(self.clients_ids)}
-        else:
-            raise Exception("implemented 1 and optimal only")
+    # ---------- helpers ----------
+    def _check_compatibility(self, weights_list):
+        keys0 = set(weights_list[0].keys())
+        for i, w in enumerate(weights_list[1:], start=1):
+            if set(w.keys()) != keys0:
+                raise ValueError(f"FedAvg: state_dict keys mismatch at idx {i}")
+            for k in keys0:
+                a, b = weights_list[0][k], w[k]
+                if torch.is_tensor(a) and torch.is_tensor(b) and a.shape != b.shape:
+                    raise ValueError(f"FedAvg: tensor shape mismatch for '{k}': "
+                                     f"{tuple(a.shape)} vs {tuple(b.shape)} (idx {i})")
 
-        cluster_weights_dict = self.get_cluster_weights_dict(clusters_client_id_dict)
-        return cluster_weights_dict, clusters_client_id_dict
+    def _average_weights(self, weights_list, size_weights):
+        total = float(sum(size_weights))
+        if total <= 0:
+            size_weights = [1.0] * len(size_weights)
+            total = float(len(size_weights))
+        norm = 1.0 / total
+        scalars = [sw * norm for sw in size_weights]
 
-    def get_cluster_weights_dict(self, clusters_client_id_dict):
         out = {}
-        for cluster_id, cids in clusters_client_id_dict.items():
-            out[cluster_id] = []
-            for cid in cids:
-                if cid not in self.received_weights:
-                    raise KeyError(f"ServerFedAvg: no weights for client {cid}")
-                out[cluster_id].append(self.received_weights[cid])
+        with torch.no_grad():
+            for k in weights_list[0].keys():
+                v0 = weights_list[0][k]
+                if torch.is_tensor(v0) and v0.is_floating_point():
+                    acc = torch.zeros_like(v0, device="cpu", dtype=torch.float32)
+                    for w, s in zip(weights_list, scalars):
+                        acc.add_(w[k].to(dtype=torch.float32), alpha=s)
+                    out[k] = acc.to(dtype=v0.dtype)
+                else:
+                    # ints/bools (e.g., num_batches_tracked) → copy from first
+                    out[k] = copy.deepcopy(v0)
         return out
 
-    def average_weights(self, weights_list, size_weights=None):
-        """
-        FedAvg over a list of state_dicts (optionally size-weighted).
-        """
-        if not weights_list:
-            raise ValueError("average_weights: empty weights_list")
-
-        with torch.no_grad():
-            if size_weights is None:
-                size_weights = [1.0] * len(weights_list)
-            total = float(sum(size_weights))
-            norm = 1.0 / max(total, 1.0)
-
-            avg = {}
-            for k in weights_list[0].keys():
-                stacked = torch.stack(
-                    [w[k].float() * size_weights[i] for i, w in enumerate(weights_list)],
-                    dim=0
-                )
-                m = stacked.sum(dim=0) * norm
-                avg[k] = m.to(dtype=weights_list[0][k].dtype)
-            return avg
+    def get_weights_for(self, client_id: str):
+        return self.weights_to_send.get(client_id, None)
 
 # ---------------- FedBABU: Client & Server ----------------
 # Assumes your imports / globals are already present:
@@ -3504,124 +3509,277 @@ class ServerFedBABU(ServerFedAvg):
         self.received_weights = {}
 
 
-# ===== pFedMe: helper =====
+# ===== Helpers =====
 def _named_param_dict(model):
-    """Return a name->Parameter dict of learnable params (no buffers)."""
+    """Return a dict: name -> learnable Parameter (no buffers)."""
     return {name: p for name, p in model.named_parameters()}
 
-# ===== pFedMe Client (reuses your existing hyperparams) =====
+def _set_bn_eval(m):
+    """Freeze BatchNorm running stats (keeps affine params trainable)."""
+    if isinstance(m, nn.modules.batchnorm._BatchNorm):
+        m.eval()
+import torch
+import torch.nn as nn
+from torch.utils.data import DataLoader
+
+
+
+@torch.no_grad()
+def _quick_eval_top1(model, dataset, batch_size=64, max_batches=999999):
+    """Evaluation that *only* calls model(x) — no cluster_id or framework tricks."""
+    model.eval()
+    dl = DataLoader(dataset, batch_size=batch_size, shuffle=False, num_workers=0, drop_last=False)
+    correct = total = 0
+    for i, (x, y) in enumerate(dl):
+        if i >= max_batches: break
+        x, y = x.to(device), y.to(device)
+        logits = model(x)
+        preds = logits.argmax(dim=1)
+        correct += (preds == y).sum().item()
+        total   += y.numel()
+    return (100.0 * correct / max(total, 1))
+
+# ===== pFedMe Client =====
+# ===== pFedMe Client =====
+# ================= pFedMe Client =================
+import copy
+import torch
+import torch.nn as nn
+from torch.utils.data import DataLoader
+
+# ===== helpers (keep these once in your file) =====
+def _named_param_dict(model):
+    return {name: p for name, p in model.named_parameters()}
+
+def _set_bn_eval(m):
+    if isinstance(m, nn.modules.batchnorm._BatchNorm):
+        m.eval()
+
+@torch.no_grad()
+def _quick_eval_top1(model, dataset, batch_size=64, max_batches=999999):
+    model.eval()
+    dl = DataLoader(dataset, batch_size=batch_size, shuffle=False, num_workers=0, drop_last=False)
+    correct = total = 0
+    for i, (x, y) in enumerate(dl):
+        if i >= max_batches: break
+        x, y = x.to(device), y.to(device)
+        preds = model(x).argmax(dim=1)
+        correct += (preds == y).sum().item()
+        total   += y.numel()
+    return 100.0 * correct / max(total, 1)
+
+# ===== pFedMe client with batch-resampled inner loop =====
+import copy
+import torch
+import torch.nn as nn
+from torch.utils.data import DataLoader
+
+# ===== helpers (keep these once in your file) =====
+def _named_param_dict(model):
+    return {name: p for name, p in model.named_parameters()}
+
+def _set_bn_eval(m):
+    if isinstance(m, nn.modules.batchnorm._BatchNorm):
+        m.eval()
+
+@torch.no_grad()
+def _quick_eval_top1(model, dataset, batch_size=64, max_batches=999999):
+    model.eval()
+    dl = DataLoader(dataset, batch_size=batch_size, shuffle=False, num_workers=0, drop_last=False)
+    correct = total = 0
+    for i, (x, y) in enumerate(dl):
+        if i >= max_batches: break
+        x, y = x.to(device), y.to(device)
+        preds = model(x).argmax(dim=1)
+        correct += (preds == y).sum().item()
+        total   += y.numel()
+    return 100.0 * correct / max(total, 1)
+
+# ===== pFedMe client with batch-resampled inner loop =====
+import copy
+import torch
+import torch.nn as nn
+from torch.utils.data import DataLoader
+
+# expects helpers defined once in your file:
+#   _named_param_dict(model), _set_bn_eval(m), _quick_eval_top1(model, dataset, ...)
+
 class Client_pFedMe(Client):
+    """
+    pFedMe client:
+      Inner loop:    θ ← argmin CE(θ; D_batch) + (λ/2)||θ - w||^2   (K steps, fresh batch each step)
+      Outer update:  w ← w - μ (w - θ)
+
+    Notes
+    - Uses UNNORMALIZED L2 prox (as in pFedMe).
+    - Freezes BN running stats during θ steps (affine params still trainable).
+    - Clips grads at 5.0; prints raw (pre-clip) grad norm for first few steps on client 0, round 0.
+    - Honors your experiment_config; adds safe floors + an explicit μ knob for easier tuning.
+    """
+
     def __init__(self, id_, client_data, global_data, global_test_data, local_test_data):
         super().__init__(id_, client_data, global_data, global_test_data, local_test_data)
-        self.w_model = self.get_client_model()  # local copy of the global model
 
-        # ---- reuse your experiment_config knobs ----
-        self.mb        = experiment_config.batch_size
-        self.R         = experiment_config.epochs_num_train_client      # outer steps per round
-        self.K         = getattr(experiment_config, "inner_steps", 1)   # inner θ steps per outer step
-        self.theta_lr  = experiment_config.learning_rate_train_c        # inner θ optimizer LR
-        self.eta       = experiment_config.learning_rate_train_c        # outer step size (ok to reuse)
-        self.lam       = getattr(experiment_config, "lambda_consistency", 5.0)  # prox strength
+        # Local copy of the global model
+        self.w_model = self.get_client_model()
+
+        # ---- Hyperparams (reuse your config; add guardrails/defaults) ----
+        # minibatch (allow client-specific override)
+        base_mb           = getattr(experiment_config, "batch_size", 32)
+        self.mb           = int(getattr(experiment_config, "pfedme_batch_size", base_mb))
+
+        # outer steps per round (reuse your "epochs_num_train_client")
+        self.R            = int(getattr(experiment_config, "epochs_num_train_client", 5))
+
+        # inner θ steps per outer step (ensure a minimum bite)
+        self.K            = max(5, int(getattr(experiment_config, "inner_steps", 1)))
+
+        # inner θ learning rate
+        base_theta_lr     = getattr(experiment_config, "pfedme_theta_lr",
+                                    getattr(experiment_config, "learning_rate_train_c", 1e-3))
+        self.theta_lr     = max(1e-3, float(base_theta_lr))
+
+        # proximal strength λ
+        self.lam          = float(getattr(experiment_config, "pfedme_lambda",
+                                   getattr(experiment_config, "lambda_consistency", 5.0)))
+
+        # outer step size μ (direct knob). Default: eta*lambda or learning_rate_train_c*lambda
+        default_eta       = getattr(experiment_config, "pfedme_eta",
+                                    getattr(experiment_config, "learning_rate_train_c", 1e-3))
+        self.mu           = float(getattr(experiment_config, "pfedme_mu", default_eta * self.lam))
 
         self.criterion_ce = nn.CrossEntropyLoss()
 
+    # ----- API used by the server -----
     def set_model_from_global(self, global_state):
-        # broadcast from server (state_dict with same architecture)
+        """Server broadcasts global state; copy into local w."""
         self.w_model.load_state_dict(global_state)
 
     @torch.no_grad()
     def _w_update_from_theta(self, theta_model):
-        """Outer update: w <- w - ηλ (w - θ̃) ONLY on learnable parameters."""
+        """Outer update: w <- w - μ (w - θ̃) (learnable params only)."""
         w_params  = _named_param_dict(self.w_model)
         th_params = _named_param_dict(theta_model)
-
-        # (optional) quick diagnostic on the mean gap before update
-        # sqsum, n = 0.0, 0
-        # for k, w in w_params.items():
-        #     if k in th_params:
-        #         d = (w - th_params[k].to(w.device, w.dtype))
-        #         sqsum += d.pow(2).sum().item(); n += d.numel()
-        # if n > 0:
-        #     print(f"[outer] mean_gap={(sqsum/n)**0.5:.6f} eta*lam={self.eta*self.lam:.6g}")
-
         for k, w in w_params.items():
-            if k not in th_params:
-                continue
-            delta = (w - th_params[k].to(w.device, w.dtype))
-            w.add_(- self.eta * self.lam * delta)
+            if k in th_params:
+                w.add_( - self.mu * (w - th_params[k].to(w.device, w.dtype)) )
 
-    def _theta_inner_minimize(self, w_snapshot, loader_it):
+    def _assert_shapes_once(self):
+        """One-shot structural checks to catch head/label issues early."""
+        dl = DataLoader(self.local_data, batch_size=min(8, self.mb), shuffle=True, num_workers=0, drop_last=False)
+        x, y = next(iter(dl))
+        x, y = x.to(device), y.to(device)
+        self.w_model.eval()
+        with torch.no_grad():
+            logits = self.w_model(x)
+        assert logits.ndim == 2, f"logits ndim={logits.ndim}"
+        C = logits.size(1)
+        ymin, ymax = int(y.min().item()), int(y.max().item())
+        assert ymin >= 0 and ymax < C, f"labels out of range [{ymin},{ymax}] vs C={C}"
+        if not torch.isfinite(logits).all():
+            raise RuntimeError("logits NaN/Inf")
+        print(f"[shape-ok] batch={tuple(x.shape)}  num_classes={C}  label_range=[{ymin},{ymax}]")
+
+    def _theta_inner_minimize(self, w_snapshot, data_iter, do_debug=False):
         """
-        θ̃ ≈ argmin_θ f_i(θ; D) + (λ/2)||θ - w||^2 via K steps.
-        Uses fresh minibatches from loader_it and normalizes the prox term.
+        θ̃ ≈ argmin_θ  CE(θ; fresh minibatches) + (λ/2)||θ - w||^2 over K steps.
+        - BN running stats frozen (affine trainable).
+        - UNNORMALIZED prox (matches pFedMe).
+        - Grad clip at 5.0; print raw pre-clip grad norm if do_debug.
         """
+        # θ starts from w
         theta = self.get_client_model()
         theta.load_state_dict(w_snapshot)
+        theta.apply(_set_bn_eval)   # freeze BN running stats
         theta.train()
 
         opt_theta = torch.optim.Adam(theta.parameters(), lr=self.theta_lr)
 
-        # build a temp model to access w's learnable params by name (no buffers)
-        w_tmp = self.get_client_model()
-        w_tmp.load_state_dict(w_snapshot)
-        w_params = _named_param_dict(w_tmp)
+        # reference w params (same structure) for prox term
+        w_ref = self.get_client_model()
+        w_ref.load_state_dict(w_snapshot)
+        w_params = _named_param_dict(w_ref)
 
-        for _ in range(self.K):
+        for step in range(self.K):
             try:
-                x, y = next(loader_it)
+                x, y = next(data_iter)
             except StopIteration:
-                break
+                data_iter = iter(DataLoader(self.local_data, batch_size=self.mb, shuffle=True,
+                                            num_workers=0, drop_last=False))
+                x, y = next(data_iter)
+
             x, y = x.to(device), y.to(device)
 
             opt_theta.zero_grad(set_to_none=True)
             logits = theta(x)
             loss_ce = self.criterion_ce(logits, y)
 
-            # prox over learnable params only, normalized by param count
+            # UNNORMALIZED L2 prox over learnable params
             prox = torch.zeros((), device=device)
-            denom = 0.0
             th_params = _named_param_dict(theta)
             for k, th_v in th_params.items():
                 if k not in w_params:
                     continue
                 diff = th_v - w_params[k].to(th_v.device, th_v.dtype)
-                prox  = prox  + diff.pow(2).sum()
-                denom = denom + diff.numel()
-            if denom > 0:
-                prox = prox / denom
+                prox  = prox + diff.pow(2).sum()
 
             loss = loss_ce + 0.5 * self.lam * prox
+            if torch.isnan(loss) or torch.isinf(loss):
+                if do_debug:
+                    print("[warn] θ loss NaN/Inf — skip step")
+                continue
+
             loss.backward()
-            torch.nn.utils.clip_grad_norm_(theta.parameters(), 1.0)
+
+            # raw (pre-clip) grad norm for diagnostics
+            raw_norm = None
+            if do_debug:
+                g2_raw = 0.0
+                for p in theta.parameters():
+                    if p.grad is not None:
+                        g2_raw += float(p.grad.pow(2).sum().item())
+                raw_norm = g2_raw ** 0.5
+
+            torch.nn.utils.clip_grad_norm_(theta.parameters(), 5.0)
             opt_theta.step()
 
-            # (optional) per-step diagnostics:
-            # print(f"[θ-step] CE={loss_ce.item():.4f} prox={float(prox):.6f}")
+            if do_debug:
+                print(f"[θ-step dbg] CE={loss_ce.item():.4f} prox={float(prox):.6f} raw_grad_norm={raw_norm:.4f}")
 
         return theta
 
+    # ----- One FL round on the client -----
     def train(self, t):
-        """
-        One federated round for this client:
-          for r in [1..R]:
-            θ̃ <- inner minimize on K minibatches
-            w  <- w - ηλ (w - θ̃)
-        Returns local w state_dict for server aggregation.
-        """
         self.current_iteration = t
         self.w_model.train()
 
-        loader = DataLoader(self.local_data, batch_size=self.mb, shuffle=True, num_workers=0, drop_last=False)
-        loader_it = iter(loader)
+        # One-time structural checks
+        if t == 0 and self.id_ in (0, "0"):
+            self._assert_shapes_once()
 
         last_theta = None
-        for _ in range(self.R):
+        for r in range(self.R):
+            # fresh shuffled iterator EACH outer step
+            train_loader = DataLoader(self.local_data, batch_size=self.mb, shuffle=True,
+                                      num_workers=0, drop_last=False)
+            data_iter = iter(train_loader)
+
+            # snapshot current w
             w_snapshot = copy.deepcopy(self.w_model.state_dict())
-            theta = self._theta_inner_minimize(w_snapshot, loader_it)
+
+            # debug first few inner steps for client 0, round 0
+            do_debug = (t == 0 and self.id_ in (0, "0") and r < 3)
+            theta = self._theta_inner_minimize(w_snapshot, data_iter, do_debug=do_debug)
             last_theta = theta
+
+            # outer update w <- w - μ (w - θ̃)
             self._w_update_from_theta(theta)
 
-        # personalize/eval with θ from the last outer step
+        # robust eval of θ (no framework wrappers)
+        top1_quick = _quick_eval_top1(last_theta, self.local_test_set, batch_size=64)
+        print(f"[quick-eval] client {self.id_} top-1: {top1_quick:.2f}%")
+
+        # keep your framework metrics too
         last_theta.eval()
         self.accuracy_per_client_1[t]   = self.evaluate_accuracy_single(self.local_test_set, model=last_theta, k=1)
         self.accuracy_per_client_5[t]   = self.evaluate_accuracy(self.local_test_set, model=last_theta, k=5)
@@ -3629,28 +3787,40 @@ class Client_pFedMe(Client):
         self.accuracy_per_client_100[t] = self.evaluate_accuracy(self.local_test_set, model=last_theta, k=100)
         print(f"accuracy_per_client_1 {self.accuracy_per_client_1[t]:.4f}")
 
-        # payload to server
+        # payload to server (local w after R outer steps)
         local_state = copy.deepcopy(self.w_model.state_dict())
+
+        # log payload size (MB)
         total_size = sum(p.numel() * p.element_size() for p in self.w_model.parameters())
         self.size_sent[t] = total_size / (1024 * 1024)
+
         return local_state
 
-# ===== pFedMe Server (model-free: holds only a global_state dict) =====
+
+# ===== pFedMe Server (model-free; holds a global_state dict) =====
+# ===== pFedMe Server (model-free; holds a global_state dict) =====
+# =================
+# pFedMe Server (model-free; holds a global_state dict) =================
 class Server_pFedMe(Server):
     def __init__(self, id_, global_data, test_data, clients_ids, clients_test_data_dict, clients):
         super().__init__(id_, global_data, test_data, clients_ids, clients_test_data_dict)
         self.clients = clients
-        self.beta = 1.0  # FedAvg-style; set <1.0 if you want EMA
 
-        # initialize global params from the first client's architecture
+        # EMA coefficient for server update; 1.0 == simple FedAvg of local states
+        self.beta = float(getattr(experiment_config, "pfedme_beta", 1.0))
+
+        # Initialize global params from the first client's architecture
         self.global_state = copy.deepcopy(clients[0].w_model.state_dict())
 
-        # optional logs
+        # Optional logs
         self.accuracy_server_test_1_global = {}
         self.received_states = {}
 
+        # Optional: weighted averaging by data size (dict id->count), else simple mean
+        self.client_num_examples = getattr(self, "client_num_examples", None)
+
     def _mean_state(self, states, weights=None):
-        """Compute (weighted) mean of a list of state_dicts over float tensors; copy non-floats."""
+        """(Weighted) mean over float tensors; copy non-floats from the first state."""
         keys = states[0].keys()
         out = {}
         if weights is None:
@@ -3658,7 +3828,7 @@ class Server_pFedMe(Server):
                 v0 = states[0][k]
                 if isinstance(v0, torch.Tensor) and v0.is_floating_point():
                     stack = [st[k].to(v0.device, v0.dtype) for st in states]
-                    out[k] = torch.stack(stack, 0).mean(0)
+                    out[k] = torch.stack(stack, dim=0).mean(dim=0)
                 else:
                     out[k] = v0
             return out
@@ -3680,21 +3850,24 @@ class Server_pFedMe(Server):
         if selected_clients is None:
             selected_clients = self.clients
 
-        # broadcast
+        # ---- Broadcast ----
         gstate = copy.deepcopy(self.global_state)
 
-        # local updates
-        local_states = []
+        # ---- Local pFedMe solves ----
+        local_states, weights = [], None
         for c in selected_clients:
             c.set_model_from_global(gstate)
-            st = c.train(t)     # returns w_i,R
+            st = c.train(t)     # returns w_i after R outer steps
             local_states.append(st)
             self.received_states[c.id_] = st
 
-        # aggregate (simple mean; supply weights if you want data-size weighting)
-        mean_state = self._mean_state(local_states)
+        if self.client_num_examples:
+            weights = [self.client_num_examples.get(c.id_, 1.0) for c in selected_clients]
 
-        # w_{t+1} = (1-β) w_t + β * mean
+        # ---- Aggregate local states ----
+        mean_state = self._mean_state(local_states, weights)
+
+        # ---- Global EMA update: w_{t+1} = (1-β) w_t + β * mean_i w_{i,R} ----
         for k, v in self.global_state.items():
             mv = mean_state.get(k)
             if mv is None:
@@ -3704,7 +3877,7 @@ class Server_pFedMe(Server):
             else:
                 self.global_state[k] = v
 
-        # optional: evaluate global using a temp model (only if you want a metric here)
+        # (Optional) global evaluation by instantiating a temp client model:
         # tmp = selected_clients[0].get_client_model().to(device)
         # tmp.load_state_dict(self.global_state, strict=True)
         # self.accuracy_server_test_1_global[t] = self.evaluate_accuracy_single(self.test_global_data, model=tmp, k=1)

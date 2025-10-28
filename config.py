@@ -72,6 +72,7 @@ class ServerInputTech(Enum):
     mean = 1
     max = 2
 class NetType(Enum):
+    SqueezeNet = "SqueezeNet"
     MobileNet = "MobileNet"
     rndNet = "rndNet"
 
@@ -95,6 +96,12 @@ class DataType(Enum):
     NonIID = 2
 
 class NetsType(Enum):
+    C_squeeze_S_alex = 27
+
+    C_squeeze_S_vgg = 26
+    C_ResNet_S_alex = 25
+    C_ResNet_S_vgg = 24
+    C_alex_S_Mobile = 23
     C_Mobile_S_alex = 20
     C_Mobile_S_VGG = 21
     C_rnd_S_VGG = 14
@@ -256,9 +263,28 @@ class ExperimentConfig:
     def update_net_type(self,net_type):
 
 
-        if net_type == NetsType.C_alex_S_alex or net_type == NetsType.C_alex or net_type==NetsType.S_alex or net_type==NetsType.S_vgg or  net_type == NetsType.C_rndStrong_S_alex or net_type == NetsType.C_rndWeak_S_alex or net_type == NetsType.C_rnd_S_alex or net_type ==NetsType.C_Mobile_S_alex:
+        if net_type ==NetsType.C_alex_S_Mobile:
+            if net_type == NetsType.C_alex_S_Mobile:
+                self.client_net_type = NetType.ALEXNET
+                self.server_net_type = NetType.MobileNet
+            if self.algorithm_selection == AlgorithmSelected.COMET:
+                self.learning_rate_train_c = 0.0008
+            elif self.algorithm_selection == AlgorithmSelected.FedMD:
+                self.learning_rate_train_c = 0.002
+            else:
+                self.learning_rate_train_c = 0.0001
+
+            self.learning_rate_fine_tune_c = 0.001
+            self.learning_rate_train_s = 0.001
+        if net_type == NetsType.C_alex_S_alex or net_type == NetsType.C_alex or net_type==NetsType.S_alex or net_type==NetsType.S_vgg or  net_type == NetsType.C_rndStrong_S_alex or net_type == NetsType.C_rndWeak_S_alex or net_type == NetsType.C_rnd_S_alex or net_type ==NetsType.C_Mobile_S_alex  or  net_type == NetsType.C_ResNet_S_alex \
+                or net_type == NetsType.C_squeeze_S_alex:
+
             if net_type == NetsType.C_rndStrong_S_alex:
                 self.client_net_type = NetType.rndStrong
+            elif net_type == NetsType.C_squeeze_S_alex:
+                self.client_net_type = NetType.SqueezeNet
+            elif net_type == NetsType.C_ResNet_S_vgg:
+                self.client_net_type = NetType.ResNet
             elif net_type == NetsType.C_rndWeak_S_alex:
                 self.client_net_type = NetType.rndWeak
             elif net_type == NetsType.C_rnd_S_alex:
@@ -279,8 +305,18 @@ class ExperimentConfig:
             self.learning_rate_train_s = 0.001
 
 
-        if net_type == NetsType.C_alex_S_vgg or net_type == NetsType.S_vgg or net_type == NetsType.C_rndStrong_S_VGG or net_type == NetsType.C_rndWeak_S_VGG or net_type == NetsType.C_rnd_S_VGG or   net_type == NetsType.C_Mobile_S_VGG:
-            if net_type == NetsType.C_rndStrong_S_VGG:
+
+
+
+
+
+
+        if net_type == NetsType.C_alex_S_vgg or net_type == NetsType.S_vgg or net_type == NetsType.C_rndStrong_S_VGG or net_type == NetsType.C_rndWeak_S_VGG or net_type == NetsType.C_rnd_S_VGG or   net_type == NetsType.C_Mobile_S_VGG or  net_type == NetsType.C_ResNet_S_vgg or net_type == NetsType.C_squeeze_S_vgg:
+            if net_type == NetsType.C_ResNet_S_vgg:
+                self.client_net_type= NetType.ResNet
+            elif net_type == NetsType.C_squeeze_S_vgg:
+                self.client_net_type = NetType.SqueezeNet
+            elif net_type == NetsType.C_rndStrong_S_VGG:
                 self.client_net_type = NetType.rndStrong
             elif net_type == NetsType.C_rndWeak_S_VGG:
                 self.client_net_type = NetType.rndWeak
