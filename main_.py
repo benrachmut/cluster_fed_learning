@@ -242,7 +242,7 @@ def run_FedBABU():
                                                                                            server_train_data,
                                                                                            clients_test_data_dict,
                                                                                            server_test_data)
-                            server = ServerFedBABU(
+                            server = Server_FedBABU(
                                 id_="server",
                                 global_data=server_train_data,
                                 test_data=server_test_data,
@@ -250,47 +250,38 @@ def run_FedBABU():
                                 clients_test_data_dict=clients_test_by_id_dict
                             )
 
-                            # --- Initialize all clients to the same starting model ---
-                            with torch.no_grad():
-                                w0 = copy.deepcopy(clients[0].model.state_dict())
-
+                            # 3) (Optional) Initialize & broadcast once (BODY-only dict)
+                            g0 = copy.deepcopy(server.global_state)
                             for c in clients:
-                                # full model init for identical start
-                                c.model.load_state_dict(w0, strict=True)
+                                c.set_model_from_global(g0)
 
-                            # Prepare a BODY-ONLY dict for the initial "weights_received"
-                            # (use one client to compute it after model init)
-                            body_sd0 = clients[0]._extract_body_state_dict()
+                            # 4) FedBABU Rounds
+                            iters = int(experiment_config.iterations)
+                            t0 = time.time()
+                            for t in range(iters):
+                                print(f"\n---------------------------- iter: {t}")
+                                server.run_round(t)  # broadcast BODY -> client FedBABU local solve -> aggregate BODY
 
-                            for c in clients:
-                                # IMPORTANT: give body-only weights here (NOT full w0)
-                                c.weights_received = copy.deepcopy(body_sd0)
+                                # (Optional) global monitor (global head not meaningful; number is diagnostic only)
+                                # global_top1 = server.eval_global_top1()
+                                # print(f"[server] diag global_top1={global_top1:.2f}")
 
-                            # Optionally set data-size weights for server averaging (if you track them)
-                            # server.client_num_examples = {c.id_: len(c.local_data) for c in clients}
-
-                            # ---------------- Main FL loop ----------------
-                            for t in range(experiment_config.iterations):
-                                print("----------------------------iter number:", t)
-
-                                # Each client does: load body -> train body (head frozen) -> send body -> personalize head -> eval
-                                for c in clients:
-                                    c.iteration_context(t)
-
-                                # Collect BODY-ONLY weights to server
-                                for c in clients:
-                                    server.received_weights[c.id_] = c.weights_to_send
-
-                                # Aggregate per cluster and broadcast BODY-ONLY means
-                                server.iterate(t)
-
-                                # Push aggregated BODY-ONLY back to clients
-                                for c in clients:
-                                    c.weights_received = server.weights_to_send[c.id_]
-
-                                # Log
+                                # 5) Log results (reuse your existing pipeline)
                                 rd = RecordData(clients, server)
                                 save_record_to_results(rd)
+
+                            dt = time.time() - t0
+                            print(f"[FedBABU] training finished in {dt / 60.0:.1f} min for {iters} rounds")
+
+                        # ----------------- Example usage -----------------
+                        # if __name__ == "__main__":
+                        #     # prepare your data dicts as you already do
+                        #     run_FedBABU(
+                        #         clients_train_data_dict=...,
+                        #         server_train_data=...,
+                        #         clients_test_data_dict=...,
+                        #         server_test_data=...,
+                        #     )
 def iterate_fl_clusters(clients,server,net_type,net_cluster_technique,server_input_tech,cluster_technique,server_feedback_technique,
                         num_cluster,weights_for_ps=None,input_consistency=None,epsilon =None):
     for t in range(experiment_config.iterations):
@@ -574,7 +565,7 @@ if __name__ == '__main__':
     server_data_ratios = [1]#[-4,-3,-2,-1,0,1,2,3,4] #  # 0.96,0.5,0.75,1,1.25,1.5,1.75,2]
     print("epsilons:", cluster_additions)
     print(("alpha_dichts", alpha_dichts))
-    algorithm_selection_list =[AlgorithmSelected.Ditto]#[AlgorithmSelected.FedMD,AlgorithmSelected.pFedCK,AlgorithmSelected.COMET,AlgorithmSelected.Ditto, AlgorithmSelected.FedAvg,AlgorithmSelected.FedBABU]
+    algorithm_selection_list =[AlgorithmSelected.FedBABU]#[AlgorithmSelected.FedMD,AlgorithmSelected.pFedCK,AlgorithmSelected.COMET,AlgorithmSelected.Ditto, AlgorithmSelected.FedAvg,AlgorithmSelected.FedBABU]
 
     #pFedMe = 11
     #FedBABU = 10

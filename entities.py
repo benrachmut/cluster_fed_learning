@@ -3267,246 +3267,467 @@ class ServerFedAvg(Server):
 # device, experiment_config, DataSet, etc. exist
 # Base classes: Client, Server (or ServerFedAvg)
 
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+
+"""
+FedBABU drop-in implementation:
+- Robust head detection (Linear or 1x1 Conv head) via param shapes (out_dim == num_classes)
+- Client: re-init + freeze head, train body-only → upload body; optional head-only personalization
+- Server: size-weighted average of BODY-only state_dicts
+
+Usage (matches your main loop pattern):
+    ensure_fedbabu_params(experiment_config)
+
+    clients, clients_ids, clients_test_by_id_dict = create_clients(
+        clients_train_data_dict, server_train_data, clients_test_data_dict, server_test_data
+    )
+
+    server = Server_FedBABU(
+        id_="server",
+        global_data=server_train_data,
+        test_data=server_test_data,
+        clients_ids=clients_ids,
+        clients_test_data_dict=clients_test_by_id_dict,
+        clients=clients,
+    )
+
+    g0 = copy.deepcopy(server.global_state)  # BODY-only dict
+    for c in clients:
+        c.set_model_from_global(g0)
+
+    for t in range(experiment_config.iterations):
+        print("---------------------------- iter:", t)
+        server.run_round(t)
+        rd = RecordData(clients, server)
+        save_record_to_results(rd)
+"""
+
+from __future__ import annotations
+import copy
+from typing import Dict, List, Tuple
+
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+from torch.utils.data import DataLoader
+
+# Expect these to be defined by your codebase:
+# - class Client, class Server
+# - global `device` (torch.device)
+# - global `experiment_config` (namespace/obj with your usual fields)
+
+
+# ---------------------------------------------------------------------
+# Ensure FedBABU hyperparameters exist on experiment_config
+# (Defaults derive from your existing names to keep behavior familiar)
+# ---------------------------------------------------------------------
+def ensure_fedbabu_params(ec):
+    # Required base params you already use
+    assert hasattr(ec, "batch_size")
+    assert hasattr(ec, "learning_rate_train_c")
+    assert hasattr(ec, "learning_rate_fine_tune_c")
+    assert hasattr(ec, "epochs_num_train_client")
+    assert hasattr(ec, "epochs_num_input_fine_tune_clients")
+
+    # New knobs (only add if missing)
+    if not hasattr(ec, "learning_rate_fedbabu_body"):
+        ec.learning_rate_fedbabu_body = float(ec.learning_rate_train_c)
+    if not hasattr(ec, "epochs_num_fedbabu_body"):
+        ec.epochs_num_fedbabu_body = int(ec.epochs_num_train_client)
+
+    if not hasattr(ec, "learning_rate_fedbabu_head"):
+        ec.learning_rate_fedbabu_head = float(ec.learning_rate_fine_tune_c)
+    if not hasattr(ec, "epochs_num_fedbabu_head"):
+        ec.epochs_num_fedbabu_head = max(1, int(ec.epochs_num_input_fine_tune_clients // 2))
+
+    if not hasattr(ec, "fedbabu_personalize_each_round"):
+        ec.fedbabu_personalize_each_round = True
+
+    if not hasattr(ec, "fedbabu_grad_clip_norm"):
+        ec.fedbabu_grad_clip_norm = 1.0
+
+    # Helpful but optional; if models expose num_classes, we can skip.
+    # If you know your dataset, set ec.num_classes elsewhere.
+    # if not hasattr(ec, "num_classes"): pass
+
+
+# ------------------------------ Client (FedBABU) ------------------------------ #
 class Client_FedBABU(Client):
     """
-    FedBABU client:
-      - In each round, re-init & freeze head, train body only on local CE.
-      - Send only body weights to server.
-      - After server aggregation, optionally fine-tune head only for eval.
+    FedBABU Client:
+      Round t:
+        1) set_model_from_global(global_body): load BODY weights, keep (and then re-init) HEAD
+        2) re-init HEAD, freeze HEAD, unfreeze BODY, train BODY-only on local CE
+        3) upload BODY-only state_dict to server
+        4) (optional) personalize: freeze BODY, unfreeze HEAD, train HEAD-only for eval
     """
+
     def __init__(self, id_, client_data, global_data, global_test_data, local_test_data):
         super().__init__(id_, client_data, global_data, global_test_data, local_test_data)
-        self.body_keys_cache = None  # set of state_dict keys for "body"
-        self.head_prefixes = None    # tuple of prefixes that define the head subtree in state_dict
-        self.weights_to_send = None
-        self.weights_received = None  # server sends back BODY-ONLY state_dict
-        # identify head subtree once
-        self._identify_head_prefixes()
+        self._fedbabu_init_done = False
+        self._head_prefix: str | None = None     # e.g., "classifier.6"
+        self._body_keys: set[str] = set()
+        self.w_model: nn.Module | None = None
+        self._init_head_body_partitions()
 
-    # ------ Model partition helpers ------
-    def _identify_head_prefixes(self):
+    # ---- detection of head/body ------------------------------------------------
+    def _infer_num_classes(self) -> int:
+        ec = experiment_config
+        if hasattr(ec, "num_classes") and ec.num_classes is not None:
+            return int(ec.num_classes)
+        # fallback to model attribute if present
+        if hasattr(self.model, "num_classes") and self.model.num_classes is not None:
+            return int(self.model.num_classes)
+        raise RuntimeError("[FedBABU] could not infer num_classes (set experiment_config.num_classes).")
+
+    def _init_head_body_partitions(self):
         """
-        Locate the final nn.Linear layer's qualified name.
-        We'll treat that whole module subtree as the 'head'.
-        Works for AlexNet/VGG/MobileNet etc.; falls back to last Linear seen.
+        Identify the classifier 'head' via parameter shapes:
+          - Linear: weight.shape[0] == num_classes
+          - Conv2d: weight.shape[0] == num_classes (often kh=kw=1)
+        Falls back to last Linear module name, else last param prefix.
         """
-        last_linear_name = None
-        for name, module in self.model.named_modules():
-            if isinstance(module, nn.Linear):
-                last_linear_name = name
-        if last_linear_name is None:
-            print("[FedBABU][warn] No Linear head found; treating last module as head.")
-            # Fallback: treat the last module (by traversal order) as head:
-            names = [n for n, _ in self.model.named_modules()]
-            last_linear_name = names[-1] if names else ""
-
-        # Prefix(es) that mark all params/buffers of the head subtree in state_dict
-        self.head_prefixes = (last_linear_name,) if last_linear_name != "" else tuple()
-
-        # Pre-compute body keys
+        num_classes = self._infer_num_classes()
         sd = self.model.state_dict()
+        param_keys = [k for k in sd.keys() if k.endswith(".weight") or k.endswith(".bias")]
+
+        candidates = []
+        for k in param_keys:
+            wkey = k if k.endswith(".weight") else k[:-5] + ".weight"
+            if wkey in sd:
+                w = sd[wkey]
+                if w.ndim == 2 and w.shape[0] == num_classes:          # Linear
+                    candidates.append(wkey[:-len(".weight")])
+                elif w.ndim == 4 and w.shape[0] == num_classes:        # Conv2d
+                    candidates.append(wkey[:-len(".weight")])
+
+        if candidates:
+            head_prefix = candidates[-1]
+        else:
+            # fallback 1: last Linear module
+            last_linear = None
+            for name, m in self.model.named_modules():
+                if isinstance(m, nn.Linear):
+                    last_linear = name
+            if last_linear is not None:
+                head_prefix = last_linear
+            else:
+                # fallback 2: last param prefix
+                if not param_keys:
+                    raise RuntimeError("[FedBABU] no parameters found; cannot choose head.")
+                head_prefix = param_keys[-1].rsplit(".", 1)[0]
+
+        # Cache partition
         head_keys = set()
         for k in sd.keys():
-            if any(k == p or k.startswith(p + ".") for p in self.head_prefixes):
+            if k == head_prefix or k.startswith(head_prefix + "."):
                 head_keys.add(k)
-        self.body_keys_cache = set(sd.keys()) - head_keys
+        body_keys = set(sd.keys()) - head_keys
+        if not body_keys:
+            raise RuntimeError("[FedBABU] body detected as empty; head detection failed.")
 
-        if len(self.body_keys_cache) == 0:
-            print("[FedBABU][error] Body detected as empty; check model structure.")
-        else:
-            print(f"[FedBABU] Head prefixes: {self.head_prefixes}")
-            print(f"[FedBABU] Body params/buffers: {len(self.body_keys_cache)} / {len(sd)}")
+        self._head_prefix = head_prefix
+        self._body_keys = body_keys
+        self._fedbabu_init_done = True
+        print(f"[FedBABU][client {self.id_}] head_prefix={self._head_prefix} | body_keys={len(self._body_keys)}")
 
+    # ---- model (de)serialization helpers --------------------------------------
+    def _get_body_state(self, model: nn.Module | None = None) -> Dict[str, torch.Tensor]:
+        mdl = self.model if model is None else model
+        full = mdl.state_dict()
+        return {k: v.detach().clone() for k, v in full.items() if k in self._body_keys}
+
+    def _load_body_state(self, body_sd: Dict[str, torch.Tensor], model: nn.Module | None = None):
+        mdl = self.model if model is None else model
+        with torch.no_grad():
+            cur = mdl.state_dict()
+            for k, v in body_sd.items():
+                if k in cur:
+                    if torch.is_tensor(cur[k]):
+                        cur[k].copy_(v.to(dtype=cur[k].dtype, device=cur[k].device))
+                    else:
+                        cur[k] = copy.deepcopy(v)
+            mdl.load_state_dict(cur, strict=False)
+
+    # ---- required by your main loop -------------------------------------------
+    def set_model_from_global(self, global_state: Dict[str, torch.Tensor]):
+        """
+        Called by the coordinator BEFORE each round.
+        In FedBABU, global_state is BODY-only. We copy it into our local model (BODY only).
+        """
+        if not self._fedbabu_init_done:
+            self._init_head_body_partitions()
+
+        self.w_model = self.model
+        if global_state is not None:
+            self._load_body_state(global_state, model=self.w_model)
+
+    # ---- FedBABU local steps ---------------------------------------------------
     def _reinit_head(self):
         """
-        Randomly re-initialize the head module (final classifier).
+        Re-initialize the classifier head (supports Linear or Conv2d).
         """
-        if not self.head_prefixes:
+        if not self._head_prefix:
             return
-        # find module by name (first prefix)
-        head_name = self.head_prefixes[0]
-        module = dict(self.model.named_modules()).get(head_name, None)
+        module = dict(self.w_model.named_modules()).get(self._head_prefix, None)
+
         if module is None:
-            print("[FedBABU][warn] Head module not found by name; skipping reinit.")
+            # Reinit by touching state_dict directly
+            sd = self.w_model.state_dict()
+            wkey = self._head_prefix + ".weight"
+            bkey = self._head_prefix + ".bias"
+            with torch.no_grad():
+                if wkey in sd:
+                    if sd[wkey].ndim == 2:
+                        nn.init.normal_(sd[wkey], mean=0.0, std=0.02)  # Linear
+                    elif sd[wkey].ndim == 4:
+                        nn.init.kaiming_normal_(sd[wkey])              # Conv2d
+                if bkey in sd:
+                    sd[bkey].zero_()
+            self.w_model.load_state_dict(sd, strict=False)
             return
-        for m in module.modules():
-            if isinstance(m, nn.Linear):
-                nn.init.normal_(m.weight, mean=0.0, std=0.02)
-                if m.bias is not None:
-                    nn.init.zeros_(m.bias)
+
+        with torch.no_grad():
+            for m in module.modules():
+                if isinstance(m, nn.Linear):
+                    nn.init.normal_(m.weight, mean=0.0, std=0.02)
+                    if m.bias is not None:
+                        nn.init.zeros_(m.bias)
+                elif isinstance(m, nn.Conv2d):
+                    nn.init.kaiming_normal_(m.weight)
+                    if m.bias is not None:
+                        nn.init.zeros_(m.bias)
 
     def _freeze_head_unfreeze_body(self):
-        """
-        Freeze head (requires_grad=False) and unfreeze body (True).
-        """
-        head_name = self.head_prefixes[0] if self.head_prefixes else None
-        for name, p in self.model.named_parameters():
-            if head_name and (name.startswith(head_name + ".") or name == head_name):
+        hp = self._head_prefix
+        for name, p in self.w_model.named_parameters():
+            if hp and (name == hp or name.startswith(hp + ".")):
                 p.requires_grad = False
             else:
                 p.requires_grad = True
 
     def _freeze_body_unfreeze_head(self):
-        """
-        Freeze body (requires_grad=False) and unfreeze head (True) for personalization.
-        """
-        head_name = self.head_prefixes[0] if self.head_prefixes else None
-        for name, p in self.model.named_parameters():
-            if head_name and (name.startswith(head_name + ".") or name == head_name):
+        hp = self._head_prefix
+        for name, p in self.w_model.named_parameters():
+            if hp and (name == hp or name.startswith(hp + ".")):
                 p.requires_grad = True
             else:
                 p.requires_grad = False
 
-    def _extract_body_state_dict(self):
+    def _train_body_only(self) -> float:
         """
-        Return a state_dict with only BODY keys.
+        CE on local data; ONLY body params have requires_grad=True.
         """
-        full = self.model.state_dict()
-        return {k: v.detach().clone() for k, v in full.items() if k in self.body_keys_cache}
-
-    def _load_body_state_dict(self, body_sd):
-        """
-        Load BODY weights from server into current model, leaving head intact.
-        """
-        with torch.no_grad():
-            cur = self.model.state_dict()
-            for k, v in body_sd.items():
-                if k in cur:
-                    cur[k].copy_(v.to(cur[k].dtype).to(cur[k].device))
-            self.model.load_state_dict(cur)
-
-    # ------ One round on the client ------
-    def iteration_context(self, t):
-        self.current_iteration = t
-
-        # Load server-provided body (if any)
-        if self.weights_received is not None:
-            self._load_body_state_dict(self.weights_received)
-
-        # FedBABU step 1: reset + freeze head, train body only
-        self._reinit_head()
-        self._freeze_head_unfreeze_body()
-
-        self._train_body_only()
-
-        # Prepare upload: only body weights
-        self.weights_to_send = self._extract_body_state_dict()
-        total_size = sum(p.numel() * p.element_size() for p in self.weights_to_send.values())
-        self.size_sent[t] = total_size / (1024 * 1024)
-
-        # FedBABU personalization for evaluation: freeze body, fine-tune head only
-        self._freeze_body_unfreeze_head()
-        self._personalize_head_only()
-
-        # Evaluate & store metrics
-        self.accuracy_per_client_1[t]   = self.evaluate_accuracy_single(self.local_test_set, k=1)
-        self.accuracy_per_client_5[t]   = self.evaluate_accuracy(self.local_test_set, k=5)
-        self.accuracy_per_client_10[t]  = self.evaluate_accuracy(self.local_test_set, k=10)
-        self.accuracy_per_client_100[t] = self.evaluate_accuracy(self.local_test_set, k=100)
-
-    # ------ Local training routines ------
-    def _train_body_only(self):
-        """
-        Standard supervised CE on local_data, but optimizer sees ONLY body params.
-        Head is frozen (random), so gradients won't flow into it.
-        """
-        print(f"*** {self} FedBABU body-train (head frozen) ***")
-        loader = DataLoader(self.local_data,
-                            batch_size=experiment_config.batch_size,
+        self.w_model.train()
+        loader = DataLoader(self.local_data, batch_size=experiment_config.batch_size,
                             shuffle=True, num_workers=0, drop_last=False)
-        self.model.train()
         criterion = nn.CrossEntropyLoss()
-        # Only params with requires_grad=True are optimized (body)
-        optimizer = torch.optim.Adam(filter(lambda p: p.requires_grad, self.model.parameters()),
-                                     lr=getattr(experiment_config, "learning_rate_fedbabu_body",
-                                                experiment_config.learning_rate_fine_tune_c))
+        body_params = [p for p in self.w_model.parameters() if p.requires_grad]
+        lr = getattr(experiment_config, "learning_rate_fedbabu_body",
+                     getattr(experiment_config, "learning_rate_fine_tune_c", 1e-3))
+        optimizer = torch.optim.Adam(body_params, lr=lr)
 
         epochs = getattr(experiment_config, "epochs_num_fedbabu_body",
-                         experiment_config.epochs_num_input_fine_tune_clients)
-        last_loss = float("nan")
+                         getattr(experiment_config, "epochs_num_train_client", 1))
+        clip = getattr(experiment_config, "fedbabu_grad_clip_norm", 1.0)
 
-        for epoch in range(epochs):
-            self.epoch_count += 1
-            epoch_loss = 0.0
+        last = float("nan")
+        for ep in range(epochs):
+            ep_loss = 0.0
             for x, y in loader:
                 x, y = x.to(device), y.to(device)
                 optimizer.zero_grad(set_to_none=True)
-                logits = self.model(x)
+                logits = self.w_model(x)
                 loss = criterion(logits, y)
                 loss.backward()
-                torch.nn.utils.clip_grad_norm_(filter(lambda p: p.requires_grad, self.model.parameters()), 1.0)
+                torch.nn.utils.clip_grad_norm_(body_params, clip)
                 optimizer.step()
-                epoch_loss += float(loss.item())
-            last_loss = epoch_loss / max(1, len(loader))
-            print(f"[FedBABU][body] epoch {epoch+1}/{epochs} loss {last_loss:.4f}")
-        return last_loss
+                ep_loss += float(loss.item())
+            last = ep_loss / max(1, len(loader))
+            print(f"[Client {self.id_}][FedBABU][body] epoch {ep+1}/{epochs} loss={last:.4f}")
+        return last
 
-    def _personalize_head_only(self):
+    def _personalize_head_only(self) -> float:
         """
-        Fine-tune head only (body frozen) on local data for personalization/eval.
+        Optional: fine-tune head only (for evaluation).
         """
-        print(f"*** {self} FedBABU personalize head-only ***")
-        loader = DataLoader(self.local_data,
-                            batch_size=experiment_config.batch_size,
+        self.w_model.train()
+        loader = DataLoader(self.local_data, batch_size=experiment_config.batch_size,
                             shuffle=True, num_workers=0, drop_last=False)
-        self.model.train()
         criterion = nn.CrossEntropyLoss()
-        optimizer = torch.optim.Adam(filter(lambda p: p.requires_grad, self.model.parameters()),
-                                     lr=getattr(experiment_config, "learning_rate_fedbabu_head",
-                                                experiment_config.learning_rate_fine_tune_c))
+        self._freeze_body_unfreeze_head()
+        head_params = [p for p in self.w_model.parameters() if p.requires_grad]
 
+        lr = getattr(experiment_config, "learning_rate_fedbabu_head",
+                     getattr(experiment_config, "learning_rate_fine_tune_c", 1e-3))
+        optimizer = torch.optim.Adam(head_params, lr=lr)
         epochs = getattr(experiment_config, "epochs_num_fedbabu_head",
-                         max(1, experiment_config.epochs_num_input_fine_tune_clients // 2))
-        last_loss = float("nan")
+                         max(1, getattr(experiment_config, "epochs_num_input_fine_tune_clients", 2) // 2))
+        clip = getattr(experiment_config, "fedbabu_grad_clip_norm", 1.0)
 
-        for epoch in range(epochs):
-            self.epoch_count += 1
-            epoch_loss = 0.0
+        last = float("nan")
+        for ep in range(epochs):
+            ep_loss = 0.0
             for x, y in loader:
                 x, y = x.to(device), y.to(device)
                 optimizer.zero_grad(set_to_none=True)
-                logits = self.model(x)
+                logits = self.w_model(x)
                 loss = criterion(logits, y)
                 loss.backward()
-                torch.nn.utils.clip_grad_norm_(filter(lambda p: p.requires_grad, self.model.parameters()), 1.0)
+                torch.nn.utils.clip_grad_norm_(head_params, clip)
                 optimizer.step()
-                epoch_loss += float(loss.item())
-            last_loss = epoch_loss / max(1, len(loader))
-            print(f"[FedBABU][head] epoch {epoch+1}/{epochs} loss {last_loss:.4f}")
-        return last_loss
+                ep_loss += float(loss.item())
+            last = ep_loss / max(1, len(loader))
+            print(f"[Client {self.id_}][FedBABU][head] epoch {ep+1}/{epochs} loss={last:.4f}")
+        return last
+
+    # ---- entry point called by server.run_round --------------------------------
+    def train(self, t: int) -> Tuple[Dict[str, torch.Tensor], int]:
+        """
+        Run local FedBABU steps for round t.
+        Returns:
+            body_state_dict (BODY-only), num_examples (int)
+        """
+        # Step A: reinit head, freeze head, train body only
+        self._reinit_head()
+        self._freeze_head_unfreeze_body()
+        _ = self._train_body_only()
+
+        # Prepare upload (BODY-only)
+        body_sd = self._get_body_state(self.w_model)
+        num_examples = len(self.local_data)
+
+        # Optional personalization for evaluation
+        if getattr(experiment_config, "fedbabu_personalize_each_round", True):
+            _ = self._personalize_head_only()
+
+        # Optional eval logging (guard if helpers absent)
+        try:
+            self.accuracy_per_client_1[t] = self.evaluate_accuracy_single(self.local_test_set, k=1)
+            self.accuracy_per_client_5[t] = self.evaluate_accuracy(self.local_test_set, k=5)
+            self.accuracy_per_client_10[t] = self.evaluate_accuracy(self.local_test_set, k=10)
+            self.accuracy_per_client_100[t] = self.evaluate_accuracy(self.local_test_set, k=100)
+        except Exception:
+            pass
+
+        return body_sd, int(num_examples)
 
     def __str__(self):
         return f"Client_FedBABU {self.id_}"
 
 
-class ServerFedBABU(ServerFedAvg):
+# ------------------------------ Server (FedBABU) ------------------------------ #
+class Server_FedBABU(Server):
     """
-    Same averaging mechanics as ServerFedAvg, but expects *body-only* state_dicts.
-    The .weights_to_send per client is body-only; clients load into body and keep their head.
+    FedBABU Server:
+      - Maintains a single global BODY state_dict: self.global_state
+      - Per round:
+          broadcast BODY (self.global_state) to clients
+          collect BODY updates + sizes
+          size-weighted average → new BODY (self.global_state)
     """
-    def iterate(self, t):
-        self.current_iteration = t
-        if len(self.received_weights) != len(self.clients_ids):
-            missing = set(self.clients_ids) - set(self.received_weights.keys())
-            raise RuntimeError(f"ServerFedBABU: missing body weights from clients: {sorted(missing)}")
 
-        # Single cluster or your existing clustering logic:
-        weights_per_cluster, clusters_client_id_dict = self.get_weights_per_cluster(t)
+    def __init__(self, id_, global_data, test_data, clients_ids, clients_test_data_dict,
+                 clients: List[Client_FedBABU]):
+        super().__init__(id_, global_data, test_data, clients_ids, clients_test_data_dict)
+        if not clients:
+            raise ValueError("Server_FedBABU needs a non-empty client list")
+        self.clients: List[Client_FedBABU] = clients
+        # Initialize global BODY from a probe client
+        probe_client = clients[0]
+        self.global_state: Dict[str, torch.Tensor] = probe_client._get_body_state(probe_client.model)
+        self.current_iteration = -1
 
+    @property
+    def global_state_dict(self):
+        """Alias if other parts of your code expect this name."""
+        return self.global_state
+
+    def _aggregate_weighted(self, bodies: List[Dict[str, torch.Tensor]],
+                            sizes: List[float]) -> Dict[str, torch.Tensor]:
+        total = float(sum(sizes))
+        if total <= 0:
+            sizes = [1.0] * len(sizes)
+            total = float(len(sizes))
+        scalars = [s / total for s in sizes]
+
+        keys = list(bodies[0].keys())
+        out = {}
         with torch.no_grad():
-            mean_per_cluster = {}
-            for cluster_id, weight_list in weights_per_cluster.items():
-                cids  = clusters_client_id_dict[cluster_id]
-                sizes = [float(self.client_num_examples.get(cid, 1)) for cid in cids]
-                mean_per_cluster[cluster_id] = self.average_weights(weight_list, sizes)
+            for k in keys:
+                v0 = bodies[0][k]
+                if torch.is_tensor(v0) and v0.is_floating_point():
+                    acc = torch.zeros_like(v0, device="cpu", dtype=torch.float32)
+                    for sd, a in zip(bodies, scalars):
+                        acc.add_(sd[k].to(dtype=torch.float32, device="cpu"), alpha=a)
+                    out[k] = acc.to(dtype=v0.dtype)
+                else:
+                    out[k] = copy.deepcopy(v0)
+        return out
 
-            self.weights_to_send = {}
-            for cluster_id, cids in clusters_client_id_dict.items():
-                mean_sd = mean_per_cluster[cluster_id]
-                for cid in cids:
-                    self.weights_to_send[cid] = copy.deepcopy(mean_sd)
+    def run_round(self, t: int):
+        """
+        One FL round:
+          - broadcast BODY (self.global_state) to clients
+          - client executes local FedBABU steps and returns BODY + num_examples
+          - aggregate to update self.global_state
+        """
+        self.current_iteration = t
 
-        self.received_weights = {}
+        # Broadcast BODY to clients
+        for c in self.clients:
+            c.set_model_from_global(self.global_state)
+
+        # Collect uploads (move to CPU for aggregation)
+        bodies, sizes = [], []
+        for c in self.clients:
+            body_sd, n = c.train(t)
+            body_cpu = {k: (v.detach().cpu() if torch.is_tensor(v) else v) for k, v in body_sd.items()}
+            bodies.append(body_cpu)
+            sizes.append(float(n))
+
+        # Validate key sets
+        ref_keys = set(bodies[0].keys())
+        for i, sd in enumerate(bodies[1:], start=1):
+            if set(sd.keys()) != ref_keys:
+                raise ValueError(f"[FedBABU][server] BODY keys mismatch at client index {i}")
+
+        # Aggregate → new BODY
+        self.global_state = self._aggregate_weighted(bodies, sizes)
+
+    # Optional: global eval (not canonical; global head isn’t meaningful in FedBABU)
+    def eval_global_top1(self) -> float:
+        try:
+            probe = self.clients[0]
+            temp = probe.get_client_model() if hasattr(probe, "get_client_model") else copy.deepcopy(probe.model)
+            with torch.no_grad():
+                cur = temp.state_dict()
+                for k, v in self.global_state.items():
+                    if k in cur and torch.is_tensor(cur[k]):
+                        cur[k].copy_(v.to(dtype=cur[k].dtype, device=cur[k].device))
+                    elif k in cur:
+                        cur[k] = copy.deepcopy(v)
+                temp.load_state_dict(cur, strict=False)
+
+            loader = DataLoader(self.test_global_data, batch_size=128, shuffle=False, num_workers=0)
+            temp.eval()
+            correct, total = 0, 0
+            with torch.no_grad():
+                for x, y in loader:
+                    x, y = x.to(device), y.to(device)
+                    logits = temp(x)
+                    pred = logits.argmax(dim=1)
+                    correct += int((pred == y).sum().item())
+                    total += int(y.numel())
+            return 100.0 * correct / max(1, total)
+        except Exception as e:
+            print(f"[FedBABU][server] eval_global_top1 failed: {e}")
+            return float("nan")
+
+    def __str__(self):
+        return "Server_FedBABU"
+
 
 
 # ===== Helpers =====
