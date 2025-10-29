@@ -247,7 +247,7 @@ def run_FedBABU():
                                 global_data=server_train_data,
                                 test_data=server_test_data,
                                 clients_ids=clients_ids,
-                                clients_test_data_dict=clients_test_by_id_dict
+                                clients_test_data_dict=clients_test_by_id_dict, clients=clients
                             )
 
                             # 3) (Optional) Initialize & broadcast once (BODY-only dict)

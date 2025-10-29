@@ -3371,7 +3371,7 @@ class Client_FedBABU(Client):
         self._init_head_body_partitions()
 
     # ---- detection of head/body ------------------------------------------------
-    def _infer_num_classes(self) -> int:
+    def _infer_num_classes(self):
         ec = experiment_config
         if hasattr(ec, "num_classes") and ec.num_classes is not None:
             return int(ec.num_classes)
@@ -3432,12 +3432,12 @@ class Client_FedBABU(Client):
         print(f"[FedBABU][client {self.id_}] head_prefix={self._head_prefix} | body_keys={len(self._body_keys)}")
 
     # ---- model (de)serialization helpers --------------------------------------
-    def _get_body_state(self, model: nn.Module | None = None) -> Dict[str, torch.Tensor]:
+    def _get_body_state(self, model) :
         mdl = self.model if model is None else model
         full = mdl.state_dict()
         return {k: v.detach().clone() for k, v in full.items() if k in self._body_keys}
 
-    def _load_body_state(self, body_sd: Dict[str, torch.Tensor], model: nn.Module | None = None):
+    def _load_body_state(self, body_sd, model):
         mdl = self.model if model is None else model
         with torch.no_grad():
             cur = mdl.state_dict()
@@ -3450,7 +3450,7 @@ class Client_FedBABU(Client):
             mdl.load_state_dict(cur, strict=False)
 
     # ---- required by your main loop -------------------------------------------
-    def set_model_from_global(self, global_state: Dict[str, torch.Tensor]):
+    def set_model_from_global(self, global_state):
         """
         Called by the coordinator BEFORE each round.
         In FedBABU, global_state is BODY-only. We copy it into our local model (BODY only).
@@ -3514,7 +3514,7 @@ class Client_FedBABU(Client):
             else:
                 p.requires_grad = False
 
-    def _train_body_only(self) -> float:
+    def _train_body_only(self):
         """
         CE on local data; ONLY body params have requires_grad=True.
         """
@@ -3547,7 +3547,7 @@ class Client_FedBABU(Client):
             print(f"[Client {self.id_}][FedBABU][body] epoch {ep+1}/{epochs} loss={last:.4f}")
         return last
 
-    def _personalize_head_only(self) -> float:
+    def _personalize_head_only(self):
         """
         Optional: fine-tune head only (for evaluation).
         """
@@ -3582,7 +3582,7 @@ class Client_FedBABU(Client):
         return last
 
     # ---- entry point called by server.run_round --------------------------------
-    def train(self, t: int) -> Tuple[Dict[str, torch.Tensor], int]:
+    def train(self, t):
         """
         Run local FedBABU steps for round t.
         Returns:
@@ -3643,8 +3643,8 @@ class Server_FedBABU(Server):
         """Alias if other parts of your code expect this name."""
         return self.global_state
 
-    def _aggregate_weighted(self, bodies: List[Dict[str, torch.Tensor]],
-                            sizes: List[float]) -> Dict[str, torch.Tensor]:
+    def _aggregate_weighted(self, bodies,
+                            sizes) :
         total = float(sum(sizes))
         if total <= 0:
             sizes = [1.0] * len(sizes)
@@ -3665,7 +3665,7 @@ class Server_FedBABU(Server):
                     out[k] = copy.deepcopy(v0)
         return out
 
-    def run_round(self, t: int):
+    def run_round(self, t):
         """
         One FL round:
           - broadcast BODY (self.global_state) to clients
@@ -3696,7 +3696,7 @@ class Server_FedBABU(Server):
         self.global_state = self._aggregate_weighted(bodies, sizes)
 
     # Optional: global eval (not canonical; global head isn’t meaningful in FedBABU)
-    def eval_global_top1(self) -> float:
+    def eval_global_top1(self) :
         try:
             probe = self.clients[0]
             temp = probe.get_client_model() if hasattr(probe, "get_client_model") else copy.deepcopy(probe.model)
