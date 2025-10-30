@@ -283,7 +283,7 @@ class ExperimentConfig:
                 self.client_net_type = NetType.rndStrong
             elif net_type == NetsType.C_squeeze_S_alex:
                 self.client_net_type = NetType.SqueezeNet
-            elif net_type == NetsType.C_ResNet_S_vgg:
+            elif net_type == NetsType.C_ResNet_S_alex:
                 self.client_net_type = NetType.ResNet
             elif net_type == NetsType.C_rndWeak_S_alex:
                 self.client_net_type = NetType.rndWeak
