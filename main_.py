@@ -618,6 +618,10 @@ if __name__ == '__main__':
     for data_set  in  data_sets_list:
         experiment_config.update_num_classes(data_set)
         for num_clients in num_clients_list:
+            if num_clients > 24:
+                experiment_config.is_with_memory_load = True
+            else:
+                experiment_config.is_with_memory_load = False
             experiment_config.num_clients = num_clients
             for num_opt_clusters in  num_opt_clusters_list:
                 experiment_config.number_of_optimal_clusters = num_opt_clusters

@@ -391,7 +391,20 @@ class LearningEntity(ABC):
         torch.manual_seed(self.num+t*17)
         torch.cuda.manual_seed(self.num+t*17)
 
-        self.iteration_context(t)
+        if experiment_config.is_with_memory_load and self.id_ != "server":
+            if t == 0:
+                self.iteration_context(t)
+                torch.save(self.model.state_dict(), "./saved_models/model_{}.pth".format(self.id_))
+                del self.model
+            elif t > 0:
+                self.model = self.get_client_model()
+                self.model.apply(self.initialize_weights)
+                self.model.load_state_dict(torch.load("./saved_models/model_{}.pth".format(self.id_)))
+                self.iteration_context(t)
+                torch.save(self.model.state_dict(), "./saved_models/model_{}.pth".format(self.id_))
+                del self.model
+        else:
+            self.iteration_context(t)
 
 
 

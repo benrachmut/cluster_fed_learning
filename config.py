@@ -175,6 +175,7 @@ class ExperimentConfig:
         self.which_net_arch = None
         self.seed_num = 1
         self.iterations = 20
+        self.is_with_memory_load = None
 
         # CIFAR10/CIFAR 100
         self.data_set_selected = None # selected in main
