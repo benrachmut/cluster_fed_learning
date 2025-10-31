@@ -619,6 +619,43 @@ class LearningEntity(ABC):
         return avg_loss  # Return the average loss
 
 
+def get_ResNetSqueeze(rand_client):
+    p = rand_client.random()
+    if p <= 0.5:
+        print("Res")
+        return ResNet18Server(num_classes=experiment_config.num_classes).to(device)
+    else:
+        print("SqueezeNetServer")
+        return SqueezeNetServer(num_classes=experiment_config.num_classes).to(device)
+
+
+def get_ResNetMobile(rand_client):
+    p = rand_client.random()
+    if p <= 0.5:
+        print("Res")
+        return ResNet18Server(num_classes=experiment_config.num_classes).to(device)
+    else:
+        print("Mobile")
+        return MobileNetV2Server(num_classes=experiment_config.num_classes).to(device)
+
+
+def get_AlexMobile(rand_client):
+    p = rand_client.random()
+    if p <= 0.5:
+        print("Alex")
+        return AlexNet(num_classes=experiment_config.num_classes,num_clusters=num_heads).to(device)
+    else:
+        print("Mobile")
+        return MobileNetV2Server(num_classes=experiment_config.num_classes).to(device)
+
+def get_AlexSqueeze(rand_client):
+    p = rand_client.random()
+    if p <= 0.5:
+        print("Alex")
+        return AlexNet(num_classes=experiment_config.num_classes,num_clusters=num_heads).to(device)
+    else:
+        print("SqueezeNetServer")
+        return SqueezeNetServer(num_classes=experiment_config.num_classes).to(device)
 
 
 class Client(LearningEntity):
@@ -650,13 +687,20 @@ class Client(LearningEntity):
             return ResNet18Server(num_classes=experiment_config.num_classes).to(device)
         if experiment_config.client_net_type == NetType.SqueezeNet:
             return SqueezeNetServer(num_classes=experiment_config.num_classes).to(device)
-
+        if  experiment_config.client_net_type == NetType.ResNetSqueeze:
+            return get_ResNetSqueeze(self.rand_client)
+        if experiment_config.client_net_type ==NetType.ResMobile:
+            return get_ResNetMobile(self.rand_client)
+        if experiment_config.client_net_type ==NetType.AlexMobile:
+            return get_AlexMobile(self.rand_client)
         if experiment_config.client_net_type == NetType.rndStrong:
             return get_rnd_strong_net(self.rand_client)
         if  experiment_config.client_net_type == NetType.rndWeak:
             return get_rnd_weak_net(self.rand_client)
         if experiment_config.client_net_type == NetType.rndNet:
             return get_rnd_net(self.rand_client)
+        if experiment_config.client_net_type == NetType.AlexSqueeze:
+            return get_AlexSqueeze(self.rand_client)
         if experiment_config.client_net_type == NetType.MobileNet:
             return MobileNetV2Server(num_classes=experiment_config.num_classes).to(device)
 

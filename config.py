@@ -72,6 +72,12 @@ class ServerInputTech(Enum):
     mean = 1
     max = 2
 class NetType(Enum):
+    AlexSqueeze = "AlexSqueeze"
+    AlexMobile = "AlexMobile"
+    ResMobile = "ResNetMobile"
+    ResNetSqueeze = "ResNetSqueeze"
+
+
     SqueezeNet = "SqueezeNet"
     MobileNet = "MobileNet"
     rndNet = "rndNet"
@@ -96,6 +102,16 @@ class DataType(Enum):
     NonIID = 2
 
 class NetsType(Enum):
+    C_AlexSqueeze_S_vgg = 35
+    C_AlexSqueeze_S_alex = 34
+    C_AlexMobile_S_vgg = 33
+    C_AlexMobile_S_alex = 32
+
+    C_ResNetMobile_S_vgg = 31
+    C_ResNetMobile_S_alex = 30
+    C_ResNetSqueeze_S_vgg = 29
+    C_ResNetSqueeze_S_alex = 28
+
     C_squeeze_S_alex = 27
 
     C_squeeze_S_vgg = 26
@@ -277,13 +293,23 @@ class ExperimentConfig:
 
             self.learning_rate_fine_tune_c = 0.001
             self.learning_rate_train_s = 0.001
+
+
         if net_type == NetsType.C_alex_S_alex or net_type == NetsType.C_alex or net_type==NetsType.S_alex or net_type==NetsType.S_vgg or  net_type == NetsType.C_rndStrong_S_alex or net_type == NetsType.C_rndWeak_S_alex or net_type == NetsType.C_rnd_S_alex or net_type ==NetsType.C_Mobile_S_alex  or  net_type == NetsType.C_ResNet_S_alex \
-                or net_type == NetsType.C_squeeze_S_alex:
+                or net_type == NetsType.C_squeeze_S_alex or net_type == NetsType.C_ResNetSqueeze_S_alex or net_type == NetsType.C_ResNetMobile_S_alex or net_type == NetsType.C_AlexMobile_S_alex or net_type == NetsType.C_AlexSqueeze_S_alex:
 
             if net_type == NetsType.C_rndStrong_S_alex:
                 self.client_net_type = NetType.rndStrong
+            elif net_type == NetsType.C_AlexMobile_S_alex:
+                self.client_net_type = NetType.AlexMobile
+            elif net_type == NetsType.C_AlexSqueeze_S_alex:
+                self.client_net_type = NetType.AlexSqueeze
+            elif net_type == NetsType.C_ResNetMobile_S_alex:
+                self.client_net_type = NetType.ResMobile
             elif net_type == NetsType.C_squeeze_S_alex:
                 self.client_net_type = NetType.SqueezeNet
+            elif net_type == NetsType.C_ResNetSqueeze_S_alex:
+                self.client_net_type = NetType.ResNetSqueeze
             elif net_type == NetsType.C_ResNet_S_alex:
                 self.client_net_type = NetType.ResNet
             elif net_type == NetsType.C_rndWeak_S_alex:
@@ -312,11 +338,20 @@ class ExperimentConfig:
 
 
 
-        if net_type == NetsType.C_alex_S_vgg or net_type == NetsType.S_vgg or net_type == NetsType.C_rndStrong_S_VGG or net_type == NetsType.C_rndWeak_S_VGG or net_type == NetsType.C_rnd_S_VGG or   net_type == NetsType.C_Mobile_S_VGG or  net_type == NetsType.C_ResNet_S_vgg or net_type == NetsType.C_squeeze_S_vgg:
+        if net_type == NetsType.C_alex_S_vgg or net_type == NetsType.S_vgg or net_type == NetsType.C_rndStrong_S_VGG or net_type == NetsType.C_rndWeak_S_VGG or net_type == NetsType.C_rnd_S_VGG or   net_type == NetsType.C_Mobile_S_VGG or  net_type == NetsType.C_ResNet_S_vgg or net_type == NetsType.C_squeeze_S_vgg or net_type == NetsType.C_ResNetSqueeze_S_vgg or net_type == NetsType.C_ResNetMobile_S_vgg or net_type == NetsType.C_AlexMobile_S_vgg or net_type == NetsType.C_AlexSqueeze_S_vgg:
             if net_type == NetsType.C_ResNet_S_vgg:
                 self.client_net_type= NetType.ResNet
+            elif net_type == NetsType.C_AlexMobile_S_vgg:
+                self.client_net_type = NetType.AlexMobile
+            elif net_type == NetsType.C_AlexSqueeze_S_vgg:
+                self.client_net_type = NetType.AlexSqueeze
             elif net_type == NetsType.C_squeeze_S_vgg:
                 self.client_net_type = NetType.SqueezeNet
+            elif net_type == NetsType.C_ResNetMobile_S_vgg:
+                self.client_net_type = NetType.ResMobile
+            elif net_type == NetsType.C_ResNetSqueeze_S_vgg:
+                self.client_net_type = NetType.ResNetSqueeze
+
             elif net_type == NetsType.C_rndStrong_S_VGG:
                 self.client_net_type = NetType.rndStrong
             elif net_type == NetsType.C_rndWeak_S_VGG:
