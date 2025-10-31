@@ -21,6 +21,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 
+import os
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -390,6 +391,8 @@ class LearningEntity(ABC):
         #self.set_weights()
         torch.manual_seed(self.num+t*17)
         torch.cuda.manual_seed(self.num+t*17)
+
+        os.makedirs("./saved_models", exist_ok=True)
 
         if experiment_config.is_with_memory_load and self.id_ != "server":
             if t == 0:
