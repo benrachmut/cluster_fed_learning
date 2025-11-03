@@ -402,9 +402,11 @@ class LearningEntity(ABC):
             elif t > 0:
                 self.model = self.get_client_model()
                 self.model.apply(self.initialize_weights)
-                self.model.load_state_dict(torch.load("./saved_models/model_{}.pth".format(self.id_)))
+                if experiment_config.num_clients>25:
+                    self.model.load_state_dict(torch.load("./saved_models/model_{}.pth".format(self.id_)))
                 self.iteration_context(t)
-                torch.save(self.model.state_dict(), "./saved_models/model_{}.pth".format(self.id_))
+                if experiment_config.num_clients >25:
+                    torch.save(self.model.state_dict(), "./saved_models/model_{}.pth".format(self.id_))
                 del self.model
         else:
             self.iteration_context(t)
@@ -643,7 +645,7 @@ def get_AlexMobile(rand_client):
     p = rand_client.random()
     if p <= 0.5:
         print("Alex")
-        return AlexNet(num_classes=experiment_config.num_classes,num_clusters=num_heads).to(device)
+        return AlexNet(num_classes=experiment_config.num_classes).to(device)
     else:
         print("Mobile")
         return MobileNetV2Server(num_classes=experiment_config.num_classes).to(device)
@@ -652,7 +654,7 @@ def get_AlexSqueeze(rand_client):
     p = rand_client.random()
     if p <= 0.5:
         print("Alex")
-        return AlexNet(num_classes=experiment_config.num_classes,num_clusters=num_heads).to(device)
+        return AlexNet(num_classes=experiment_config.num_classes).to(device)
     else:
         print("SqueezeNetServer")
         return SqueezeNetServer(num_classes=experiment_config.num_classes).to(device)
