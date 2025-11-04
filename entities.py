@@ -275,7 +275,7 @@ def get_rnd_strong_net(rnd:Random = None):
     p = rnd.random()
     if p <= 0.5:
         print("ResNet18Server")
-        return ResNet18Server(num_classes=experiment_config.num_classes).to(device)
+        return ResNet18Server(num_classes=experiment_config.num_classes).to(device), NetType.ResNet
     # if p <= 0.33:
     #     print("MobileNetV2Server")
     #     return MobileNetV2Server(num_classes=experiment_config.num_classes).to(device)
@@ -284,31 +284,69 @@ def get_rnd_strong_net(rnd:Random = None):
     #     return SqueezeNetServer(num_classes=experiment_config.num_classes).to(device)
     else:
         print("AlexNet")
-        return AlexNet(num_classes=experiment_config.num_classes).to(device)
+        return AlexNet(num_classes=experiment_config.num_classes).to(device),NetType.ALEXNET
 
 def get_rnd_weak_net(rnd:Random = None):
     p = rnd.random()
 
     if p <= 0.5:
         print("MobileNetV2Server")
-        return MobileNetV2Server(num_classes=experiment_config.num_classes).to(device)
+        return MobileNetV2Server(num_classes=experiment_config.num_classes).to(device), NetType.MobileNet
     else:
         print("SqueezeNetServer")
-        return SqueezeNetServer(num_classes=experiment_config.num_classes).to(device)
+        return SqueezeNetServer(num_classes=experiment_config.num_classes).to(device), NetType.SqueezeNet
 
 
 def get_rnd_net_weak(rnd:Random = None):
     p = rnd.random()
     if p <= 0.5:
         print("MobileNetV2Server")
-        return MobileNetV2Server(num_classes=experiment_config.num_classes).to(device)
+        return MobileNetV2Server(num_classes=experiment_config.num_classes).to(device), NetType.MobileNet
     else:
         print("SqueezeNetServer")
-        return SqueezeNetServer(num_classes=experiment_config.num_classes).to(device)
+        return SqueezeNetServer(num_classes=experiment_config.num_classes).to(device), NetType.SqueezeNet
 
 
 
 
+
+def get_ResNetSqueeze(rand_client):
+    p = rand_client.random()
+    if p <= 0.5:
+        print("Res")
+        return ResNet18Server(num_classes=experiment_config.num_classes).to(device), NetType.ResNet
+    else:
+        print("SqueezeNetServer")
+        return SqueezeNetServer(num_classes=experiment_config.num_classes).to(device), NetType.SqueezeNet
+
+
+def get_ResNetMobile(rand_client):
+    p = rand_client.random()
+    if p <= 0.5:
+        print("Res")
+        return ResNet18Server(num_classes=experiment_config.num_classes).to(device),NetType.ResNet
+    else:
+        print("Mobile")
+        return MobileNetV2Server(num_classes=experiment_config.num_classes).to(device), NetType.MobileNet
+
+
+def get_AlexMobile(rand_client):
+    p = rand_client.random()
+    if p <= 0.5:
+        print("Alex")
+        return AlexNet(num_classes=experiment_config.num_classes).to(device),NetType.ALEXNET
+    else:
+        print("Mobile")
+        return MobileNetV2Server(num_classes=experiment_config.num_classes).to(device), NetType.MobileNet
+
+def get_AlexSqueeze(rand_client):
+    p = rand_client.random()
+    if p <= 0.5:
+        print("Alex")
+        return AlexNet(num_classes=experiment_config.num_classes).to(device),NetType.ALEXNET
+    else:
+        print("SqueezeNetServer")
+        return SqueezeNetServer(num_classes=experiment_config.num_classes).to(device), NetType.SqueezeNet
 
 
 def get_server_model():
@@ -396,16 +434,21 @@ class LearningEntity(ABC):
 
         if experiment_config.is_with_memory_load and self.id_ != "server":
             if t == 0:
-                self.iteration_context(t)
-                torch.save(self.model.state_dict(), "./saved_models/model_{}.pth".format(self.id_))
-                del self.model
-            elif t > 0:
-                self.model = self.get_client_model()
+                #self.model = self.get_client_model()
+                self.model= self.get_model_by_type()
                 self.model.apply(self.initialize_weights)
-                if experiment_config.num_clients>25:
+                self.iteration_context(t)
+                if experiment_config.is_with_memory_load:
+                    torch.save(self.model.state_dict(), "./saved_models/model_{}.pth".format(self.id_))
+                    del self.model
+            elif t > 0:
+                #self.model = self.get_client_model()
+                self.model = self.get_model_by_type()
+                self.model.apply(self.initialize_weights)
+                if experiment_config.is_with_memory_load:
                     self.model.load_state_dict(torch.load("./saved_models/model_{}.pth".format(self.id_)))
                 self.iteration_context(t)
-                if experiment_config.num_clients >25:
+                if experiment_config.is_with_memory_load:
                     torch.save(self.model.state_dict(), "./saved_models/model_{}.pth".format(self.id_))
                 del self.model
         else:
@@ -620,44 +663,19 @@ class LearningEntity(ABC):
 
         return avg_loss  # Return the average loss
 
+    def get_model_by_type(self):
 
-def get_ResNetSqueeze(rand_client):
-    p = rand_client.random()
-    if p <= 0.5:
-        print("Res")
-        return ResNet18Server(num_classes=experiment_config.num_classes).to(device)
-    else:
-        print("SqueezeNetServer")
-        return SqueezeNetServer(num_classes=experiment_config.num_classes).to(device)
+        if self.model_type  == NetType.ALEXNET:
+            return AlexNet(num_classes=experiment_config.num_classes).to(device)
+        if self.model_type  == NetType.VGG:
+            return VGGServer(num_classes=experiment_config.num_classes).to(device)
+        if self.model_type  == NetType.ResNet:
+            return ResNet18Server(num_classes=experiment_config.num_classes).to(device)
+        if self.model_type  == NetType.SqueezeNet:
+            return SqueezeNetServer(num_classes=experiment_config.num_classes).to(device)
 
-
-def get_ResNetMobile(rand_client):
-    p = rand_client.random()
-    if p <= 0.5:
-        print("Res")
-        return ResNet18Server(num_classes=experiment_config.num_classes).to(device)
-    else:
-        print("Mobile")
-        return MobileNetV2Server(num_classes=experiment_config.num_classes).to(device)
-
-
-def get_AlexMobile(rand_client):
-    p = rand_client.random()
-    if p <= 0.5:
-        print("Alex")
-        return AlexNet(num_classes=experiment_config.num_classes).to(device)
-    else:
-        print("Mobile")
-        return MobileNetV2Server(num_classes=experiment_config.num_classes).to(device)
-
-def get_AlexSqueeze(rand_client):
-    p = rand_client.random()
-    if p <= 0.5:
-        print("Alex")
-        return AlexNet(num_classes=experiment_config.num_classes).to(device)
-    else:
-        print("SqueezeNetServer")
-        return SqueezeNetServer(num_classes=experiment_config.num_classes).to(device)
+        if self.model_type == NetType.MobileNet:
+            return MobileNetV2Server(num_classes=experiment_config.num_classes).to(device)
 
 
 class Client(LearningEntity):
@@ -671,7 +689,7 @@ class Client(LearningEntity):
         self.seed_client =experiment_config.seed_num + (self.num+1)*17
         self.rand_client =Random(self.seed_client)
 
-        self.model = self.get_client_model()
+        self.model, self.model_type = self.get_client_model()
         self.model.apply(self.initialize_weights)
         #self.train_learning_rate = experiment_config.learning_rate_train_c
         #self.weights = None
@@ -689,22 +707,24 @@ class Client(LearningEntity):
             return ResNet18Server(num_classes=experiment_config.num_classes).to(device)
         if experiment_config.client_net_type == NetType.SqueezeNet:
             return SqueezeNetServer(num_classes=experiment_config.num_classes).to(device)
-        if  experiment_config.client_net_type == NetType.ResNetSqueeze:
+
+        if experiment_config.client_net_type == NetType.MobileNet:
+            return MobileNetV2Server(num_classes=experiment_config.num_classes).to(device)
+
+        if experiment_config.client_net_type == NetType.ResNetSqueeze:
             return get_ResNetSqueeze(self.rand_client)
-        if experiment_config.client_net_type ==NetType.ResMobile:
+        if experiment_config.client_net_type == NetType.ResMobile:
             return get_ResNetMobile(self.rand_client)
-        if experiment_config.client_net_type ==NetType.AlexMobile:
+        if experiment_config.client_net_type == NetType.AlexMobile:
             return get_AlexMobile(self.rand_client)
         if experiment_config.client_net_type == NetType.rndStrong:
             return get_rnd_strong_net(self.rand_client)
-        if  experiment_config.client_net_type == NetType.rndWeak:
+        if experiment_config.client_net_type == NetType.rndWeak:
             return get_rnd_weak_net(self.rand_client)
         if experiment_config.client_net_type == NetType.rndNet:
             return get_rnd_net(self.rand_client)
         if experiment_config.client_net_type == NetType.AlexSqueeze:
             return get_AlexSqueeze(self.rand_client)
-        if experiment_config.client_net_type == NetType.MobileNet:
-            return MobileNetV2Server(num_classes=experiment_config.num_classes).to(device)
 
     def get_label_distribution(self):
         label_counts = defaultdict(int)
@@ -836,7 +856,7 @@ class Client(LearningEntity):
                     break
                 else:
                     self.model.apply(self.initialize_weights)
-            if experiment_config.data_set_selected == DataSet.TinyImageNet:
+            if experiment_config.data_set_selected == DataSet.TinyImageNet or experiment_config.data_set_selected == DataSet.ImageNetR:
                 if acc != 0.5 and acc_test !=0.5:
                     break
                 else:
@@ -2661,8 +2681,8 @@ class Client_pFedCK(Client):
     def __init__(self, id_, client_data, global_data, global_test_data, local_test_data):
         super().__init__(id_, client_data, global_data, global_test_data, local_test_data)
         self.rnd_net = Random((self.seed + 1) * 17 + 13 + (id_ + 1) * 17)
-        self.personalized_model = self.get_client_model()
-        self.interactive_model  = self.get_client_model()
+        self.personalized_model,ttt = self.get_client_model()
+        self.interactive_model,ttt  = self.get_client_model()
         self.initial_state = None  # for delta ω
 
     def set_models(self, personalized_state, interactive_state):
@@ -3903,7 +3923,7 @@ class Client_pFedMe(Client):
         super().__init__(id_, client_data, global_data, global_test_data, local_test_data)
 
         # Local copy of the global model
-        self.w_model = self.get_client_model()
+        self.w_model,ttt = self.get_client_model()
 
         # ---- Hyperparams (reuse your config; add guardrails/defaults) ----
         # minibatch (allow client-specific override)
@@ -3970,7 +3990,7 @@ class Client_pFedMe(Client):
         - Grad clip at 5.0; print raw pre-clip grad norm if do_debug.
         """
         # θ starts from w
-        theta = self.get_client_model()
+        theta,ttt = self.get_client_model()
         theta.load_state_dict(w_snapshot)
         theta.apply(_set_bn_eval)   # freeze BN running stats
         theta.train()
@@ -3978,7 +3998,7 @@ class Client_pFedMe(Client):
         opt_theta = torch.optim.Adam(theta.parameters(), lr=self.theta_lr)
 
         # reference w params (same structure) for prox term
-        w_ref = self.get_client_model()
+        w_ref,ttt = self.get_client_model()
         w_ref.load_state_dict(w_snapshot)
         w_params = _named_param_dict(w_ref)
 

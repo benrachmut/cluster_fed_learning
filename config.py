@@ -3,7 +3,7 @@ from random import random
 
 import torch
 from matplotlib import pyplot as plt
-from torch.utils.data import TensorDataset
+from torch.utils.data import TensorDataset, Subset
 from torchvision.models import MobileNetV2
 
 cifar100_label_to_superclass = {
@@ -55,17 +55,21 @@ def transform_to_TensorDataset_v2(data_):
 
     return TensorDataset(images_tensor, targets_tensor)
 
+
 def transform_to_TensorDataset(data_):
-    images = [item[0] for item in data_]  # Extract the image tensors (index 0 of each tuple)
+    """
+    If data_ is (base_dataset, indices) -> return Subset(base_dataset, indices)
+    Else assume an iterable of (image_tensor, label) -> return TensorDataset
+    """
+    # New path: zero-copy view over the original dataset
+    if isinstance(data_, tuple) and len(data_) == 2:
+        base_dataset, indices = data_
+        return Subset(base_dataset, list(indices))
+
+    # Legacy path: materialized list of (tensor, label)
+    images = [item[0] for item in data_]
     targets = [item[1] for item in data_]
-
-    # Step 2: Convert the lists of images and targets into tensors (if not already)
-    images_tensor = torch.stack(images)  # Stack the image tensors into a single tensor
-    targets_tensor = torch.tensor(targets)  # Convert the targets to a tensor
-
-
-    # Step 3: Create a TensorDataset from the images and targets
-    return TensorDataset(images_tensor, targets_tensor)
+    return TensorDataset(torch.stack(images), torch.tensor(targets))
 
 
 class ServerInputTech(Enum):
@@ -90,11 +94,13 @@ class NetType(Enum):
     rndWeak = "rndWeak"
 
 class DataSet(Enum):
-    CIFAR100 = "CIFAR100"
+    ImageNetR = "ImageNetR"
     CIFAR10 = "CIFAR10"
+    CIFAR100 = "CIFAR100"
     TinyImageNet = "TinyImageNet"
     EMNIST_balanced = "EMNIST_balanced"
     SVHN = "SVHN"
+    ImageNet100 = "ImageNet100"
 
 
 class DataType(Enum):
@@ -259,6 +265,8 @@ class ExperimentConfig:
         self.data_set_selected = data_set
         if data_set == DataSet.CIFAR100:
             self.num_classes = 100
+        if data_set == DataSet.ImageNetR:
+            self.num_classes = 200
         if data_set == DataSet.CIFAR10:
             self.num_classes = 10
         if data_set == DataSet.TinyImageNet:

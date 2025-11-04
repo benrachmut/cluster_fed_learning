@@ -29,13 +29,45 @@ def cut_data(data_set, size_use):
     return torch.utils.data.Subset(data_set, range(int(size_use)))
 
 
+from collections import defaultdict
+from torch.utils.data import Subset
+
 def get_data_by_classification(data_set):
-    #class_labels = data_set.classes
-    data_by_classification = defaultdict(list)
-    for image in data_set:
-    #for image, label in data_set:
-        data_by_classification[image[1]].append(image)
-    return data_by_classification
+    """
+    Return {class_idx: [dataset_indices]} WITHOUT loading any images.
+    - Works for torchvision ImageFolder/CIFAR/SVHN/EMNIST
+    - Works for Subset(…, indices) too (indices returned are *local* to the passed dataset)
+    """
+    # Helper: extract labels (targets) from a base dataset without touching pixels
+    def _labels_from_base(base):
+        if hasattr(base, "targets") and base.targets is not None:
+            return list(base.targets)
+        if hasattr(base, "samples") and base.samples is not None:  # ImageFolder
+            return [lbl for (_p, lbl) in base.samples]
+        if hasattr(base, "imgs"):  # older ImageFolder alias
+            return [lbl for (_p, lbl) in base.imgs]
+        if hasattr(base, "labels"):  # some datasets use .labels
+            return list(base.labels)
+        raise RuntimeError("Unsupported dataset type: cannot find labels/targets.")
+
+    by_cls = defaultdict(list)
+
+    # Case 1: Subset -> build mapping using local indices (0..len(subset)-1)
+    if isinstance(data_set, Subset):
+        base = data_set.dataset
+        base_labels = _labels_from_base(base)
+        sub_indices = list(data_set.indices)  # indices into base
+        for local_i, base_i in enumerate(sub_indices):
+            y = int(base_labels[base_i])
+            by_cls[y].append(local_i)  # local index in the Subset
+        return by_cls
+
+    # Case 2: Plain dataset
+    labels = _labels_from_base(data_set)
+    for i, y in enumerate(labels):
+        by_cls[int(y)].append(i)
+    return by_cls
+
 
 
 def create_torch_mix_set(data_to_mix_list):
@@ -466,12 +498,12 @@ def get_server_data(server_data_dict):
     rnd.shuffle(server_data)
     return transform_to_TensorDataset(server_data)
 
-def split_clients_server_data_Non_IID(data_by_classification_dict, selected_classes):
+def split_clients_server_data_Non_IID(data_by_classification_dict, selected_classes_list, base_dataset):
     server_data_dict = {}
     classes_data_dict = {}
-    for class_target in selected_classes:
+    for class_target in selected_classes_list:
         data_of_class = cut_data_for_partial_use_of_data(class_target,data_by_classification_dict)
-        client_data_per_class, server_data_per_class = split_clients_server_data(data_of_class)
+        client_data_per_class, server_data_per_class = split_clients_server_data(data_of_class, base_dataset)
         classes_data_dict[class_target] = client_data_per_class
         server_data_dict[class_target] = server_data_per_class
     server_data = get_server_data(server_data_dict)
@@ -631,35 +663,301 @@ def random_subset(dataset, ratio, seed=None):
         idx = torch.randperm(n)[:k].tolist()
 
     return Subset(dataset, idx)
+from typing import Dict, List, Tuple, Optional
+def default_augmentation_pipeline(img_size: Optional[Tuple[int, int]] = None):
+    return transforms.Compose([
+        transforms.ConvertImageDtype(torch.float32),
+        transforms.RandomHorizontalFlip(p=0.5),
+        transforms.RandomAffine(degrees=15, translate=(0.1, 0.1), scale=(0.9, 1.1)),
+        transforms.ColorJitter(brightness=0.15, contrast=0.15, saturation=0.15, hue=0.02),
+    ])
+def _gather_tensors_from_donors(datasets: List[TensorDataset], exclude_idx: int):
+    donor_xs, donor_ys = [], []
+    for j, ds in enumerate(datasets):
+        if j == exclude_idx:
+            continue
+        xj, yj = ds.tensors
+        donor_xs.append(xj)
+        donor_ys.append(yj)
+    if donor_xs:
+        return torch.cat(donor_xs, dim=0), torch.cat(donor_ys, dim=0)
+    return torch.empty((0,), dtype=torch.float32), torch.empty((0,), dtype=torch.long)
 
-def get_data_set(is_train ):
+def _augment_from_base(base_x, base_y, n_needed, aug, gen: torch.Generator):
+    if base_x.numel() == 0 or n_needed <= 0:
+        return torch.empty((0,), dtype=torch.float32), torch.empty((0,), dtype=base_y.dtype)
+
+    C, H, W = base_x.shape[1:]
+    out_x = torch.empty((n_needed, C, H, W), dtype=torch.float32)
+    out_y = torch.empty((n_needed,), dtype=base_y.dtype)
+
+    idxs = torch.randint(0, base_x.shape[0], (n_needed,), generator=gen)
+    for i, idx in enumerate(idxs):
+        xi = aug(base_x[int(idx)])
+        out_x[i] = xi
+        out_y[i] = base_y[int(idx)]
+    return out_x, out_y
+
+def ensure_min_k_per_client(
+    clients_data_dict: Dict[str, List[TensorDataset]],
+    k: int,
+    augmentation: Optional[transforms.Compose] = None,
+    seed: Optional[int] = None
+) -> Dict[str, List[TensorDataset]]:
+
+    if augmentation is None:
+        augmentation = default_augmentation_pipeline()
+    import random
+
+    # Local RNGs
+    py_rng = random.Random(seed) if seed is not None else random.Random()
+    gen = torch.Generator()
+    if seed is not None:
+        gen.manual_seed(int(seed))
+
+    balanced = {}
+
+    for group_key, datasets in clients_data_dict.items():
+        new_list = []
+        for i, ds in enumerate(datasets):
+            xi, yi = ds.tensors
+            xi, yi = xi.clone(), yi.clone()
+
+            n = int(xi.shape[0])
+            target_k = int(k)
+
+            if n >= target_k:
+                if n > target_k:
+                    keep = torch.randperm(n, generator=gen)[:target_k]
+                    xi, yi = xi[keep], yi[keep]
+                new_list.append(TensorDataset(xi, yi))
+                continue
+
+            needed = int(target_k - n)
+            donor_x, donor_y = _gather_tensors_from_donors(datasets, i)
+            donor_n = int(donor_x.shape[0])
+
+            # Borrow from donors
+            if needed > 0 and donor_n > 0:
+                take = int(min(needed, donor_n))
+                donor_idxs = list(range(donor_n))
+                py_rng.shuffle(donor_idxs)
+                pick = donor_idxs[:take]                 # <- take is a plain int now
+                xi = torch.cat([xi, donor_x[pick]], dim=0)
+                yi = torch.cat([yi, donor_y[pick]], dim=0)
+                needed -= take
+
+            # Augmentation if still needed
+            if needed > 0:
+                base_x, base_y = ds.tensors
+                X_aug, Y_aug = _augment_from_base(base_x, base_y, int(needed), augmentation, gen)
+                xi = torch.cat([xi, X_aug], dim=0)
+                yi = torch.cat([yi, Y_aug], dim=0)
+                needed = 0
+
+            # Final truncate to exactly k
+            cur_n = int(xi.shape[0])
+            if cur_n > target_k:
+                keep = torch.randperm(cur_n, generator=gen)[:target_k]
+                xi, yi = xi[keep], yi[keep]
+
+            new_list.append(TensorDataset(xi, yi))
+
+        balanced[group_key] = new_list
+
+    return balanced
+
+# --- add near imports ---
+import os
+# --- BEGIN: drop-in block for ImageNet-100 (no Kaggle) ---
+
+import os
+# --- BEGIN: robust ImageNet-100 loader (no Kaggle; materializes HF Parquet to folders) ---
+
+
+# ---------- your public function ----------
+# --- FULL DROP-IN: ImageNet-R support (replaces your function & adds small helpers) ---
+
+import os, json, random
+# --- FULL DROP-IN: ImageNet-R with auto-download if missing ---
+
+import os, json, random, tarfile, urllib.request
+from pathlib import Path
+from typing import Tuple
+import torchvision
+import torchvision.transforms as transforms
+from torchvision.datasets import ImageFolder, EMNIST
+from torch.utils.data import Subset
+
+IMAGENET_R_URL = "https://people.eecs.berkeley.edu/~hendrycks/imagenet-r.tar"
+
+# 224px ImageNet-style transforms
+def imagenet_transforms(is_train: bool, size: int = 224):
+    if is_train:
+        return transforms.Compose([
+            transforms.RandomResizedCrop(size),
+            transforms.RandomHorizontalFlip(),
+            transforms.ToTensor(),
+            transforms.Normalize(mean=(0.485, 0.456, 0.406),
+                                 std=(0.229, 0.224, 0.225)),
+        ])
+    else:
+        return transforms.Compose([
+            transforms.Resize(int(size * 256 / 224)),
+            transforms.CenterCrop(size),
+            transforms.ToTensor(),
+            transforms.Normalize(mean=(0.485, 0.456, 0.406),
+                                 std=(0.229, 0.224, 0.225)),
+        ])
+
+# Download a file with a tiny progress print (standard lib only)
+def _download_file(url: str, dest_path: str):
+    dest_dir = os.path.dirname(dest_path)
+    os.makedirs(dest_dir, exist_ok=True)
+
+    def _reporthook(blocknum, blocksize, totalsize):
+        # Print a simple one-line progress occasionally
+        if blocknum % 100 == 0 and totalsize > 0:
+            downloaded = blocknum * blocksize
+            pct = min(100, int(downloaded * 100 / totalsize))
+            print(f"\rDownloading ImageNet-R: {pct}% ({downloaded//(1024*1024)}MB/{totalsize//(1024*1024)}MB)", end="", flush=True)
+
+    print(f"Downloading ImageNet-R from {url} → {dest_path}")
+    urllib.request.urlretrieve(url, dest_path, _reporthook)
+    print("\nDownload complete.")
+
+# Ensure ImageNet-R exists locally at ./data/imagenet-r/<class>/*.jpg
+def ensure_imagenet_r(data_dir: str = "./data") -> str:
+    target_root = os.path.abspath(os.path.join(data_dir, "imagenet-r"))
+    if os.path.isdir(target_root):
+        # quick sanity: expect many class folders (~200)
+        try:
+            n = sum(os.path.isdir(os.path.join(target_root, d)) for d in os.listdir(target_root))
+            if n >= 150:  # be lenient
+                return target_root
+        except Exception:
+            pass  # fall through to re-extract if structure looks off
+
+    # If not present, download & extract
+    os.makedirs(data_dir, exist_ok=True)
+    tar_path = os.path.join(data_dir, "imagenet-r.tar")
+    if not os.path.isfile(tar_path):
+        _download_file(IMAGENET_R_URL, tar_path)
+
+    print(f"Extracting {tar_path} → {data_dir}")
+    with tarfile.open(tar_path, "r") as tf:
+        # Some tar tools store absolute or odd paths; protect extraction
+        def _safe_members(tar: tarfile.TarFile):
+            for m in tar.getmembers():
+                mpath = os.path.normpath(m.name)
+                if os.path.isabs(mpath) or mpath.startswith(".."):
+                    continue
+                yield m
+        tf.extractall(path=data_dir, members=_safe_members(tf))
+    print("Extraction complete.")
+
+    # Find the extracted folder (some archives name it slightly differently)
+    candidates = [
+        os.path.join(data_dir, "imagenet-r"),
+        os.path.join(data_dir, "imagenet-rendition"),
+        os.path.join(data_dir, "imagenet-r-master"),
+    ]
+    extracted = None
+    for c in candidates:
+        if os.path.isdir(c):
+            extracted = c
+            break
+    if extracted is None:
+        # try to guess by looking for a directory with lots of subfolders
+        for entry in os.listdir(data_dir):
+            p = os.path.join(data_dir, entry)
+            if os.path.isdir(p):
+                try:
+                    k = sum(os.path.isdir(os.path.join(p, d)) for d in os.listdir(p))
+                except Exception:
+                    k = 0
+                if k >= 150:
+                    extracted = p
+                    break
+    if extracted is None:
+        raise FileNotFoundError(f"Could not locate extracted ImageNet-R directory under {data_dir}")
+
+    # Normalize to ./data/imagenet-r
+    if os.path.abspath(extracted) != target_root:
+        # If target exists and is different, remove/rename as needed
+        if os.path.isdir(target_root) and target_root != extracted:
+            # if it's a stale/empty dir, try removing
+            try:
+                if not os.listdir(target_root):
+                    os.rmdir(target_root)
+            except Exception:
+                pass
+        if not os.path.isdir(target_root):
+            os.rename(extracted, target_root)
+
+    # Optional: clean up the tar to save space
+    try:
+        os.remove(tar_path)
+    except Exception:
+        pass
+
+    return target_root
+
+# Make (or load) a deterministic per-class split for ImageNet-R; cached on disk.
+def _make_or_load_inr_split(root_dir: str, base_dataset: ImageFolder, *, seed: int, train_ratio: float = 0.8) -> Tuple[list, list]:
+    """
+    Returns (train_indices, val_indices) over base_dataset.samples.
+    Cache file: <root_dir>/_split_inr_seed{seed}.json
+    """
+    root = Path(root_dir)
+    cache = root / f"_split_inr_seed{seed}.json"
+    if cache.exists():
+        obj = json.loads(cache.read_text())
+        return obj["train"], obj["val"]
+
+    class_to_idxs = {c: [] for c in range(len(base_dataset.classes))}
+    for idx, (_path, y) in enumerate(base_dataset.samples):
+        class_to_idxs[y].append(idx)
+
+    rng = random.Random(seed)
+    train_ix, val_ix = [], []
+    for _, idxs in class_to_idxs.items():
+        rng.shuffle(idxs)
+        k = int(len(idxs) * train_ratio)
+        train_ix.extend(idxs[:k])
+        val_ix.extend(idxs[k:])
+
+    cache.write_text(json.dumps({"train": train_ix, "val": val_ix}))
+    return train_ix, val_ix
+
+
+def get_data_set(is_train):
     dataset = experiment_config.data_set_selected
     print(f"Loading dataset: {dataset}")
 
+    # transforms
     if dataset == DataSet.EMNIST_balanced:
-        #print("Using grayscale transform for EMNIST")
-        #transform = transforms.Compose([
-        #    transforms.Grayscale(num_output_channels=3),
-        #    transforms.ToTensor(),
-        #])
-
         transform = transforms.Compose([
             transforms.Resize((32, 32)),
-            transforms.Lambda(lambda img: img.convert("RGB")),  # Convert grayscale to RGB
+            transforms.Lambda(lambda img: img.convert("RGB")),
             transforms.ToTensor(),
-            transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))  # Use RGB normalization
+            transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5)),
         ])
+    elif dataset == DataSet.ImageNetR:
+        transform = imagenet_transforms(is_train=is_train, size=224)
     else:
         print("Using RGB transform for dataset")
         transform = transforms.Compose([
             transforms.RandomHorizontalFlip(),
             transforms.RandomCrop(32, padding=4),
             transforms.ToTensor(),
-            transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
+            transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5)),
         ])
 
+    # existing branches
     if experiment_config.data_set_selected == DataSet.CIFAR100:
         train_set = torchvision.datasets.CIFAR100(root='./data', train=is_train, download=True, transform=transform)
+        experiment_config.target_k = 40000/25
 
     if experiment_config.data_set_selected == DataSet.CIFAR10:
         train_set = torchvision.datasets.CIFAR10(root='./data', train=is_train, download=True, transform=transform)
@@ -673,30 +971,51 @@ def get_data_set(is_train ):
         data_root = './data/tiny-imagenet-200'
         subfolder = 'train' if is_train else 'val'
         dataset_path = os.path.join(data_root, subfolder)
-
-        # Reorganize val/ folder if needed
         if subfolder == 'val':
             reorganize_tiny_imagenet_val(dataset_path, './data')
-
-        train_set = ImageFolder(
-            root=dataset_path,
-            transform=transform
-        )
-
-
+        train_set = ImageFolder(root=dataset_path, transform=transform)
 
     if experiment_config.data_set_selected == DataSet.EMNIST_balanced:
-        train_set = EMNIST(root='./data', split='balanced', train=is_train, download=True,
-           transform=transform)#EMNIST(root='./data', split='balanced', train=is_train, download=True, transform=transform)
+        train_set = EMNIST(root='./data', split='balanced', train=is_train, download=True, transform=transform)
 
+    # NEW: ImageNet-R (auto-download if missing)
+    if experiment_config.data_set_selected == DataSet.ImageNetR:
+        inr_root = ensure_imagenet_r("./data")  # downloads/extracts if needed
+        print(f"Using ImageNet-R at: {inr_root}")
+
+        base_ds = ImageFolder(root=inr_root, transform=transform)
+        train_ix, val_ix = _make_or_load_inr_split(
+            inr_root, base_ds, seed=experiment_config.seed_num, train_ratio=0.8
+        )
+        subset_ix = train_ix if is_train else val_ix
+        train_set = Subset(base_ds, subset_ix)
+
+    # downstream unchanged
     data_by_classification_dict = get_data_by_classification(train_set)
     selected_classes_list = sorted(data_by_classification_dict.keys())[:experiment_config.num_classes]
 
+    clients_data_dict, server_data = split_clients_server_data_Non_IID(
+        data_by_classification_dict,
+        selected_classes_list,
+        base_dataset=train_set,  # <— pass the dataset you just built
+    )
+    server_data = random_subset(dataset=server_data,
+                                ratio=experiment_config.server_data_ratio,
+                                seed=experiment_config.seed_num)
 
-    clients_data_dict, server_data = split_clients_server_data_Non_IID(data_by_classification_dict, selected_classes_list)
-    server_data = random_subset(dataset = server_data,ratio = experiment_config.server_data_ratio, seed = experiment_config.seed_num)
+    if experiment_config.num_clients > 25:
+        balanced = ensure_min_k_per_client(
+            clients_data_dict, k=experiment_config.target_k, seed=experiment_config.seed_num
+        )
+        clients_data_dict = balanced
 
     return selected_classes_list, clients_data_dict, server_data
+
+
+# --- END: robust ImageNet-100 loader ---
+
+# --- END: drop-in block for ImageNet-100 (no Kaggle) ---
+
 
 
 
@@ -759,7 +1078,7 @@ def create_data():
 
 #### ----------------- SPLIT DATA BETWEEN SERVER AND CLIENTS ----------------- ####
 
-def split_clients_server_data(train_set):
+def split_clients_server_data(train_set,base_dataset):
     """
         Splits the input training dataset into subsets for multiple clients and the server.
 
@@ -783,8 +1102,9 @@ def split_clients_server_data(train_set):
 
     torch.Generator().manual_seed(experiment_config.seed_num*(999))
     splits = random_split(train_set_images, split_sizes)
-    clients_data = transform_to_TensorDataset(splits[0])  # All client datasets
-    server_data = transform_to_TensorDataset(splits[1])
+    clients_data = transform_to_TensorDataset((base_dataset, splits[0]))  # <— Subset
+    server_data  = transform_to_TensorDataset((base_dataset, splits[1]))  # <— Subset
+    return clients_data, server_data
 
     return clients_data, server_data
 
@@ -983,7 +1303,7 @@ def create_mean_df(clients, file_name):
 
 # helpers_json.py
 from pathlib import Path
-from typing import Union
+from typing import Union, Optional
 import json
 import re
 
