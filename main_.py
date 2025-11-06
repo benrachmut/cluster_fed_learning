@@ -554,7 +554,7 @@ def run_exp_by_algo():
 
 if __name__ == '__main__':
     print(device)
-    seed_num_list = [1]
+    seed_num_list = [3]
     data_sets_list = [DataSet.CIFAR100]#[DataSet.CIFAR100]
     num_clients_list = [25]#[100,500]#[25]
     num_opt_clusters_list =[5] #[5]
