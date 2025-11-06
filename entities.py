@@ -700,16 +700,16 @@ class Client(LearningEntity):
 
     def get_client_model(self):
         if experiment_config.client_net_type == NetType.ALEXNET:
-            return AlexNet(num_classes=experiment_config.num_classes).to(device)
+            return AlexNet(num_classes=experiment_config.num_classes).to(device), NetType.ALEXNET
         if experiment_config.client_net_type == NetType.VGG:
-            return VGGServer(num_classes=experiment_config.num_classes).to(device)
+            return VGGServer(num_classes=experiment_config.num_classes).to(device), NetType.VGG
         if experiment_config.client_net_type == NetType.ResNet:
-            return ResNet18Server(num_classes=experiment_config.num_classes).to(device)
+            return ResNet18Server(num_classes=experiment_config.num_classes).to(device), NetType.ResNet
         if experiment_config.client_net_type == NetType.SqueezeNet:
-            return SqueezeNetServer(num_classes=experiment_config.num_classes).to(device)
+            return SqueezeNetServer(num_classes=experiment_config.num_classes).to(device), NetType.SqueezeNet
 
         if experiment_config.client_net_type == NetType.MobileNet:
-            return MobileNetV2Server(num_classes=experiment_config.num_classes).to(device)
+            return MobileNetV2Server(num_classes=experiment_config.num_classes).to(device), NetType.MobileNet
 
         if experiment_config.client_net_type == NetType.ResNetSqueeze:
             return get_ResNetSqueeze(self.rand_client)

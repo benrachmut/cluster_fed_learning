@@ -4,21 +4,21 @@
 make_fig_algorithms_avg_accuracy.py
 
 Adds new figures:
-  1) Facets subplots by `client_net_type._value_` (row of subplots).
+  1) Facets subplots by `client_net_type._value_` (row/grid of subplots).
   2) Heatmap of final accuracy: Algorithm × Client Net Type.
   3) MAPL/global-data-size: ONE plot (one curve per subfolder, labeled by server_data_ratio).
 
 Existing figsets:
-  - diff_clients_nets/       (row of subplots by subfolder)
+  - diff_clients_nets/       (grid of subplots by subfolder)
   - diff_benchmarks_05/      (row of subplots by subfolder; alpha filter)
   - examine_lambda_for_ditto (single figure; curves by λ_ditto)
 
-Outputs:
-  - figures/same_client_nets/client_net_type_value.pdf
-  - figures/same_client_nets/client_net_type_heatmap.pdf
-  - figures/<global_data_size_folder>/<global_data_size_folder>_by_server_data_ratio_{client|server}.pdf
-  - figures/diff_clients_nets/diff_clients_nets.pdf
-  - figures/diff_benchmarks_05/diff_benchmarks_05.pdf
+Outputs (PDF + CSV):
+  - figures/same_client_nets/client_net_type_value.pdf / .csv
+  - figures/same_client_nets/client_net_type_heatmap.pdf / .csv
+  - figures/<global_data_size_folder>/<global_data_size_folder>_by_server_data_ratio_{client|server}.pdf / .csv
+  - figures/diff_clients_nets/diff_clients_nets.pdf / .csv
+  - figures/diff_benchmarks_05/diff_benchmarks_05.pdf / .csv
 """
 
 from __future__ import annotations
@@ -27,6 +27,7 @@ import argparse
 import json
 import os
 import re
+import math
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Union
 
@@ -37,16 +38,21 @@ import numpy as np
 Json = Union[Dict[str, Any], List[Any], str, int, float, bool, None]
 
 # ---------------------------------------------------------------------
-# Comparison figures baseline: plot CLIENT curves (all algorithms),
-# and ALSO overlay MAPL SERVER curves where available.
+# Presentation policy:
+# - Non-MAPL algorithms -> plot CLIENT curves.
+# - MAPL -> show SERVER-only curves; label as "MAPL" (drop _S/-x suffixes).
 # ---------------------------------------------------------------------
-PLOT_MEASURE_BASE = "client"         # base measure for comparisons
-INCLUDE_SERVER_FOR_MAPL = True       # overlay MAPL server curves in comparison figs
+PLOT_MEASURE_BASE = "client"
+INCLUDE_SERVER_FOR_MAPL = True
 
 TITLE_MAP = {
     "rndNet":    "{AlexNet, ResNet, MobileNet, SqueezeNet}",
     "rndStrong": "{AlexNet, ResNet}",
     "rndWeak":   "{MobileNet, SqueezeNet}",
+    "AlexMobile":"{AlexNet, MobileNet}",
+    "AlexSqueeze":"{AlexNet, SqueezeNet}",
+    "ResMobile":"{ResNet, MobileNet}",
+    "ResNetSqueeze":"{ResNet, SqueezeNet}",
 }
 
 TITLE_NET_MAP = {
@@ -84,7 +90,7 @@ GLOBAL_ALG_COLOR_ORDER = [
     "Per-FedAvg",
     "pFedMe",
     "FedBABU",
-    "MAPL",      # covers MAPL_S-* and MAPL_C-*
+    "MAPL",      # normalized name for MAPL (server-only in plots)
     "FedMD",
     "pFedCK",
     "COMET",
@@ -126,25 +132,6 @@ def _get_color_for_label(label: str) -> Any:
         return GLOBAL_ALG_COLOR_MAP[label]
     return None
 
-# =====================================================================
-
-def _load_any_jsons_under(root_dir: Path, inspect: bool) -> pd.DataFrame:
-    frames: List[pd.DataFrame] = []
-    frames.append(load_rows_from_dir(root_dir, inspect=inspect, alg_hint=None))
-    for sub in sorted([d for d in root_dir.iterdir() if d.is_dir()]):
-        df_alg = load_rows_from_dir(sub, inspect=inspect, alg_hint=sub.name)
-        if not df_alg.empty:
-            frames.append(df_alg)
-        for alg_dir in sorted([d for d in sub.iterdir() if d.is_dir()]):
-            df_deep = load_rows_from_dir(alg_dir, inspect=inspect, alg_hint=alg_dir.name)
-            if not df_deep.empty:
-                frames.append(df_deep)
-    return _concat_or_empty(frames)
-
-def _right_of_dash(s: str) -> str:
-    parts = re.split(r"\s*[-–—]\s*", str(s), maxsplit=1)
-    return parts[1] if len(parts) > 1 else str(s)
-
 # --------------------- Windows long-path helpers ---------------------
 
 def _win_long_abs(path: Path) -> str:
@@ -179,6 +166,14 @@ def walk(obj: Json, path: Tuple[str, ...] = ()):
     elif isinstance(obj, list):
         for i, v in enumerate(obj):
             yield from walk(v, path + (f"[{i}]",))
+
+def _concat_or_empty(frames: List[pd.DataFrame]) -> pd.DataFrame:
+    frames = [f for f in frames if f is not None and not f.empty]
+    return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame(
+        columns=["dataset","algorithm_display","measure","seed","client_id",
+                 "iteration","accuracy","client_net_type_name","client_net_type_value",
+                 "alpha_dich","lambda_ditto","server_data_ratio","_path","algorithm"]
+    )
 
 # --------------------- field finders ---------------------
 
@@ -485,7 +480,7 @@ def load_rows_from_dir(dir_path: Path, *, inspect: bool = False, alg_hint: Optio
         is_mapl = bool(alg_name and "mapl" in str(alg_name).lower())
         used_any = False
 
-        # client measure (all algs)
+        # client measure (all algs) -- MAPL_C is filtered out later
         if isinstance(client_map, dict) and client_map:
             display_label = str(alg_name)
             if is_mapl:
@@ -572,7 +567,7 @@ def load_rows_from_dir(dir_path: Path, *, inspect: bool = False, alg_hint: Optio
     ]
     return pd.DataFrame(rows, columns=cols) if rows else pd.DataFrame(columns=cols)
 
-# --------------------- styling helpers ---------------------
+# --------------------- MAPL normalization + linestyle ---------------------
 
 _mapl_label_re = re.compile(r"^MAPL_(?P<variant>[CS])-(?P<x>.+)$")
 def _extract_mapl_variant(label: str) -> Optional[str]:
@@ -584,22 +579,91 @@ def _linestyle_for(label: str) -> str:
     if v == "C": return "--"  # MAPL client: dashed
     return "-"                # others: solid
 
+def _normalize_mapl_presentation(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Drop MAPL client rows (MAPL_C-*) and rename MAPL_S-* -> MAPL.
+    """
+    if df is None or df.empty or "algorithm_display" not in df.columns:
+        return df
+    df = df.copy()
+    algdisp = df["algorithm_display"].astype(str)
+
+    # Drop client-side MAPL (MAPL_C-*)
+    mask_c = algdisp.str.startswith("MAPL_C-")
+    if mask_c.any():
+        df = df[~mask_c]
+
+    # Rename server-side MAPL (MAPL_S-*) to "MAPL"
+    if "algorithm_display" in df.columns:
+        mask_s = df["algorithm_display"].astype(str).str.startswith("MAPL_S-")
+        if mask_s.any():
+            df.loc[mask_s, "algorithm_display"] = "MAPL"
+
+    return df
+
+# --------------------- CSV stats helpers ---------------------
+
+def _final_stats_for_panel(df_panel: pd.DataFrame, *, subfigure: str) -> pd.DataFrame:
+    """
+    For each algorithm in this panel/subfigure:
+      - find its maximum iteration present in df_panel
+      - compute mean/std/sem/n at that iteration
+    Assumes df_panel already filtered & normalized (MAPL policy) and for the target dataset/facet.
+    """
+    if df_panel is None or df_panel.empty:
+        return pd.DataFrame(columns=["subfigure","algorithm","max_iteration","mean","std","sem","n"])
+    out_rows = []
+    for alg, dfa in df_panel.groupby("algorithm_display"):
+        max_it = pd.to_numeric(dfa["iteration"], errors="coerce").dropna().max()
+        if pd.isna(max_it):
+            continue
+        dfit = dfa[dfa["iteration"] == max_it].copy()
+        acc = pd.to_numeric(dfit["accuracy"], errors="coerce").dropna()
+        if acc.empty:
+            continue
+        n = int(acc.shape[0])
+        mean = float(acc.mean())
+        std = float(acc.std(ddof=1)) if n > 1 else 0.0
+        sem = float(std / np.sqrt(n)) if n > 1 else 0.0
+        out_rows.append({
+            "subfigure": subfigure,
+            "algorithm": str(alg),
+            "max_iteration": int(max_it),
+            "mean": mean,
+            "std": std,
+            "sem": sem,
+            "n": n,
+        })
+    return pd.DataFrame(out_rows)
+
+def _save_stats_csv(rows: List[pd.DataFrame], outfile_pdf: Path):
+    df = _concat_or_empty(rows)
+    csv_path = outfile_pdf.with_suffix(".csv")
+    csv_path.parent.mkdir(parents=True, exist_ok=True)
+    if df.empty:
+        # write header-only file for predictability
+        df = pd.DataFrame(columns=["subfigure","algorithm","max_iteration","mean","std","sem","n"])
+    df.to_csv(_win_long_abs(csv_path), index=False)
+    print(f"[OK] Saved CSV: {csv_path}")
+
 # --------------------- helpers ---------------------
 
-def _concat_or_empty(frames: List[pd.DataFrame]) -> pd.DataFrame:
-    frames = [f for f in frames if f is not None and not f.empty]
-    return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame(
-        columns=["dataset","algorithm_display","measure","seed","client_id",
-                 "iteration","accuracy","client_net_type_name","client_net_type_value",
-                 "alpha_dich","lambda_ditto","server_data_ratio","_path","algorithm"]
-    )
-
-def _load_subfig_df(subfig_dir: Path, inspect: bool) -> pd.DataFrame:
-    alg_dirs = [a for a in sorted(subfig_dir.iterdir()) if a.is_dir()]
-    frames = []
-    for alg_dir in alg_dirs:
-        frames.append(load_rows_from_dir(alg_dir, inspect=inspect, alg_hint=alg_dir.name))
+def _load_any_jsons_under(root_dir: Path, inspect: bool) -> pd.DataFrame:
+    frames: List[pd.DataFrame] = []
+    frames.append(load_rows_from_dir(root_dir, inspect=inspect, alg_hint=None))
+    for sub in sorted([d for d in root_dir.iterdir() if d.is_dir()]):
+        df_alg = load_rows_from_dir(sub, inspect=inspect, alg_hint=sub.name)
+        if not df_alg.empty:
+            frames.append(df_alg)
+        for alg_dir in sorted([d for d in sub.iterdir() if d.is_dir()]):
+            df_deep = load_rows_from_dir(alg_dir, inspect=inspect, alg_hint=alg_dir.name)
+            if not df_deep.empty:
+                frames.append(df_deep)
     return _concat_or_empty(frames)
+
+def _right_of_dash(s: str) -> str:
+    parts = re.split(r"\s*[-–—]\s*", str(s), maxsplit=1)
+    return parts[1] if len(parts) > 1 else str(s)
 
 def _legend_from_axes_row(axes):
     handles, labels = [], []
@@ -613,16 +677,21 @@ def _legend_from_axes_row(axes):
 # --------------------- plotting (ONE FIGURE per FIGSET) ---------------------
 
 def _apply_measure_filter_for_comparison(df: pd.DataFrame) -> pd.DataFrame:
-    """Keep client rows (all algs). Optionally keep server rows (MAPL only)."""
-    if "measure" not in df.columns:
+    """
+    Enforce presentation policy:
+      - Non-MAPL algorithms: keep CLIENT rows.
+      - MAPL: keep SERVER rows only.
+      - Rename any MAPL_S-* -> MAPL (legend/label clean), drop MAPL_C-* entirely.
+    """
+    if df is None or df.empty or "measure" not in df.columns or "algorithm_display" not in df.columns:
         return df
-    if INCLUDE_SERVER_FOR_MAPL:
-        mask = (df["measure"].astype(str) == PLOT_MEASURE_BASE) | \
-               ((df["measure"].astype(str) == "server") &
-                (df["algorithm_display"].astype(str).str.startswith("MAPL_S-")))
-        return df[mask]
-    else:
-        return df[df["measure"].astype(str) == PLOT_MEASURE_BASE]
+    df = df.copy()
+    algdisp = df["algorithm_display"].astype(str)
+    is_mapl = algdisp.str.contains(r"^MAPL", regex=True)
+    keep_non_mapl = (~is_mapl) & (df["measure"].astype(str) == PLOT_MEASURE_BASE)
+    keep_mapl     = (is_mapl) & (df["measure"].astype(str) == "server")
+    out = df[keep_non_mapl | keep_mapl]
+    return _normalize_mapl_presentation(out)
 
 def figure_diff_benchmarks(figset_dir: Path, out_root: Path, *, alpha_value: int, inspect: bool):
     if not figset_dir.exists():
@@ -631,6 +700,8 @@ def figure_diff_benchmarks(figset_dir: Path, out_root: Path, *, alpha_value: int
     if not subfigs:
         print(f"[WARN] No subfig folders under {figset_dir}"); return
     loaded = [(sf, _load_subfig_df(sf, inspect)) for sf in subfigs]
+
+    stats_rows: List[pd.DataFrame] = []
     filtered = []
     for sf, df in loaded:
         if df.empty: continue
@@ -646,13 +717,18 @@ def figure_diff_benchmarks(figset_dir: Path, out_root: Path, *, alpha_value: int
     fig, axes = plt.subplots(1, n, figsize=(fig_w, 4.5), sharex=False, sharey=False, squeeze=False)
     axes = axes.flatten()
 
-    for ax, (_, df) in zip(axes, filtered):
+    for ax, (sf, df) in zip(axes, filtered):
         ds_counts = df["dataset"].astype(str).value_counts()
         dataset_choice = "CIFAR100" if "CIFAR100" in ds_counts.index else ds_counts.index[0]
         dfp = df[df["dataset"].astype(str) == dataset_choice]
         dfp = _apply_measure_filter_for_comparison(dfp)
         if dfp.empty:
             ax.set_visible(False); continue
+
+        # CSV stats for this subfigure
+        subfigure_label = _right_of_dash(dataset_choice)
+        stats_rows.append(_final_stats_for_panel(dfp, subfigure=subfigure_label))
+
         g = (
             dfp.groupby(["algorithm_display","iteration"], dropna=False)["accuracy"]
                .mean().reset_index().rename(columns={"accuracy":"avg_accuracy"})
@@ -664,7 +740,7 @@ def figure_diff_benchmarks(figset_dir: Path, out_root: Path, *, alpha_value: int
                     marker=None, linewidth=2.0, label=str(lab),
                     color=_get_color_for_label(lab),
                     linestyle=_linestyle_for(lab))
-        ax.set_title(_right_of_dash(dataset_choice))
+        ax.set_title(subfigure_label)
         ax.set_ylabel("Average Accuracy")
         ax.grid(False)
 
@@ -673,16 +749,27 @@ def figure_diff_benchmarks(figset_dir: Path, out_root: Path, *, alpha_value: int
     fig.tight_layout(rect=[0.0, 0.0, 1.0, 0.82])
     if h:
         fig.legend(h, l, loc="upper center", ncol=min(6, len(h)), frameon=False, bbox_to_anchor=(0.5, 0.98))
+
     outfile = out_root / f"{figset_dir.name}.pdf"
     _savefig_longpath(fig, outfile); plt.close(fig)
     print(f"[OK] Saved: {outfile}")
+    _save_stats_csv(stats_rows, outfile)
 
-def figure_diff_clients_nets(figset_dir: Path, out_root: Path, *, inspect: bool):
+def _load_subfig_df(subfig_dir: Path, inspect: bool) -> pd.DataFrame:
+    alg_dirs = [a for a in sorted(subfig_dir.iterdir()) if a.is_dir()]
+    frames = []
+    for alg_dir in alg_dirs:
+        frames.append(load_rows_from_dir(alg_dir, inspect=inspect, alg_hint=alg_dir.name))
+    return _concat_or_empty(frames)
+
+def figure_diff_clients_nets(figset_dir: Path, out_root: Path, *, inspect: bool, max_cols: int = 4):
     if not figset_dir.exists():
         print(f"[SKIP] {figset_dir} (missing)"); return
+
     subfigs = [d for d in sorted(figset_dir.iterdir()) if d.is_dir()]
     if not subfigs:
         print(f"[WARN] No subfig folders under {figset_dir}"); return
+
     loaded = [(sf, _load_subfig_df(sf, inspect)) for sf in subfigs]
     loaded = [(sf, df) for sf, df in loaded if not df.empty]
     if not loaded:
@@ -695,18 +782,23 @@ def figure_diff_clients_nets(figset_dir: Path, out_root: Path, *, inspect: bool)
     loaded = [(sf, _prefer_cifar(df)) for sf, df in loaded if not _prefer_cifar(df).empty]
     if not loaded:
         print(f"[WARN] No usable rows (after CIFAR100 preference) for {figset_dir}."); return
-    loaded = loaded[:4]
-    n = len(loaded)
 
-    fig_w = max(5.0 * n, 5.0)
-    fig, axes = plt.subplots(1, n, figsize=(fig_w, 4.5), sharex=True, sharey=True, squeeze=False)
+    n = len(loaded)
+    ncols = max(1, min(max_cols, n))
+    nrows = math.ceil(n / ncols)
+
+    # scale figure size by grid
+    fig_w = max(5.0 * ncols, 5.0)
+    fig_h = max(4.5 * nrows, 4.5)
+    fig, axes = plt.subplots(nrows, ncols, figsize=(fig_w, fig_h), sharex=True, sharey=True, squeeze=False)
     axes = axes.flatten()
 
     # global y-limits for consistency
     all_grp = []
     for _, df in loaded:
         dfm = _apply_measure_filter_for_comparison(df)
-        if dfm.empty: continue
+        if dfm.empty:
+            continue
         g = (dfm.groupby(["algorithm_display","iteration"], dropna=False)["accuracy"]
                 .mean().reset_index().rename(columns={"accuracy":"avg_accuracy"}))
         all_grp.append(g)
@@ -716,20 +808,26 @@ def figure_diff_clients_nets(figset_dir: Path, out_root: Path, *, inspect: bool)
     ymin = float(big["avg_accuracy"].min())
     ymax = float(big["avg_accuracy"].max())
 
-    for ax, (_, df) in zip(axes, loaded):
+    stats_rows: List[pd.DataFrame] = []
+
+    # plot each subfigure
+    for ax, (sf, df) in zip(axes, loaded):
         dfp = _apply_measure_filter_for_comparison(df)
         if dfp.empty:
             ax.set_visible(False); continue
+
+        dom_net = dfp["client_net_type_name"].astype(str).value_counts().index[0] \
+                  if "client_net_type_name" in dfp.columns and not dfp.empty else "clients"
+        dom_net_disp = TITLE_MAP.get(dom_net, dom_net)
+
+        # CSV stats for this panel
+        stats_rows.append(_final_stats_for_panel(dfp, subfigure=dom_net_disp))
 
         g = (
             dfp.groupby(["algorithm_display","iteration"], dropna=False)["accuracy"]
                .mean().reset_index().rename(columns={"accuracy":"avg_accuracy"})
                .sort_values(["algorithm_display","iteration"])
         )
-        dom_net = dfp["client_net_type_name"].astype(str).value_counts().index[0] \
-                  if "client_net_type_name" in dfp.columns and not dfp.empty else "clients"
-        dom_net_disp = TITLE_MAP.get(dom_net, dom_net)
-
         for lab in sorted(g["algorithm_display"].astype(str).unique().tolist()):
             sub_lab = g[g["algorithm_display"].astype(str) == lab]
             ax.plot(sub_lab["iteration"], sub_lab["avg_accuracy"],
@@ -741,14 +839,24 @@ def figure_diff_clients_nets(figset_dir: Path, out_root: Path, *, inspect: bool)
         ax.grid(False)
         ax.set_ylim(ymin, ymax)
 
+    # hide any trailing empty axes if grid is larger than loaded
+    for ax in axes[n:]:
+        ax.set_visible(False)
+
     fig.supxlabel("Iteration")
-    h, l = _legend_from_axes_row(axes)
-    fig.tight_layout(rect=[0.0, 0.0, 1.0, 0.82])
+
+    # legend
+    first_ax = next((a for a in axes[:n] if a.get_visible()), None)
+    h, l = (first_ax.get_legend_handles_labels() if first_ax else ([], []))
+
+    fig.tight_layout(rect=[0.0, 0.0, 1.0, 0.85])
     if h:
         fig.legend(h, l, loc="upper center", ncol=min(6, len(h)), frameon=False, bbox_to_anchor=(0.5, 0.98))
+
     outfile = out_root / f"{figset_dir.name}.pdf"
     _savefig_longpath(fig, outfile); plt.close(fig)
     print(f"[OK] Saved: {outfile}")
+    _save_stats_csv(stats_rows, outfile)
 
 def figure_by_client_net_type_value(figset_dir: Path, out_root: Path, *, inspect: bool):
     if not figset_dir.exists():
@@ -763,7 +871,7 @@ def figure_by_client_net_type_value(figset_dir: Path, out_root: Path, *, inspect
     if mask_cifar.any():
         df_all = df_all[mask_cifar]
 
-    # Keep client for all + server for MAPL
+    # Keep client for non-MAPL + server for MAPL (normalized)
     df_all = _apply_measure_filter_for_comparison(df_all)
     if df_all.empty:
         print(f"[WARN] No usable rows (client+MAPL server) in {figset_dir}."); return
@@ -799,6 +907,8 @@ def figure_by_client_net_type_value(figset_dir: Path, out_root: Path, *, inspect
     ymin = float(big["avg_accuracy"].min())
     ymax = float(big["avg_accuracy"].max())
 
+    stats_rows: List[pd.DataFrame] = []
+
     fig_w = max(5.0 * n, 5.0)
     fig, axes = plt.subplots(1, n, figsize=(fig_w, 4.5), sharex=True, sharey=True, squeeze=False)
     axes = axes.flatten()
@@ -812,6 +922,9 @@ def figure_by_client_net_type_value(figset_dir: Path, out_root: Path, *, inspect
         name_mode = sub["client_net_type_name"].astype(str).value_counts().index[0] if "client_net_type_name" in sub.columns and not sub.empty else None
         value_mode = sub["client_net_type_value"].astype(str).value_counts().index[0] if "client_net_type_value" in sub.columns and not sub.empty else None
         title_name = _net_title_from_map(name_mode, value_mode, val)
+
+        # CSV stats for this facet
+        stats_rows.append(_final_stats_for_panel(sub, subfigure=title_name))
 
         g = (
             sub.groupby(["algorithm_display", "iteration"], dropna=False)["accuracy"]
@@ -844,6 +957,7 @@ def figure_by_client_net_type_value(figset_dir: Path, out_root: Path, *, inspect
     outfile = out_root / "client_net_type_value.pdf"
     _savefig_longpath(fig, outfile); plt.close(fig)
     print(f"[OK] Saved: {outfile}")
+    _save_stats_csv(stats_rows, outfile)
 
 # --------------------- Heatmap (Algorithm × Client Net) ---------------------
 # Keep this CLIENT-only to avoid mixing measures in the matrix.
@@ -906,6 +1020,13 @@ def figure_client_net_type_heatmap(figset_dir: Path, out_root: Path, *, inspect:
     algs = sorted(final["algorithm_display"].astype(str).unique().tolist(),
                   key=lambda a: (known_order.get(_canon_algo_name(a), 10_000), a))
 
+    # CSV for heatmap figure: compute stats per (facet, algorithm) at its max iteration
+    stats_rows: List[pd.DataFrame] = []
+    for f in facets:
+        sub = df_all[facet_key == f]
+        stats_rows.append(_final_stats_for_panel(sub, subfigure=_pretty_facet_title(f)))
+
+    # Build matrix for annotated heatmap using already-aggregated "final"
     mat = np.full((len(algs), len(facets)), np.nan, dtype=float)
     idx_by_alg = {a: i for i, a in enumerate(algs)}
     idx_by_fac = {f: j for j, f in enumerate(facets)}
@@ -944,6 +1065,7 @@ def figure_client_net_type_heatmap(figset_dir: Path, out_root: Path, *, inspect:
     outfile = out_root / "client_net_type_heatmap.pdf"
     _savefig_longpath(fig, outfile); plt.close(fig)
     print(f"[OK] Saved: {outfile}")
+    _save_stats_csv(stats_rows, outfile)
 
 # --------------------- Global-data-size (ONE plot) ---------------------
 
@@ -951,6 +1073,7 @@ def figure_global_data_size_oneplot(figset_dir: Path, out_root: Path, *, inspect
     """
     Single figure, multiple curves (one per immediate subfolder).
     Forces SERVER measure if use_server_measure=True. Legend labels are numeric ratios.
+    Also emits a CSV with final stats per ratio/curve.
     """
     if not figset_dir.exists():
         print(f"[SKIP] {figset_dir} (missing)"); return
@@ -960,6 +1083,7 @@ def figure_global_data_size_oneplot(figset_dir: Path, out_root: Path, *, inspect
         print(f"[WARN] No curve folders under {figset_dir}"); return
 
     curves = []
+    stats_rows: List[pd.DataFrame] = []
     for cd in curve_dirs:
         df = load_rows_from_dir(cd, inspect=inspect, alg_hint=None)
         if df.empty:
@@ -993,6 +1117,9 @@ def figure_global_data_size_oneplot(figset_dir: Path, out_root: Path, *, inspect
         else:
             ratio, _ = find_server_data_ratio({}, fallback_from=cd.name)
             label = f"{ratio:g}" if ratio is not None else cd.name
+
+        # CSV stats for this ratio curve
+        stats_rows.append(_final_stats_for_panel(df, subfigure=str(label)))
 
         g = (
             df.groupby(["iteration"], dropna=False)["accuracy"]
@@ -1032,13 +1159,14 @@ def figure_global_data_size_oneplot(figset_dir: Path, out_root: Path, *, inspect
     outfile = out_root / f"{figset_dir.name}_by_server_data_ratio_{suffix}.pdf"
     _savefig_longpath(fig, outfile); plt.close(fig)
     print(f"[OK] Saved: {outfile}")
+    _save_stats_csv(stats_rows, outfile)
 
 # --------------------- CLI ---------------------
 
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--root", type=Path, default=Path("results"), help="Root results folder (contains figure-set folders)")
-    ap.add_argument("--figdir", type=Path, default=Path("figures"), help="Where to save PDFs")
+    ap.add_argument("--figdir", type=Path, default=Path("figures"), help="Where to save PDFs/CSVs")
     ap.add_argument("--inspect", action="store_true", help="Print detected paths/keys while loading")
     ap.add_argument("--lambda_folder", type=str, default="examine_lambda_for_ditto")
     ap.add_argument("--alpha", type=int, default=5)
@@ -1049,7 +1177,7 @@ def main():
 
     args = ap.parse_args()
 
-    # Global-data-size: SERVER-only, labels are numeric ratios
+    # Global-data-size: SERVER-only, labels are numeric ratios (+CSV)
     figure_global_data_size_oneplot(
         args.root / args.global_data_size_folder,
         args.figdir,
@@ -1057,7 +1185,7 @@ def main():
         use_server_measure=True
     )
 
-    # Comparison figures: client for all algorithms + MAPL server overlay
+    # Comparison figures (+CSVs): client for non-MAPL + MAPL server-only (as "MAPL")
     figure_diff_clients_nets(args.root / "diff_clients_nets", args.figdir, inspect=args.inspect)
     figure_diff_benchmarks(args.root / "diff_benchmarks_05", args.figdir, alpha_value=args.alpha, inspect=args.inspect)
     figure_by_client_net_type_value(args.root / "same_client_nets", args.figdir, inspect=args.inspect)
