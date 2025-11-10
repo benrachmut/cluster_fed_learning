@@ -710,7 +710,8 @@ def figure_diff_benchmarks(figset_dir: Path, out_root: Path, *, alpha_value: int
             filtered.append((sf, sub))
     if not filtered:
         print(f"[WARN] No rows for alpha={alpha_value} in {figset_dir}."); return
-    filtered = filtered[:4]
+
+    # NO LIMIT on number of subgraphs
     n = len(filtered)
 
     fig_w = max(5.0 * n, 5.0)

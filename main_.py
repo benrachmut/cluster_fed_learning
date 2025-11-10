@@ -599,7 +599,7 @@ if __name__ == '__main__':
 
     # C_ResNetSqueeze_S_vgg = 29
     # C_ResNetSqueeze_S_alex = 28
-    nets_types_list_PseudoLabelsClusters  = [NetsType.C_ResNetSqueeze_S_vgg]#[NetsType.C_AlexSqueeze_S_alex,NetsType.C_AlexMobile_S_alex,NetsType.C_ResNetMobile_S_alex,NetsType.C_ResNetSqueeze_S_alex]#,NetsType.C_alex_S_vgg,NetsType.C_alex_S_alex]#,NetsType.C_alex_S_vgg]# ,NetsType.C_alex_S_vgg]#,NetsType.C_alex_S_vgg]#,NetsType.C_alex_S_vgg]
+    nets_types_list_PseudoLabelsClusters  = [NetsType.C_rndWeak_S_VGG]#[NetsType.C_AlexSqueeze_S_alex,NetsType.C_AlexMobile_S_alex,NetsType.C_ResNetMobile_S_alex,NetsType.C_ResNetSqueeze_S_alex]#,NetsType.C_alex_S_vgg,NetsType.C_alex_S_alex]#,NetsType.C_alex_S_vgg]# ,NetsType.C_alex_S_vgg]#,NetsType.C_alex_S_vgg]#,NetsType.C_alex_S_vgg]
     homo_models =nets_types_list_PseudoLabelsClusters
 
 
