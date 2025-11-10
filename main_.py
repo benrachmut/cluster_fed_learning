@@ -554,7 +554,7 @@ def run_exp_by_algo():
 
 if __name__ == '__main__':
     print(device)
-    seed_num_list = [3]
+    seed_num_list = [2]
     data_sets_list = [DataSet.CIFAR100]#[DataSet.CIFAR100]
     num_clients_list = [25]#[100,500]#[25]
     num_opt_clusters_list =[5] #[5]
@@ -599,7 +599,7 @@ if __name__ == '__main__':
 
     # C_ResNetSqueeze_S_vgg = 29
     # C_ResNetSqueeze_S_alex = 28
-    nets_types_list_PseudoLabelsClusters  = [NetsType.C_ResNetSqueeze_S_vgg]#[NetsType.C_AlexSqueeze_S_alex,NetsType.C_AlexMobile_S_alex,NetsType.C_ResNetMobile_S_alex,NetsType.C_ResNetSqueeze_S_alex]#,NetsType.C_alex_S_vgg,NetsType.C_alex_S_alex]#,NetsType.C_alex_S_vgg]# ,NetsType.C_alex_S_vgg]#,NetsType.C_alex_S_vgg]#,NetsType.C_alex_S_vgg]
+    nets_types_list_PseudoLabelsClusters  = [NetsType.C_rndWeak_S_VGG]#[NetsType.C_AlexSqueeze_S_alex,NetsType.C_AlexMobile_S_alex,NetsType.C_ResNetMobile_S_alex,NetsType.C_ResNetSqueeze_S_alex]#,NetsType.C_alex_S_vgg,NetsType.C_alex_S_alex]#,NetsType.C_alex_S_vgg]# ,NetsType.C_alex_S_vgg]#,NetsType.C_alex_S_vgg]#,NetsType.C_alex_S_vgg]
     homo_models =nets_types_list_PseudoLabelsClusters
 
 
