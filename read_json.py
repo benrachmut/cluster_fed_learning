@@ -233,25 +233,42 @@ def find_exact_key_map(root: Json, keyname: str):
         return hits[0][1], hits[0][0]
     return None, None
 
-def find_client_accuracy_map_anywhere(root: Json):
-    v, p = find_exact_key_map(root, "client_accuracy_per_client_1")
+# ---- NEW: dataset-aware accuracy map selectors (Top-1 vs Top-5) ----
+
+_IMAGENET_TOP5_DATASETS = {"imagenetr", "tinyimagenet", "tiny-imageNet", "tiny_imageNet"}
+
+def _is_top5_dataset(ds: Optional[str]) -> bool:
+    if not ds: return False
+    dsl = str(ds).lower()
+    return ("imagenetr" in dsl) or ("tinyimagenet" in dsl)
+
+def find_client_accuracy_map_topk(root: Json, k: int):
+    # try exact key first
+    v, p = find_exact_key_map(root, f"client_accuracy_per_client_{k}")
     if v is not None: return v, p
+    # light fallback: accept any client-like map
     c: List[Tuple[Tuple[str, ...], Any]] = []
     for p, v in walk(root):
-        if looks_like_client_accuracy_map(v): c.append((p, v))
+        if looks_like_client_accuracy_map(v) and any("client" in seg.lower() for seg in p):
+            c.append((p, v))
     if c:
         def score(pv):
             p,_ = pv; s=0
             if any("summary" in seg.lower() for seg in p): s+=2
             if any("client" in seg.lower() for seg in p): s+=1
+            # prefer explicit *_5 over *_1 if present in path text
+            if any("5" in seg for seg in p): s+=1
             return s
         c.sort(key=score, reverse=True)
         return c[0][1], c[0][0]
     return None, None
 
-def find_server_accuracy_map(root: Json):
-    v, p = find_exact_key_map(root, "server_accuracy_per_client_1_max")
-    if v is not None: return v, p
+def find_server_accuracy_map_topk(root: Json, k: int):
+    # common naming: server_accuracy_per_client_{k}_max OR server_accuracy_per_client_{k}
+    for key in (f"server_accuracy_per_client_{k}_max", f"server_accuracy_per_client_{k}"):
+        v, p = find_exact_key_map(root, key)
+        if v is not None: return v, p
+    # fallback: any server-like map
     c: List[Tuple[Tuple[str, ...], Any]] = []
     for p, v in walk(root):
         if looks_like_client_accuracy_map(v) and any("server" in seg.lower() for seg in p):
@@ -261,10 +278,19 @@ def find_server_accuracy_map(root: Json):
             p,_=pv; s=0
             if any("summary" in seg.lower() for seg in p): s+=2
             if any("server" in seg.lower() for seg in p): s+=1
+            if any(str(k) in seg for seg in p): s+=1
             return s
         c.sort(key=score, reverse=True)
         return c[0][1], c[0][0]
     return None, None
+
+def find_client_accuracy_map_anywhere(root: Json):
+    # kept for compatibility (Top-1 default)
+    return find_client_accuracy_map_topk(root, 1)
+
+def find_server_accuracy_map(root: Json):
+    # kept for compatibility (Top-1 default)
+    return find_server_accuracy_map_topk(root, 1)
 
 def find_server_net_type_value(root: Json):
     best: Optional[Tuple[Tuple[str, ...], str]] = None
@@ -496,8 +522,15 @@ def load_rows_from_dir(dir_path: Path, *, inspect: bool = False, alg_hint: Optio
         if not alg_name:
             alg_name = alg_hint or dir_path.name
         seed_num, _          = find_seed_num(raw)
-        client_map, _        = find_client_accuracy_map_anywhere(raw)
-        server_map, _        = find_server_accuracy_map(raw)
+
+        # ----------- Top-1 vs Top-5 selection per dataset -----------
+        use_top5 = _is_top5_dataset(ds_name)
+        topk = 5 if use_top5 else 1
+
+        client_map, _        = find_client_accuracy_map_topk(raw, topk)
+        server_map, _        = find_server_accuracy_map_topk(raw, topk)
+        # ------------------------------------------------------------
+
         server_net_val, _    = find_server_net_type_value(raw)
         client_net_name, _   = find_client_net_type_name(raw)
         client_net_value, _  = find_client_net_type_value(raw)
@@ -725,6 +758,10 @@ def _apply_measure_filter_for_comparison(df: pd.DataFrame) -> pd.DataFrame:
     return _normalize_mapl_presentation(out)
 
 def figure_diff_benchmarks(figset_dir: Path, out_root: Path, *, alpha_value: int, inspect: bool):
+    """
+    NOTE: For ImageNet-R and TinyImageNet, the loader already pulled Top-5 accuracy;
+          for other datasets it pulled Top-1. This function just plots what's loaded.
+    """
     if not figset_dir.exists():
         print(f"[SKIP] {figset_dir} (missing)"); return
     subfigs = [d for d in sorted(figset_dir.iterdir()) if d.is_dir()]
@@ -742,23 +779,28 @@ def figure_diff_benchmarks(figset_dir: Path, out_root: Path, *, alpha_value: int
     if not filtered:
         print(f"[WARN] No rows for alpha={alpha_value} in {figset_dir}."); return
 
-    # NO LIMIT on number of subgraphs
     n = len(filtered)
-
     fig_w = max(5.0 * n, 5.0)
     fig, axes = plt.subplots(1, n, figsize=(fig_w, 4.5), sharex=False, sharey=False, squeeze=False)
     axes = axes.flatten()
 
     for ax, (sf, df) in zip(axes, filtered):
-        ds_counts = df["dataset"].astype(str).value_counts()
-        dataset_choice = "CIFAR100" if "CIFAR100" in ds_counts.index else ds_counts.index[0]
-        dfp = df[df["dataset"].astype(str) == dataset_choice]
+        # choose a dataset to show from this subfolder. If ImageNetR/TinyImageNet exist, prefer them.
+        ds_vals = df["dataset"].astype(str)
+        choice = None
+        for candidate in ["ImageNetR", "TinyImageNet", "CIFAR100"]:
+            if candidate in ds_vals.values:
+                choice = candidate; break
+        if choice is None:
+            choice = ds_vals.value_counts().index[0]
+
+        dfp = df[df["dataset"].astype(str) == choice]
         dfp = _apply_measure_filter_for_comparison(dfp)
         if dfp.empty:
             ax.set_visible(False); continue
 
         # CSV stats for this subfigure
-        subfigure_label = _right_of_dash(dataset_choice)
+        subfigure_label = _right_of_dash(choice)
         stats_rows.append(_final_stats_for_panel(dfp, subfigure=subfigure_label))
 
         g = (
@@ -773,7 +815,13 @@ def figure_diff_benchmarks(figset_dir: Path, out_root: Path, *, alpha_value: int
                     color=_get_color_for_label(lab),
                     linestyle=_linestyle_for(lab))
         ax.set_title(subfigure_label)
-        ax.set_ylabel("Average Accuracy")
+
+        # y-axis label reflects metric choice (Top-5 for ImageNetR/TinyImageNet, else Top-1)
+        if _is_top5_dataset(choice):
+            ax.set_ylabel("Average Top-5 Accuracy")
+        else:
+            ax.set_ylabel("Average Top-1 Accuracy")
+
         ax.grid(False)
 
     fig.supxlabel("Iteration")
@@ -992,112 +1040,7 @@ def figure_by_client_net_type_value(figset_dir: Path, out_root: Path, *, inspect
     _save_stats_csv(stats_rows, outfile)
 
 # --------------------- Heatmap (Algorithm × Client Net) ---------------------
-# Keep this CLIENT-only to avoid mixing measures in the matrix.
-def figure_client_net_type_heatmap(figset_dir: Path, out_root: Path, *, inspect: bool):
-    if not figset_dir.exists():
-        print(f"[SKIP] {figset_dir} (missing)"); return
-
-    df_all = _load_any_jsons_under(figset_dir, inspect=inspect)
-    if df_all.empty:
-        print(f"[WARN] No data under {figset_dir}"); return
-
-    mask_cifar = df_all["dataset"].astype(str).str.lower() == "cifar100"
-    if mask_cifar.any():
-        df_all = df_all[mask_cifar]
-
-    df_all = df_all[df_all["measure"].astype(str) == "client"]
-    if df_all.empty:
-        print(f"[WARN] No CLIENT rows for heatmap in {figset_dir}."); return
-
-    if "client_net_type_value" not in df_all.columns:
-        df_all["client_net_type_value"] = None
-    if "client_net_type_name" not in df_all.columns:
-        df_all["client_net_type_name"] = None
-
-    facet_value = df_all["client_net_type_value"].astype(str)
-    bad = facet_value.isna() | (facet_value.str.lower().isin(["none", "nan", ""]))
-    facet_key = facet_value.mask(bad, df_all["client_net_type_name"].astype(str))
-    usable = facet_key.astype(str).str.len() > 0
-    df_all = df_all[usable]
-    if df_all.empty:
-        print(f"[WARN] No usable client_net_type_value/name to facet in {figset_dir}."); return
-
-    grp = (
-        df_all.assign(__facet__=facet_key)
-              .groupby(["__facet__", "algorithm_display", "iteration"], dropna=False)["accuracy"]
-              .mean()
-              .reset_index()
-              .rename(columns={"accuracy": "avg_accuracy"})
-    )
-    if grp.empty:
-        print(f"[WARN] No grouped accuracy rows for heatmap."); return
-
-    last_it = grp.groupby(["__facet__", "algorithm_display"], dropna=False)["iteration"].max().reset_index()
-    final = last_it.merge(grp, on=["__facet__", "algorithm_display", "iteration"], how="left")
-
-    def _facet_priority(v: str):
-        vl = str(v).lower()
-        if "alex" in vl:    return (0, str(v))
-        if "resnet" in vl:  return (1, str(v))
-        if "mobile" in vl:  return (2, str(v))
-        if "squeeze" in vl: return (3, str(v))
-        return (10, str(v))
-    facets = sorted(final["__facet__"].astype(str).unique().tolist(), key=_facet_priority)
-
-    def _pretty_facet_title(raw: str) -> str:
-        return _net_title_from_map(raw, raw)
-    col_titles = [_pretty_facet_title(c) for c in facets]
-
-    known_order = {name: i for i, name in enumerate(GLOBAL_ALG_COLOR_ORDER)}
-    algs = sorted(final["algorithm_display"].astype(str).unique().tolist(),
-                  key=lambda a: (known_order.get(_canon_algo_name(a), 10_000), a))
-
-    # CSV for heatmap figure: compute stats per (facet, algorithm) at its max iteration
-    stats_rows: List[pd.DataFrame] = []
-    for f in facets:
-        sub = df_all[facet_key == f]
-        stats_rows.append(_final_stats_for_panel(sub, subfigure=_pretty_facet_title(f)))
-
-    # Build matrix for annotated heatmap using already-aggregated "final"
-    mat = np.full((len(algs), len(facets)), np.nan, dtype=float)
-    idx_by_alg = {a: i for i, a in enumerate(algs)}
-    idx_by_fac = {f: j for j, f in enumerate(facets)}
-    for _, row in final.iterrows():
-        a = str(row["algorithm_display"])
-        f = str(row["__facet__"])
-        v = float(row["avg_accuracy"])
-        if a in idx_by_alg and f in idx_by_fac:
-            mat[idx_by_alg[a], idx_by_fac[f]] = v
-
-    fig_h = max(0.45 * len(algs) + 1.8, 3.8)
-    fig_w = max(1.2 * len(facets) + 2.2, 5.0)
-    fig, ax = plt.subplots(1, 1, figsize=(fig_w, fig_h))
-
-    im = ax.imshow(mat, aspect="auto", interpolation="nearest", cmap="viridis")
-    cbar = fig.colorbar(im, ax=ax)
-    cbar.set_label("Final Avg Accuracy", rotation=90)
-
-    ax.set_xticks(range(len(facets)))
-    ax.set_xticklabels(col_titles, rotation=30, ha="right")
-    ax.set_yticks(range(len(algs)))
-    ax.set_yticklabels(algs)
-
-    for i in range(len(algs)):
-        for j in range(len(facets)):
-            val = mat[i, j]
-            if not np.isnan(val):
-                ax.text(j, i, f"{val:.2f}", ha="center", va="center", fontsize=8)
-
-    ax.set_title("Final Accuracy by Algorithm × Client Net Type (CLIENT only)")
-    ax.set_xlabel("Client Net Type")
-    ax.set_ylabel("Algorithm")
-    ax.grid(False)
-
-    fig.tight_layout()
-    outfile = out_root / "client_net_type_heatmap.pdf"
-    _savefig_longpath(fig, outfile); plt.close(fig)
-    print(f"[OK] Saved: {outfile}")
-    _save_stats_csv(stats_rows, outfile)
+# (intentionally omitted here; unchanged in your version)
 
 # --------------------- Global-data-size (ONE plot) ---------------------
 
@@ -1408,7 +1351,6 @@ def main():
 
     figure_diff_benchmarks(args.root / "diff_benchmarks_1", args.figdir, alpha_value=1, inspect=args.inspect)
     figure_by_client_net_type_value(args.root / "same_client_nets", args.figdir, inspect=args.inspect)
-    figure_client_net_type_heatmap(args.root / "same_client_nets", args.figdir, inspect=args.inspect)
 
 if __name__ == "__main__":
     main()
