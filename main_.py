@@ -1,3 +1,4 @@
+from numpy.distutils.lib2def import DATA_RE
 
 from functions import *
 from entities import *
@@ -296,11 +297,6 @@ def iterate_fl_clusters(clients,server,net_type,net_cluster_technique,server_inp
         for c in clients: c.pseudo_label_received = server.pseudo_label_to_send[c.id_]
         rd = RecordData(clients, server)
 
-
-
-
-
-
         save_record_to_results(rd)
 
 
@@ -514,6 +510,84 @@ def run_COMET():
                                                cluster_technique, server_feedback_technique,
                                                num_clusters)
 
+
+def run_fedSelect():
+    for net_type in homo_models:
+        experiment_config.update_net_type(net_type)
+        for net_cluster_technique in net_cluster_technique_list:
+            experiment_config.net_cluster_technique = net_cluster_technique
+            for server_input_tech in [ServerInputTech.mean]:
+                experiment_config.server_input_tech = server_input_tech
+                for cluster_technique in [ClusterTechnique.kmeans]:
+                    experiment_config.cluster_technique = cluster_technique
+                    for server_feedback_technique in server_feedback_technique_list:
+                        experiment_config.server_feedback_technique = server_feedback_technique
+                        for num_cluster in num_cluster_list_fedAVG:
+                            experiment_config.num_clusters = num_cluster
+
+                            clients, clients_ids, clients_test_by_id_dict = create_clients(clients_train_data_dict,
+                                                                                           server_train_data,
+                                                                                           clients_test_data_dict,
+                                                                                           server_test_data)
+                            server = Server_FedSelect(id_="server", global_data=server_train_data,
+                                                  test_data=server_test_data,
+                                                  clients_ids=clients_ids,
+                                                  clients_test_data_dict=clients_test_by_id_dict,clients=clients)
+                            # --- broadcast a shared w0 to all clients (one-time) ---
+                            # Option A: use client[0] as the reference
+                            with torch.no_grad():
+                                w0 = copy.deepcopy(clients[0].model.state_dict())
+                            for c in clients:
+                                c.model.load_state_dict(w0, strict=True)
+                                if hasattr(c, "personal_model"):
+                                    c.personal_model = copy.deepcopy(c.model)
+                                c.weights_received = copy.deepcopy(w0)
+
+                            # ...then your loop
+                            for t in range(experiment_config.iterations):
+                                print("----------------------------iter number:" + str(t))
+                                for c in clients: c.iterate(t)
+                                for c in clients: server.received_weights[c.id_] = c.weights_to_send
+                                server.iterate(t)
+                                for c in clients: c.weights_received = server.weights_to_send[c.id_]
+                                rd = RecordData(clients, server)
+                                save_record_to_results(rd)
+
+
+def run_pFedHN():
+    for net_type in homo_models:
+        experiment_config.update_net_type(net_type)
+        for net_cluster_technique in net_cluster_technique_list:
+            experiment_config.net_cluster_technique = net_cluster_technique
+            for server_input_tech in [ServerInputTech.mean]:
+                experiment_config.server_input_tech = server_input_tech
+                for cluster_technique in [ClusterTechnique.kmeans]:
+                    experiment_config.cluster_technique = cluster_technique
+                    for server_feedback_technique in server_feedback_technique_list:
+                        experiment_config.server_feedback_technique = server_feedback_technique
+                        for num_cluster in num_cluster_list_fedAVG:
+                            experiment_config.num_clusters = num_cluster
+
+                            clients, clients_ids, clients_test_by_id_dict = create_clients(clients_train_data_dict,
+                                                                                           server_train_data,
+                                                                                           clients_test_data_dict,
+                                                                                           server_test_data)
+                            server = Server_pFedHN(id_="server", global_data=server_train_data,
+                                                      test_data=server_test_data,
+                                                      clients_ids=clients_ids,
+                                                      clients_test_data_dict=clients_test_by_id_dict, clients=clients)
+                            # --- broadcast a shared w0 to all clients (one-time) ---
+                            # --- pFedHN main loop skeleton ---
+                            for t in range(experiment_config.iterations):
+                                for c in clients:
+                                    c.iterate(t)
+                                    server.apply_client_update(c.id_, c.pfedhn_payload)
+                                server.after_round(t)  # aggregate + broadcast
+                                for c in clients: c.after_round(t)
+
+                                # 5) (Optional) eval/logging
+                                rd = RecordData(clients, server)
+                                save_record_to_results(rd)
 def run_exp_by_algo():
     experiment_config.weights_for_ps = WeightForPS.withoutWeights
     experiment_config.input_consistency = InputConsistency.withoutInputConsistency
@@ -548,14 +622,18 @@ def run_exp_by_algo():
         run_Ditto()
     if algorithm_selection == AlgorithmSelected.pFedCK:
         run_pFedCK()
+    if algorithm_selection == algorithm_selection.FedSelect:
+        run_fedSelect()
+    if algorithm_selection == algorithm_selection.pFedHN:
+        run_pFedHN()
 
 
 
 
 if __name__ == '__main__':
     print(device)
-    seed_num_list = [3]
-    data_sets_list = [DataSet.CIFAR100]#[DataSet.CIFAR100]
+    seed_num_list = [1]
+    data_sets_list = [DataSet.CIFAR10]#[DataSet.ImageNetR,DataSet.TinyImageNet,DataSet.EMNIST_balanced,DataSet.CIFAR10,DataSet.CIFAR100]#[DataSet.CIFAR100]
     num_clients_list = [25]#[100,500]#[25]
     num_opt_clusters_list =[5] #[5]
     mix_percentage = 0.1
@@ -599,7 +677,7 @@ if __name__ == '__main__':
 
     # C_ResNetSqueeze_S_vgg = 29
     # C_ResNetSqueeze_S_alex = 28
-    nets_types_list_PseudoLabelsClusters  = [NetsType.C_rndWeak_S_VGG]#[NetsType.C_AlexSqueeze_S_alex,NetsType.C_AlexMobile_S_alex,NetsType.C_ResNetMobile_S_alex,NetsType.C_ResNetSqueeze_S_alex]#,NetsType.C_alex_S_vgg,NetsType.C_alex_S_alex]#,NetsType.C_alex_S_vgg]# ,NetsType.C_alex_S_vgg]#,NetsType.C_alex_S_vgg]#,NetsType.C_alex_S_vgg]
+    nets_types_list_PseudoLabelsClusters  = [NetsType.C_rndWeak_S_VGG]#[NetsType.C_Mobile_S_alex,NetsType.C_ResNet_S_alex,NetsType.C_squeeze_S_alex,NetsType.C_alex_S_alex]#[NetsType.C_AlexSqueeze_S_alex,NetsType.C_AlexMobile_S_alex,NetsType.C_ResNetMobile_S_alex,NetsType.C_ResNetSqueeze_S_alex]#,NetsType.C_alex_S_vgg,NetsType.C_alex_S_alex]#,NetsType.C_alex_S_vgg]# ,NetsType.C_alex_S_vgg]#,NetsType.C_alex_S_vgg]#,NetsType.C_alex_S_vgg]
     homo_models =nets_types_list_PseudoLabelsClusters
 
 

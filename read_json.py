@@ -7,6 +7,7 @@ Adds new figures:
   1) Facets subplots by `client_net_type._value_` (row/grid of subplots).
   2) Heatmap of final accuracy: Algorithm × Client Net Type.
   3) MAPL/global-data-size: ONE plot (one curve per subfolder, labeled by server_data_ratio).
+  4) NEW: client_scale: ONE plot (one curve per distinct summary[num_clients], seeds averaged).
 
 Existing figsets:
   - diff_clients_nets/       (grid of subplots by subfolder)
@@ -19,6 +20,9 @@ Outputs (PDF + CSV):
   - figures/<global_data_size_folder>/<global_data_size_folder>_by_server_data_ratio_{client|server}.pdf / .csv
   - figures/diff_clients_nets/diff_clients_nets.pdf / .csv
   - figures/diff_benchmarks_05/diff_benchmarks_05.pdf / .csv
+  - figures/client_scale/client_scale.pdf
+  - figures/client_scale/client_scale_iter.csv
+  - figures/client_scale/client_scale_final.csv
 """
 
 from __future__ import annotations
@@ -172,7 +176,7 @@ def _concat_or_empty(frames: List[pd.DataFrame]) -> pd.DataFrame:
     return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame(
         columns=["dataset","algorithm_display","measure","seed","client_id",
                  "iteration","accuracy","client_net_type_name","client_net_type_value",
-                 "alpha_dich","lambda_ditto","server_data_ratio","_path","algorithm"]
+                 "alpha_dich","lambda_ditto","server_data_ratio","num_clients","_path","algorithm"]
     )
 
 # --------------------- field finders ---------------------
@@ -441,6 +445,30 @@ def find_server_data_ratio(root: Json, *, fallback_from=None):
 
     return None, None
 
+def find_num_clients(root: Json):
+    """Extract summary['num_clients'] as int if present."""
+    try:
+        if isinstance(root, dict) and "summary" in root:
+            s = root["summary"]
+            if isinstance(s, dict) and "num_clients" in s:
+                v = s["num_clients"]
+                for caster in (int, lambda x: int(float(x))):
+                    try:
+                        return caster(v), ("summary","num_clients")
+                    except Exception:
+                        pass
+    except Exception:
+        pass
+    for p, v in walk(root):
+        if p and p[-1] == "num_clients":
+            for caster in (int, lambda x: int(float(x))):
+                try:
+                    return caster(v), p
+                except Exception:
+                    pass
+            return None, p
+    return None, None
+
 # --------------------- loading ---------------------
 
 def load_rows_from_dir(dir_path: Path, *, inspect: bool = False, alg_hint: Optional[str] = None) -> pd.DataFrame:
@@ -476,6 +504,7 @@ def load_rows_from_dir(dir_path: Path, *, inspect: bool = False, alg_hint: Optio
         alpha_dich, _        = find_alpha_dich(raw)
         lambda_ditto, _      = find_lambda_ditto(raw)
         server_data_ratio, _ = find_server_data_ratio(raw, fallback_from=p)
+        num_clients, _       = find_num_clients(raw)
 
         is_mapl = bool(alg_name and "mapl" in str(alg_name).lower())
         used_any = False
@@ -515,6 +544,7 @@ def load_rows_from_dir(dir_path: Path, *, inspect: bool = False, alg_hint: Optio
                         "alpha_dich": alpha_dich,
                         "lambda_ditto": lambda_ditto,
                         "server_data_ratio": server_data_ratio,
+                        "num_clients": num_clients,
                     })
                     used_any = True
 
@@ -551,6 +581,7 @@ def load_rows_from_dir(dir_path: Path, *, inspect: bool = False, alg_hint: Optio
                         "alpha_dich": alpha_dich,
                         "lambda_ditto": lambda_ditto,
                         "server_data_ratio": server_data_ratio,
+                        "num_clients": num_clients,
                     })
                     used_any = True
 
@@ -563,7 +594,7 @@ def load_rows_from_dir(dir_path: Path, *, inspect: bool = False, alg_hint: Optio
     cols = [
         "dataset","algorithm_display","measure","seed","client_id",
         "iteration","accuracy","client_net_type_name","client_net_type_value",
-        "alpha_dich","lambda_ditto","server_data_ratio","_path","algorithm"
+        "alpha_dich","lambda_ditto","server_data_ratio","num_clients","_path","algorithm"
     ]
     return pd.DataFrame(rows, columns=cols) if rows else pd.DataFrame(columns=cols)
 
@@ -1162,6 +1193,182 @@ def figure_global_data_size_oneplot(figset_dir: Path, out_root: Path, *, inspect
     print(f"[OK] Saved: {outfile}")
     _save_stats_csv(stats_rows, outfile)
 
+# --------------------- NEW: client_scale (ONE plot; one curve per num_clients) ---------------------
+
+def _maybe_scale_to_percent(arr: np.ndarray) -> np.ndarray:
+    if arr.size == 0:
+        return arr
+    try:
+        mx = np.nanmax(arr)
+        if mx <= 1.05:
+            return arr * 100.0
+    except Exception:
+        pass
+    return arr
+
+def _aggregate_run_mean_over_clients(df_run: pd.DataFrame) -> pd.Series:
+    """
+    Given rows from a single JSON (same path), average accuracy across clients per iteration.
+    Assumes df has columns: iteration, client_id, accuracy.
+    Returns a Series indexed by iteration.
+    """
+    g = df_run.groupby("iteration", dropna=False)["accuracy"].mean().sort_index()
+    return g
+
+def _final_stats_for_client_scale(df_iter: pd.DataFrame) -> pd.DataFrame:
+    """
+    df_iter columns: iter, num_clients, mean, sem, n_seeds
+    Return final-iteration stats per num_clients.
+    """
+    out = []
+    for nc, d in df_iter.groupby("num_clients"):
+        if d.empty: continue
+        max_it = pd.to_numeric(d["iter"], errors="coerce").dropna().max()
+        row = d[d["iter"] == max_it]
+        if row.empty: continue
+        r = row.iloc[0]
+        out.append({
+            "num_clients": int(nc) if pd.notna(nc) else None,
+            "max_iteration": int(max_it),
+            "mean": float(r["mean"]),
+            "sem": float(r["sem"]),
+            "n_seeds": int(r["n_seeds"]),
+        })
+    return pd.DataFrame(out, columns=["num_clients","max_iteration","mean","sem","n_seeds"])
+
+def figure_client_scale_oneplot(figset_dir: Path, out_root: Path, *, inspect: bool):
+    """
+    Scans results/client_scale for JSONs of one algorithm/config run across different seeds.
+    Each JSON must contain summary['num_clients'].
+    We build one curve per num_clients (averaging across seeds), with SEM shading.
+    Also emits two CSVs: per-iteration stats and final-iteration stats.
+    """
+    if not figset_dir.exists():
+        print(f"[SKIP] {figset_dir} (missing)"); return
+
+    df_all = _load_any_jsons_under(figset_dir, inspect=inspect)
+    if df_all.empty:
+        print(f"[WARN] No data under {figset_dir}"); return
+
+    # Prefer CIFAR100 when available
+    mask_cifar = df_all["dataset"].astype(str).str.lower() == "cifar100"
+    if mask_cifar.any():
+        df_all = df_all[mask_cifar]
+
+    # Apply presentation policy
+    df_all = _apply_measure_filter_for_comparison(df_all)
+    if df_all.empty:
+        print(f"[WARN] No usable rows (policy-filtered) under {figset_dir}"); return
+
+    # Require num_clients
+    if "num_clients" not in df_all.columns or df_all["num_clients"].isna().all():
+        print(f"[WARN] No summary[num_clients] detected in {figset_dir}"); return
+
+    # Ensure types
+    df_all = df_all.copy()
+    df_all["num_clients"] = pd.to_numeric(df_all["num_clients"], errors="coerce")
+    df_all = df_all.dropna(subset=["num_clients"])
+
+    # Normalize accuracy scale to % if it looks like probabilities
+    # We'll do this after aggregating per-run
+    # First: split per file path (run), average over clients per iteration
+    iter_rows = []
+    for (path, nc, seed), d in df_all.groupby(["_path","num_clients","seed"], dropna=False):
+        if d.empty:
+            continue
+        # Keep only iteration/client/accuracy
+        sub = d[["iteration","client_id","accuracy"]].copy()
+        s = _aggregate_run_mean_over_clients(sub)  # Series index=iteration
+        if s.empty:
+            continue
+        # store
+        iter_rows.append(pd.DataFrame({"iter": s.index.astype(int),
+                                       "value": s.values.astype(float),
+                                       "num_clients": nc,
+                                       "seed": seed,
+                                       "_path": path}))
+
+    if not iter_rows:
+        print(f"[WARN] No per-run curves produced for {figset_dir}"); return
+
+    df_runs = pd.concat(iter_rows, ignore_index=True)
+
+    # If values look like probs, scale to % (per num_clients to be safe)
+    def _maybe_scale_group(g: pd.DataFrame) -> pd.DataFrame:
+        vals = g["value"].to_numpy(dtype=float)
+        g = g.copy()
+        g["value"] = _maybe_scale_to_percent(vals)
+        return g
+    df_runs = df_runs.groupby("num_clients", group_keys=False).apply(_maybe_scale_group)
+
+    # Align lengths across seeds per num_clients by truncating to common min length
+    iter_stats = []
+    for nc, g in df_runs.groupby("num_clients"):
+        # Build matrix SxT per seed (truncate to min T)
+        mats = []
+        seeds = []
+        for sd, d in g.groupby("seed"):
+            d = d.sort_values("iter")
+            mats.append(d["value"].to_numpy(dtype=float))
+            seeds.append(sd)
+        if not mats:
+            continue
+        T = min(len(a) for a in mats)
+        if T == 0:
+            continue
+        arr = np.vstack([a[:T] for a in mats])  # shape [S, T]
+        iters = np.sort(g["iter"].unique())[:T]
+        means = np.nanmean(arr, axis=0)
+        # Sample SEM across seeds (rows)
+        sems = (np.nanstd(arr, axis=0, ddof=1) / np.sqrt(arr.shape[0])) if arr.shape[0] > 1 else np.zeros(T)
+        iter_stats.append(pd.DataFrame({
+            "iter": iters.astype(int),
+            "num_clients": int(nc),
+            "mean": means.astype(float),
+            "sem": sems.astype(float),
+            "n_seeds": int(arr.shape[0]),
+        }))
+
+    if not iter_stats:
+        print(f"[WARN] No per-iteration stats available for {figset_dir}"); return
+
+    df_iter = pd.concat(iter_stats, ignore_index=True).sort_values(["num_clients","iter"])
+
+    # Save per-iteration CSV
+    out_dir = out_root / "client_scale"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    iter_csv = out_dir / "client_scale_iter.csv"
+    df_iter.to_csv(_win_long_abs(iter_csv), index=False)
+    print(f"[OK] Saved: {iter_csv}")
+
+    # Final-iteration CSV
+    df_final = _final_stats_for_client_scale(df_iter)
+    final_csv = out_dir / "client_scale_final.csv"
+    df_final.to_csv(_win_long_abs(final_csv), index=False)
+    print(f"[OK] Saved: {final_csv}")
+
+    # Plot
+    fig, ax = plt.subplots(1, 1, figsize=(7.2, 4.8))
+    # nice numeric order
+    for nc in sorted(df_iter["num_clients"].unique().tolist()):
+        d = df_iter[df_iter["num_clients"] == nc].sort_values("iter")
+        x = d["iter"].to_numpy()
+        y = d["mean"].to_numpy(dtype=float)
+        e = d["sem"].to_numpy(dtype=float)
+        ax.plot(x, y, linewidth=2.0, label=f"{int(nc)} clients")
+        ax.fill_between(x, y - e, y + e, alpha=0.15)
+
+    ax.set_xlabel("Iteration")
+    ax.set_ylabel("Average Client Top-1 Accuracy (%)")
+    ax.grid(False)
+    ax.legend(loc="upper center", bbox_to_anchor=(0.5, 1.12),
+              ncol=min(6, len(df_iter['num_clients'].unique())), frameon=False)
+    fig.tight_layout(rect=[0, 0, 1, 0.92])
+
+    out_pdf = out_dir / "client_scale.pdf"
+    _savefig_longpath(fig, out_pdf); plt.close(fig)
+    print(f"[OK] Saved: {out_pdf}")
+
 # --------------------- CLI ---------------------
 
 def main():
@@ -1170,11 +1377,13 @@ def main():
     ap.add_argument("--figdir", type=Path, default=Path("figures"), help="Where to save PDFs/CSVs")
     ap.add_argument("--inspect", action="store_true", help="Print detected paths/keys while loading")
     ap.add_argument("--lambda_folder", type=str, default="examine_lambda_for_ditto")
-    ap.add_argument("--alpha", type=int, default=5)
+    #ap.add_argument("--alpha", type=int, default=5)
     ap.add_argument("--facet_client_net_dir", type=Path, default=Path("results/diff_clients_nets"),
                     help="Folder whose immediate subfolders are algorithm folders; used to facet by client_net_type._value_")
     ap.add_argument("--global_data_size_folder", type=str, default="global_data_size",
                     help="Folder under --root where each immediate subfolder represents one curve/ratio.")
+    ap.add_argument("--client_scale_folder", type=str, default="client_scale",
+                    help="Folder under --root containing runs with different summary[num_clients].")
 
     args = ap.parse_args()
 
@@ -1186,9 +1395,18 @@ def main():
         use_server_measure=True
     )
 
+    # NEW: Client-scale oneplot (+CSVs with per-iter and final stats)
+    figure_client_scale_oneplot(
+        args.root / args.client_scale_folder,
+        args.figdir,
+        inspect=args.inspect
+    )
+
     # Comparison figures (+CSVs): client for non-MAPL + MAPL server-only (as "MAPL")
     figure_diff_clients_nets(args.root / "diff_clients_nets", args.figdir, inspect=args.inspect)
-    figure_diff_benchmarks(args.root / "diff_benchmarks_05", args.figdir, alpha_value=args.alpha, inspect=args.inspect)
+    figure_diff_benchmarks(args.root / "diff_benchmarks_05", args.figdir, alpha_value=5, inspect=args.inspect)
+
+    figure_diff_benchmarks(args.root / "diff_benchmarks_1", args.figdir, alpha_value=1, inspect=args.inspect)
     figure_by_client_net_type_value(args.root / "same_client_nets", args.figdir, inspect=args.inspect)
     figure_client_net_type_heatmap(args.root / "same_client_nets", args.figdir, inspect=args.inspect)
 

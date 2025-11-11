@@ -1368,333 +1368,7 @@ class Client(LearningEntity):
         print(f"Total gradient size: {total_grad_bytes / 1024 / 1024:.4f} MB")
         print()
 
-# ---- in your model code, expose mid-layer features ----
-# example: modify your client nets so forward can return (logits, feat)
-# def forward(self, x, return_feat=False): ...
-#   if return_feat: return logits, feat
-#   else: return logits
 
-import torch, copy
-import torch.nn as nn
-import torch.nn.functional as F
-from torch.utils.data import DataLoader
-
-
-
-
-
-
-import copy
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
-from torch.utils.data import DataLoader
-
-
-class Client_Ditto(Client):
-    """
-    Ditto client:
-      - self.model:          global-path model (sent to server; FedAvg)
-      - self.personal_model: local personalized model (kept on client)
-      - self.weights_received: set by server after aggregation (expected each round)
-      - self.weights_to_send: what we send to the server (global path)
-    """
-
-    def __init__(self, id_, client_data, global_data, global_test_data, local_test_data, lam_ditto=1.0):
-        super().__init__(id_, client_data, global_data, global_test_data, local_test_data)
-        self.personal_model = copy.deepcopy(self.model)
-        self.lam_ditto = float(lam_ditto)
-
-        self.weights_received = None
-        self.weights_to_send  = None
-
-        # Optional separate epoch knobs; will fallback to your existing var if absent.
-        self.epochs_global   = getattr(experiment_config, "epochs_global",
-                                getattr(experiment_config, "epochs_num_input_fine_tune_clients", 1))
-        self.epochs_personal = getattr(experiment_config, "epochs_personal",
-                                getattr(experiment_config, "epochs_num_input_fine_tune_clients", 1))
-
-        self.lr_c = experiment_config.learning_rate_fine_tune_c  # reuse your LR
-
-    # ---------- utilities ----------
-    @torch.no_grad()
-    def _load_state(self, model, state_dict):
-        model.load_state_dict(state_dict, strict=True)
-
-    def _eval_on(self, model, eval_fn, *args, **kwargs):
-        """Temporarily swap self.model to reuse your existing eval funcs unchanged."""
-        old = self.model
-        try:
-            self.model = model
-            return eval_fn(*args, **kwargs)
-        finally:
-            self.model = old
-
-    def _proximal_loss_L2_mean(self, model, anchor_state):
-        """
-        Mean L2 distance (not sum) between params and anchor.
-        Using mean makes lambda human-scaled (e.g., 0.05–2).
-        """
-        anchor = {k: v.to(next(model.parameters()).device) for k, v in anchor_state.items()}
-        sq, n = 0.0, 0
-        for name, p in model.named_parameters():
-            if not p.requires_grad:
-                continue
-            d = p - anchor[name]
-            sq += torch.sum(d * d)
-            n  += d.numel()
-        return sq / max(n, 1)
-
-    # ---------- training paths ----------
-    def _global_update_fedavg(self):
-        """Local supervised training on self.model; returns sd to send."""
-        print(f"*** {self} global-path (FedAvg) update ***")
-        loader = DataLoader(self.local_data, batch_size=experiment_config.batch_size, shuffle=True)
-        self.model.train()
-        criterion = nn.CrossEntropyLoss()
-        opt = torch.optim.Adam(self.model.parameters(), lr=self.lr_c)
-
-        for epoch in range(self.epochs_global):
-            self.epoch_count += 1
-            epoch_loss = 0.0
-            for x, y in loader:
-                x, y = x.to(device), y.to(device)
-                opt.zero_grad()
-                logits = self.model(x)
-                loss = criterion(logits, y)
-                loss.backward()
-                torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
-                opt.step()
-                epoch_loss += float(loss.item())
-            print(f"[Global] Epoch {epoch+1}/{self.epochs_global}  Loss: {epoch_loss/len(loader):.4f}")
-
-        return copy.deepcopy(self.model.state_dict())
-
-    def _personalized_update_ditto(self, anchor_state):
-        """Ditto objective on self.personal_model: CE + 0.5*λ*mean||θ-v||^2."""
-        print(f"*** {self} personalized-path (Ditto) update, lambda={self.lam_ditto} ***")
-        loader = DataLoader(self.local_data, batch_size=experiment_config.batch_size, shuffle=True)
-        self.personal_model.train()
-        criterion = nn.CrossEntropyLoss()
-        opt = torch.optim.Adam(self.personal_model.parameters(), lr=self.lr_c)
-
-        # Freeze a copy of the anchor
-        anchor = {k: v.detach().clone() for k, v in anchor_state.items()}
-
-        for epoch in range(self.epochs_personal):
-            epoch_obj = 0.0
-            for x, y in loader:
-                x, y = x.to(device), y.to(device)
-                opt.zero_grad()
-                logits = self.personal_model(x)
-                ce = criterion(logits, y)
-                prox = self._proximal_loss_L2_mean(self.personal_model, anchor)
-                loss = ce + 0.5 * self.lam_ditto * prox
-                loss.backward()
-                torch.nn.utils.clip_grad_norm_(self.personal_model.parameters(), max_norm=1.0)
-                opt.step()
-                epoch_obj += float(loss.item())
-            print(f"[Personalized] Epoch {epoch+1}/{self.epochs_personal}  Obj: {epoch_obj/len(loader):.4f}")
-
-    # ---------- round entry ----------
-    def iterate(self, t):
-        self.current_iteration = t
-
-        # (A) Model init / loading
-        if t == 0:
-            if self.weights_received is not None:
-                # Best case: server broadcasted a common w0
-                self._load_state(self.model, self.weights_received)
-                self.personal_model = copy.deepcopy(self.model)
-                print(f"{self}: loaded broadcast w0")
-            else:
-                # Fallback (try to avoid by broadcasting w0 from server)
-                self.model.apply(self.initialize_weights)
-                self.personal_model = copy.deepcopy(self.model)
-                print(f"{self}: WARNING—no broadcast w0; using local init")
-        else:
-            # Load aggregated global for this round
-            self._load_state(self.model, self.weights_received)
-
-        # Keep a PRE-UPDATE anchor in case no broadcast happened this round
-        pre_update_anchor = copy.deepcopy(self.model.state_dict())
-
-        # (B) Global-path update (what we send to server)
-        self.weights_to_send = self._global_update_fedavg()
-
-        # (C) Personalized Ditto update (kept local)
-        # Prefer the received global; fallback to the pre-update anchor on round 0
-        anchor = self.weights_received if self.weights_received is not None else pre_update_anchor
-        self._personalized_update_ditto(anchor)
-
-        # (D) Accounting & metrics
-        total_size = sum(p.numel() * p.element_size() for p in self.weights_to_send.values())
-        self.size_sent[t] = total_size / (1024 * 1024)
-
-        # Evaluate with personalized model on local test
-        self.accuracy_per_client_1[t]   = self._eval_on(self.personal_model, self.evaluate_accuracy_single, self.local_test_set, k=1)
-        self.accuracy_per_client_5[t]   = self._eval_on(self.personal_model, self.evaluate_accuracy,        self.local_test_set, k=5)
-        self.accuracy_per_client_10[t]  = self._eval_on(self.personal_model, self.evaluate_accuracy,        self.local_test_set, k=10)
-        self.accuracy_per_client_100[t] = self._eval_on(self.personal_model, self.evaluate_accuracy,        self.local_test_set, k=100)
-
-        # Optional: also log global-path accuracy on global test
-        _ = self.evaluate_accuracy_single(self.test_global_data)
-        return
-
-
-class Client_NoFederatedLearning(Client):
-    def __init__(self,id_, client_data, global_data,global_test_data,local_test_data,evaluate_every):
-        Client.__init__(self,id_, client_data, global_data,global_test_data,local_test_data)
-        self.evaluate_every = evaluate_every
-
-    def fine_tune(self):
-        print("*** " + self.__str__() + " fine-tune ***")
-
-        fine_tune_loader = DataLoader(self.local_data, batch_size=experiment_config.batch_size, shuffle=True)
-        self.model.train()  # Set the model to training mode
-
-        # Define loss function and optimizer
-
-        criterion = nn.CrossEntropyLoss()
-
-        optimizer = torch.optim.Adam(self.model.parameters(), lr=experiment_config.learning_rate_fine_tune_c)
-
-        epochs = experiment_config.epochs_num_input_fine_tune_clients_no_fl
-        for epoch in range(epochs):
-            self.epoch_count += 1
-            epoch_loss = 0
-            for inputs, targets in fine_tune_loader:
-                inputs, targets = inputs.to(device), targets.to(device)
-                optimizer.zero_grad()
-                outputs = self.model(inputs)
-
-                loss = criterion(outputs, targets)
-
-                # Backward pass and optimization
-                loss.backward()
-                optimizer.step()
-                epoch_loss += loss.item()
-            if   epoch % self.evaluate_every == 0 and epoch!=0:
-                self.accuracy_per_client_1[epoch] = self.evaluate_accuracy_single(self.local_test_set, k=1)
-                self.accuracy_per_client_5[epoch] = self.evaluate_accuracy(self.local_test_set, k=5)
-                self.accuracy_per_client_10[epoch] = self.evaluate_accuracy(self.local_test_set, k=10)
-                self.accuracy_per_client_100[epoch] = self.evaluate_accuracy(self.local_test_set, k=100)
-
-            result_to_print = epoch_loss / len(fine_tune_loader)
-            print(f"Epoch [{epoch + 1}/{epochs}], Loss: {result_to_print:.4f}")
-        #self.weights = self.model.state_dict()self.weights = self.model.state_dict()
-
-        return  result_to_print
-
-class Client_PseudoLabelsClusters_with_division(Client):
-    def __init__(self, id_, client_data, global_data, global_test_data, local_test_data):
-        Client.__init__(self,id_, client_data, global_data,global_test_data,local_test_data)
-
-
-
-    def train(self,mean_pseudo_labels):
-
-        print(f"Mean pseudo-labels shape: {mean_pseudo_labels.shape}")  # Should be (num_data_points, num_classes)
-
-        print(f"*** {self.__str__()} train ***")
-        server_loader = DataLoader(self.global_data[self.current_iteration-1], batch_size=experiment_config.batch_size, shuffle=False, num_workers=0,
-                                   drop_last=True)
-        #server_loader = DataLoader(self.global_data, batch_size=experiment_config.batch_size, shuffle=False,
-        #                           num_workers=0)
-        #print(1)
-        self.model.train()
-        criterion = nn.KLDivLoss(reduction='batchmean')
-        optimizer = torch.optim.Adam( self.model.parameters(), lr=experiment_config.learning_rate_train_c)
-        #optimizer = torch.optim.Adam(self.model.parameters(), lr=experiment_config.learning_rate_train_c,
-        #                             weight_decay=1e-4)
-
-        pseudo_targets_all = mean_pseudo_labels.to(device)
-
-        for epoch in range(experiment_config.epochs_num_train_client):
-            #print(2)
-
-            self.epoch_count += 1
-            epoch_loss = 0
-
-            for batch_idx, (inputs, _) in enumerate(server_loader):
-                #print(batch_idx)
-
-                inputs = inputs.to(device)
-                optimizer.zero_grad()
-
-                outputs =  self.model(inputs)
-                # Check for NaN or Inf in outputs
-
-                # Convert model outputs to log probabilities
-                outputs_prob = F.log_softmax(outputs, dim=1)
-                # Slice pseudo_targets to match the input batch size
-                start_idx = batch_idx * experiment_config.batch_size
-                end_idx = start_idx + inputs.size(0)
-                pseudo_targets = pseudo_targets_all[start_idx:end_idx].to(device)
-
-                # Check if pseudo_targets size matches the input batch size
-                if pseudo_targets.size(0) != inputs.size(0):
-                    print(
-                        f"Skipping batch {batch_idx}: Expected pseudo target size {inputs.size(0)}, got {pseudo_targets.size(0)}")
-                    continue  # Skip the rest of the loop for this batch
-
-                # Check for NaN or Inf in pseudo targets
-                if torch.isnan(pseudo_targets).any() or torch.isinf(pseudo_targets).any():
-                    print(f"NaN or Inf found in pseudo targets at batch {batch_idx}: {pseudo_targets}")
-                    continue
-
-                # Normalize pseudo targets to sum to 1
-                pseudo_targets = F.softmax(pseudo_targets, dim=1)
-
-                # Calculate the loss
-                loss = criterion(outputs_prob, pseudo_targets)
-
-                # Check if the loss is NaN or Inf
-                if torch.isnan(loss) or torch.isinf(loss):
-                    print(f"NaN or Inf loss encountered at batch {batch_idx}: {loss}")
-                    continue
-
-                loss.backward()
-
-                # Clip gradients
-                torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
-
-                optimizer.step()
-                epoch_loss += loss.item()
-
-            avg_loss = epoch_loss / len(server_loader)
-            print(f"Epoch [{epoch + 1}/{experiment_config.epochs_num_train_client}], Loss: {avg_loss:.4f}")
-
-        #self.weights =self.model.state_dict()
-        return avg_loss
-
-
-    def evaluate(self, model=None):
-        if model is None:
-            model = self.model
-    #    print("*** Generating Pseudo-Labels with Probabilities ***")
-
-        # Create a DataLoader for the global data
-        global_data_loader = DataLoader(self.global_data[self.current_iteration], batch_size=experiment_config.batch_size, shuffle=False)
-
-        model.eval()  # Set the model to evaluation mode
-
-        all_probs = []  # List to store the softmax probabilities
-        with torch.no_grad():  # Disable gradient computation
-            for inputs, _ in global_data_loader:
-                inputs = inputs.to(device)
-                outputs = model(inputs)  # Forward pass
-
-                # Apply softmax to get the class probabilities
-                probs = F.softmax(outputs, dim=1)  # Apply softmax along the class dimension
-
-                all_probs.append(probs.cpu())  # Store the probabilities on CPU
-
-        # Concatenate all probabilities into a single tensor (2D matrix)
-        all_probs = torch.cat(all_probs, dim=0)
-
-       #print(f"Shape of the 2D pseudo-label matrix: {all_probs.shape}")
-        return all_probs
 
 class Server(LearningEntity):
     def __init__(self,id_,global_data,test_data, clients_ids,clients_test_data_dict):
@@ -2672,7 +2346,971 @@ class Server(LearningEntity):
                 del distance_per_client[other]
         return clusters_client_id_dict
 
+import copy
+from typing import Dict, List, Any, Tuple
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+from torch.utils.data import DataLoader
 
+# ======= Helper: apply masks (elementwise) =======
+def _masked_copy_(dst_param: torch.nn.Parameter, src_tensor: torch.Tensor, mask: torch.Tensor):
+    # Only copy entries where mask == 1 (shared part)
+    with torch.no_grad():
+        dst_param.data[mask.bool()] = src_tensor.data[mask.bool()]
+
+def _masked_zero_grad_(param: torch.nn.Parameter, mask_personal: torch.Tensor, keep_shared: bool):
+    """
+    If keep_shared=True  -> zero grads on personalized entries (so shared gets updated)
+    If keep_shared=False -> zero grads on shared entries (so personalized gets updated)
+    """
+    if param.grad is None:
+        return
+    m = mask_personal.bool()
+    if keep_shared:
+        # zero personalized grads
+        param.grad.data[m] = 0
+    else:
+        # zero shared grads (= complement)
+        param.grad.data[~m] = 0
+
+def _all_params(model: nn.Module) :
+    return [p for p in model.parameters() if p.requires_grad]
+
+# ======= Client: FedSelect =======
+class Client_FedSelect(Client):
+    """
+    FedSelect-style client with compatibility shims:
+      - Produces `weights_to_send` (shared-only state dict; personalized entries zeroed)
+      - Consumes `weights_received` by applying only to shared positions
+      - Exposes `.iterate(t)` for your existing loop
+    """
+
+    # ---------- helpers ----------
+    @staticmethod
+    def _all_params(model):
+        return [p for p in model.parameters() if p.requires_grad]
+
+    @staticmethod
+    def _masked_zero_grad_(param, mask_personal, keep_shared: bool):
+        if param.grad is None:
+            return
+        m = mask_personal.bool()
+        if keep_shared:
+            param.grad.data[m] = 0
+        else:
+            param.grad.data[~m] = 0
+
+    # ---------- init ----------
+    def __init__(self, id_, client_data, global_data, global_test_data, local_test_data):
+        super().__init__(id_, client_data, global_data, global_test_data, local_test_data)
+
+        # FedSelect masks keyed by param name (buffers are not masked)
+        self._init_fedselect_masks()
+
+        # FedSelect hyperparams (fall back to your experiment_config)
+        self.fs_select_every      = getattr(experiment_config, "fedselect_select_every", 1)
+        self.fs_grow_frac         = getattr(experiment_config, "fedselect_grow_frac", 0.05)
+        self.fs_warmup_rounds     = getattr(experiment_config, "fedselect_warmup_rounds", 0)
+        self.local_epochs_shared   = getattr(experiment_config, "fedselect_epochs_shared", 1)
+        self.local_epochs_personal = getattr(experiment_config, "fedselect_epochs_personal", 1)
+        self.lr_shared     = getattr(experiment_config, "fedselect_lr_shared",     experiment_config.learning_rate_train_c)
+        self.lr_personal   = getattr(experiment_config, "fedselect_lr_personal",   experiment_config.learning_rate_fine_tune_c)
+        self.batch_size    = getattr(experiment_config, "fedselect_batch_size",    experiment_config.batch_size)
+
+        # --- compatibility fields expected by your loop ---
+        self.weights_to_send = None
+        self._weights_received = None  # private; use property below
+
+        # cache for upload
+        self.last_shared_state = {}
+
+    # Provide the old attribute with an auto-apply on set
+    @property
+    def weights_received(self):
+        return self._weights_received
+
+    @weights_received.setter
+    def weights_received(self, state):
+        self._weights_received = state
+        if state is not None:
+            # server sends aggregated SHARED slice; write only shared positions
+            self.apply_aggregated_shared(state)
+
+    def _init_fedselect_masks(self):
+        self.fs_masks_by_name = {}
+        for name, p in self.model.named_parameters():
+            self.fs_masks_by_name[name] = torch.zeros_like(p.data, dtype=torch.bool, device=p.device)
+
+    def _importance_scores_by_name(self):
+        self.model.zero_grad(set_to_none=True)
+        tmp_loader = DataLoader(self.local_data, batch_size=self.batch_size, shuffle=True)
+        criterion = nn.CrossEntropyLoss()
+        self.model.train()
+
+        max_batches = getattr(experiment_config, "fedselect_score_batches", 1)
+        seen = 0
+        for xb, yb in tmp_loader:
+            xb, yb = xb.to(device), yb.to(device)
+            logits = self.model(xb)
+            loss = criterion(logits, yb)
+            loss.backward()
+            seen += 1
+            if seen >= max_batches:
+                break
+
+        scores = {}
+        for name, p in self.model.named_parameters():
+            scores[name] = torch.zeros_like(p.data) if p.grad is None else p.grad.detach().abs()
+        return scores
+
+    def _grow_personal_mask(self, t_round: int):
+        if t_round < self.fs_warmup_rounds: return
+        if self.fs_grow_frac <= 0: return
+        if (t_round % self.fs_select_every) != 0: return
+
+        scores_by_name = self._importance_scores_by_name()
+        for name, p in self.model.named_parameters():
+            mask = self.fs_masks_by_name[name]
+            with torch.no_grad():
+                shared_positions = (~mask).flatten()
+                if shared_positions.sum() == 0:
+                    continue
+                s = scores_by_name[name].flatten()[shared_positions]
+                k = max(1, int(self.fs_grow_frac * s.numel()))
+                _, topk_idx = torch.topk(s, k, largest=True, sorted=False)
+                full_idx = shared_positions.nonzero(as_tuple=False).squeeze(1)[topk_idx]
+                mf = mask.flatten()
+                mf[full_idx] = True
+                self.fs_masks_by_name[name] = mf.view_as(mask)
+
+    def _local_optimize(self, data_loader, epochs: int, keep_shared: bool, lr: float):
+        self.model.train()
+        opt = torch.optim.Adam(self._all_params(self.model), lr=lr)
+        criterion = nn.CrossEntropyLoss()
+
+        for _ in range(epochs):
+            for xb, yb in data_loader:
+                xb, yb = xb.to(device), yb.to(device)
+                opt.zero_grad(set_to_none=True)
+                logits = self.model(xb)
+                loss = criterion(logits, yb)
+                loss.backward()
+                for name, p in self.model.named_parameters():
+                    m = self.fs_masks_by_name[name]
+                    self._masked_zero_grad_(p, m, keep_shared=keep_shared)
+                nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
+                opt.step()
+
+    def iteration_context(self, t: int):
+        self.current_iteration = t
+
+        # grow per schedule
+        self._grow_personal_mask(t)
+
+        # shared phase
+        train_loader = DataLoader(self.local_data, batch_size=self.batch_size, shuffle=True, num_workers=0)
+        self._local_optimize(train_loader, self.local_epochs_shared, keep_shared=True, lr=self.lr_shared)
+
+        # personal phase
+        self._local_optimize(train_loader, self.local_epochs_personal, keep_shared=False, lr=self.lr_personal)
+
+        # package shared-only state (params zeroed on personalized entries) + full buffers
+        payload = {}
+        for name, p in self.model.named_parameters():
+            m = self.fs_masks_by_name[name]
+            if m.shape != p.shape:
+                raise RuntimeError(f"[FedSelect] Mask shape mismatch for {name}: {m.shape} vs {p.shape}")
+            shared_tensor = p.detach().clone()
+            shared_tensor[m] = 0
+            payload[name] = shared_tensor
+        for bname, buf in self.model.named_buffers():
+            payload[bname] = buf.detach().clone()
+
+        self.last_shared_state = payload
+
+        # keep your metrics
+        self.accuracy_per_client_1[t]   = self.evaluate_accuracy_single(self.local_test_set, k=1)
+        self.accuracy_per_client_5[t]   = self.evaluate_accuracy(self.local_test_set, k=5)
+        self.accuracy_per_client_10[t]  = self.evaluate_accuracy(self.local_test_set, k=10)
+        self.accuracy_per_client_100[t] = self.evaluate_accuracy(self.local_test_set, k=100)
+
+    # --- compatibility: old loop calls c.iterate(t) and reads c.weights_to_send ---
+    def iterate(self, t: int):
+        self.iteration_context(t)
+        self.weights_to_send = self.last_shared_state  # exactly what your loop expects
+
+    # FedSelect uploads params, not pseudo labels
+    @property
+    def fedselect_payload(self):
+        return self.last_shared_state
+
+    def apply_aggregated_shared(self, aggregated_state):
+        with torch.no_grad():
+            cur = self.model.state_dict()
+            # parameters: write only shared positions
+            for name, p in self.model.named_parameters():
+                if name not in aggregated_state:
+                    continue
+                m = self.fs_masks_by_name[name]
+                src = aggregated_state[name].to(p.device)
+                p.data[~m] = src.data[~m]
+            # buffers: overwrite fully if present
+            for bname, buf in self.model.named_buffers():
+                if bname in aggregated_state:
+                    buf.copy_(aggregated_state[bname].to(buf.device))
+
+# ======= Server: FedSelect =======
+class Server_FedSelect(Server):
+    """
+    FedSelect server that aggregates *shared-only* client states (personalized entries are zeroed on client).
+    Keeps original FedAvg I/O:
+      - fill `received_weights[client_id]` before `.iterate(t)`
+      - after `.iterate(t)`, read `weights_to_send[client_id]`
+    """
+    def __init__(self, id_, global_data, test_data, clients_ids, clients_test_data_dict, clients: List[Client_FedSelect]):
+        super().__init__(id_, global_data, test_data, clients_ids, clients_test_data_dict)
+        self.clients = clients
+
+        # mirror client architecture for logging/eval of shared part
+        self.global_model = copy.deepcopy(clients[0].model).to(device)
+
+        # --- compatibility dicts expected by your loop ---
+        self.received_weights: Dict[str, Dict[str, torch.Tensor]] = {}
+        self.weights_to_send: Dict[str, Dict[str, torch.Tensor]] = {}
+
+    @torch.no_grad()
+    def _fedavg_on_shared(self, shared_list: List[Dict[str, torch.Tensor]]) :
+        """
+        Robust FedAvg over *floating* tensors that share identical shapes across all clients.
+        - Non-floating tensors (e.g., int buffers) are copied from the first client.
+        - Keys missing on any client are excluded from averaging.
+        - Shape mismatches fall back to copying from the first client (no averaging).
+        - Averages are computed in fp32 for numerical stability, then cast back.
+        """
+        agg: Dict[str, torch.Tensor] = {}
+        if not shared_list:
+            return agg
+
+        # Only average keys present in *all* client payloads
+        common_keys = set(shared_list[0].keys())
+        for sd in shared_list[1:]:
+            common_keys &= set(sd.keys())
+        if not common_keys:
+            return agg
+
+        # If we have a reference model, prefer its floating params for averaging
+        ref_state = getattr(self, "global_model", None).state_dict() if hasattr(self, "global_model") else None
+
+        for k in sorted(common_keys):
+            tensors = [sd[k] for sd in shared_list]
+            # Ensure all are tensors
+            if any(not torch.is_tensor(t) for t in tensors):
+                agg[k] = tensors[0].to(device)
+                continue
+
+            # Shapes identical?
+            shapes = {tuple(t.shape) for t in tensors}
+            if len(shapes) != 1:
+                # fallback: just copy first (don’t try to stack/mean)
+                agg[k] = tensors[0].to(device)
+                continue
+
+            # Floating point? Then we can average. Otherwise copy first.
+            if all(t.is_floating_point() for t in tensors):
+                # Promote to fp32 for mean, then cast back to original dtype
+                base_dtype = tensors[0].dtype
+                stacked = torch.stack([t.to(device, dtype=torch.float32) for t in tensors], dim=0)
+                mean_fp32 = stacked.mean(dim=0)
+                out = mean_fp32.to(dtype=base_dtype)
+
+                # Optional: if we have a ref_state and its dtype differs, match it
+                if ref_state is not None and k in ref_state and ref_state[k].dtype != out.dtype:
+                    out = out.to(ref_state[k].dtype)
+                agg[k] = out
+            else:
+                # integer/bool buffers (e.g., num_batches_tracked) – don’t average
+                agg[k] = tensors[0].to(device)
+
+        return agg
+
+    def iterate(self, t: int):
+        """
+        Old-style server step:
+          - aggregate from self.received_weights (dict client_id -> state_dict)
+          - update self.global_model
+          - set self.weights_to_send[client_id] = aggregated_shared for all clients
+        """
+        self.current_iteration = t
+
+        # 1) collect client payloads
+        shared_list = []
+        for cid in self.clients_ids:
+            state = self.received_weights.get(cid, None)
+            if state is None:
+                # If a client didn't send this round, skip it
+                continue
+            # make sure tensors are on CPU/GPU consistently
+            shared_list.append(state)
+
+        if len(shared_list) == 0:
+            # nothing to aggregate this round
+            self.weights_to_send = {cid: {} for cid in self.clients_ids}
+            return
+
+        # 2) aggregate
+        aggregated = self._fedavg_on_shared(shared_list)
+
+        # 3) load into server's global model (for optional eval)
+        gm = self.global_model.state_dict()
+        for name in gm.keys():
+            if name in aggregated:
+                gm[name] = aggregated[name].to(gm[name].device)
+        self.global_model.load_state_dict(gm)
+
+        # 4) broadcast back in the same FedAvg-compatible way
+        self.weights_to_send = {cid: aggregated for cid in self.clients_ids}
+
+        # 5) (Optional) log shared-model accuracy like your server does
+        self.accuracy_server_test_1.setdefault(0, {})[t] = self.evaluate_accuracy_single(
+            self.test_global_data, model=self.global_model, k=1, cluster_id=0)
+        self.accuracy_global_data_1.setdefault(0, {})[t] = self.evaluate_accuracy_single(
+            self.global_data, model=self.global_model, k=1, cluster_id=0)
+
+
+
+# ---- pFedHN Client & Server with round hooks ----
+# Assumes you already have: torch, torch.nn as nn, torch.utils.data.DataLoader,
+# experiment_config, device, and your base Client/Server classes in scope.
+
+from typing import Dict, List, Optional
+import copy
+import torch
+import torch.nn.functional as F
+from torch.utils.data import DataLoader
+
+# ---------- small helper: robust averaging restricted to a reference state ----------
+@torch.no_grad()
+def _robust_fedavg_state_dict(state_dicts: List[Dict[str, torch.Tensor]],
+                              ref_state: Dict[str, torch.Tensor],
+                              device: torch.device) :
+    """
+    Average only keys present in ref_state. Silently skips missing keys in inputs.
+    Casts to ref dtype/device. Returns a flat state_dict (no in-place on ref).
+    """
+    agg: Dict[str, torch.Tensor] = {}
+    for k, ref_t in ref_state.items():
+        bucket = []
+        for sd in state_dicts:
+            v = sd.get(k, None)
+            if v is None:
+                continue
+            bucket.append(v.to(device=device, dtype=ref_t.dtype))
+        if len(bucket) == 0:
+            continue
+        stacked = torch.stack(bucket, dim=0)
+        agg[k] = stacked.mean(dim=0)
+    return agg
+
+
+# =========================
+# Client (pFedHN)
+# =========================
+class Client_pFedHN(Client):
+    """
+    pFedHN-style client: keeps a local hypernetwork (HN) which generates personalized target nets.
+    We upload ONLY the HN parameters (not the generated target params).
+    """
+    HN_PREFIXES = ("hypernet.", "hn.",)  # adapt to your model's HN parameter name prefixes
+
+    def __init__(self, id_, client_data, global_data, global_test_data, local_test_data):
+        super().__init__(id_, client_data, global_data, global_test_data, local_test_data)
+        self.batch_size = getattr(experiment_config, "pfedhn_batch_size", experiment_config.batch_size)
+        self.local_epochs = getattr(experiment_config, "pfedhn_local_epochs", 1)
+        self.lr = getattr(experiment_config, "pfedhn_lr", experiment_config.learning_rate_train_c)
+
+        # caches for upload / round bookkeeping
+        self._last_hn_state: Dict[str, torch.Tensor] = {}
+        self._last_agg_hn: Optional[Dict[str, torch.Tensor]] = None
+
+    # ----------------- hooks you asked for -----------------
+    def generate_weights_for(self, client_id: Optional[str] = None):
+        """
+        If your model exposes explicit hypernetwork weight generation for a given id/embedding,
+        call it here. Otherwise, this is a safe no-op. We still set an id if your model expects it.
+        """
+        if hasattr(self.model, "set_client_id"):
+            try:
+                self.model.set_client_id(client_id if client_id is not None else self.id_)
+            except Exception:
+                pass
+
+        # Optional explicit generation calls if present in your model:
+        if hasattr(self.model, "generate_weights_for"):
+            try:
+                return self.model.generate_weights_for(client_id if client_id is not None else self.id_)
+            except Exception:
+                return None
+        if hasattr(self.model, "generate"):
+            try:
+                return self.model.generate()
+            except Exception:
+                return None
+        return None
+
+    @torch.no_grad()
+    def apply_client_update(self, aggregated_hn: Dict[str, torch.Tensor]):
+        """
+        Apply a *full* hypernetwork state update coming from the server (overwrite HN slice).
+        """
+        self.apply_hn_shared(aggregated_hn)
+        self._last_agg_hn = aggregated_hn
+
+    @torch.no_grad()
+    def apply_client_delta(self, hn_delta: Dict[str, torch.Tensor]):
+        """
+        Apply an *incremental* delta to the hypernetwork parameters (HN slice only).
+        Useful if the server sends a delta instead of a full state.
+        """
+        cur = self.model.state_dict()
+        changed = False
+        for k, dv in hn_delta.items():
+            if k not in cur:
+                continue
+            cur[k] = (cur[k].to(dv.device, dv.dtype) + dv).to(cur[k].device, cur[k].dtype)
+            changed = True
+        if changed:
+            self.model.load_state_dict(cur, strict=False)
+
+    def after_round(self, t: int):
+        """
+        Any per-round client cleanup or logging hook.
+        Right now we just keep it as a convenient place to extend later.
+        """
+        # Example: regenerate weights bound to this client_id for the next round (if relevant)
+        self.generate_weights_for(self.id_)
+
+    # ----------------- internal helpers -----------------
+    def _hypernet_state(self) :
+        full = self.model.state_dict()
+        def is_hn_key(k: str) :
+            return any(k.startswith(pref) for pref in self.HN_PREFIXES)
+        return {k: v.detach().clone() for k, v in full.items() if is_hn_key(k)}
+
+    def _local_train_hn(self):
+        self.model.train()
+        hn_params = [p for n, p in self.model.named_parameters()
+                     if any(n.startswith(pref) for pref in self.HN_PREFIXES)]
+        if len(hn_params) == 0:
+            # If prefixes are mismatched, fall back to training all params (won't crash)
+            hn_params = list(self.model.parameters())
+
+        opt = torch.optim.Adam(hn_params, lr=self.lr)
+        criterion = nn.CrossEntropyLoss()
+        loader = DataLoader(self.local_data, batch_size=self.batch_size, shuffle=True, num_workers=0)
+
+        # (Optional) ensure the HN is "conditioned" for this client before training
+        self.generate_weights_for(self.id_)
+
+        for _ in range(self.local_epochs):
+            for xb, yb in loader:
+                xb, yb = xb.to(device), yb.to(device)
+                opt.zero_grad(set_to_none=True)
+                logits = self.model(xb)  # forward should internally use HN → target weights
+                loss = criterion(logits, yb)
+                loss.backward()
+                nn.utils.clip_grad_norm_(hn_params, max_norm=1.0)
+                opt.step()
+
+    # ----------------- pFedHN round entrypoint -----------------
+    def iteration_context(self, t: int):
+        self.current_iteration = t
+        self._local_train_hn()
+
+        # Upload-only the hypernetwork slice
+        self._last_hn_state = self._hypernet_state()
+
+        # (Optional) local eval logging
+        self.accuracy_per_client_1[t] = self.evaluate_accuracy_single(self.local_test_set, k=1)
+        self.accuracy_per_client_5[t] = self.evaluate_accuracy(self.local_test_set, k=5)
+        self.accuracy_per_client_10[t] = self.evaluate_accuracy(self.local_test_set, k=10)
+        self.accuracy_per_client_100[t] = self.evaluate_accuracy(self.local_test_set, k=100)
+
+    @property
+    def pfedhn_payload(self) :
+        return self._last_hn_state
+
+    @torch.no_grad()
+    def apply_hn_shared(self, aggregated_hn: Dict[str, torch.Tensor]):
+        """
+        Server returns aggregated *HN* params → write them into the client's model.
+        (Only keys that belong to the hypernetwork slice are touched.)
+        """
+        cur = self.model.state_dict()
+        for k, v in aggregated_hn.items():
+            if k in cur:
+                cur[k] = v.to(cur[k].device).to(cur[k].dtype)
+        self.model.load_state_dict(cur, strict=False)
+
+
+# =========================
+# Server (pFedHN)
+# =========================
+class Server_pFedHN(Server):
+    """
+    Server for pFedHN: aggregates ONLY hypernetwork (HN) parameters across clients.
+    Provides hooks:
+      - generate_weights_for(client_id)
+      - apply_client_update(client_id, hn_state)
+      - apply_client_delta(client_id, hn_delta)
+      - after_round(t)
+    """
+    def __init__(self, id_, global_data, test_data, clients_ids, clients_test_data_dict,
+                 clients: List[Client_pFedHN]):
+        super().__init__(id_, global_data, test_data, clients_ids, clients_test_data_dict)
+        self.clients = clients
+
+        # Build a server-side "global HN" by cloning client[0]'s model
+        self.global_model = copy.deepcopy(clients[0].model).to(device)
+
+        # Cache HN keys once (based on client 0)
+        self.hn_keys = [k for k in self.global_model.state_dict().keys()
+                        if any(k.startswith(pref) for pref in clients[0].HN_PREFIXES)]
+
+        # Per-round inbox for received HN (full state or deltas, if you want)
+        self._inbox_hn_states: Dict[str, Dict[str, torch.Tensor]] = {}
+
+    # ----------------- hooks you asked for -----------------
+    @torch.no_grad()
+    def generate_weights_for(self, client_id: Optional[str] = None):
+        """
+        If your server needs to instantiate target weights (e.g., for centralized eval),
+        call the model’s generator here, otherwise this is a safe no-op.
+        """
+        if hasattr(self.global_model, "set_client_id"):
+            try:
+                self.global_model.set_client_id(client_id)
+            except Exception:
+                pass
+        if hasattr(self.global_model, "generate_weights_for"):
+            try:
+                return self.global_model.generate_weights_for(client_id)
+            except Exception:
+                return None
+        if hasattr(self.global_model, "generate"):
+            try:
+                return self.global_model.generate()
+            except Exception:
+                return None
+        return None
+
+    @torch.no_grad()
+    def apply_client_update(self, client_id: str, hn_state: Dict[str, torch.Tensor]):
+        """
+        Receive a *full* HN slice from a client during the round.
+        (Stored and aggregated at the end of the round.)
+        """
+        # Filter to HN keys only
+        filtered = {k: v.detach().clone() for k, v in hn_state.items() if k in self.hn_keys}
+        self._inbox_hn_states[client_id] = filtered
+
+    @torch.no_grad()
+    def apply_client_delta(self, client_id: str, hn_delta: Dict[str, torch.Tensor]):
+        """
+        Add a *delta* to the server's global HN immediately (rarely used; provided for completeness).
+        """
+        cur = self.global_model.state_dict()
+        changed = False
+        for k, dv in hn_delta.items():
+            if k not in self.hn_keys or k not in cur:
+                continue
+            cur[k] = (cur[k].to(dv.device, dv.dtype) + dv).to(cur[k].device, cur[k].dtype)
+            changed = True
+        if changed:
+            self.global_model.load_state_dict(cur, strict=False)
+
+    @torch.no_grad()
+    def after_round(self, t: int):
+        """
+        Aggregate the per-round inbox, update server HN, and broadcast to clients.
+        """
+        if len(self._inbox_hn_states) == 0:
+            # nothing received this round
+            return
+
+        ref = self.global_model.state_dict()
+        # pack into list for averaging
+        hn_list = list(self._inbox_hn_states.values())
+        aggregated_hn = _robust_fedavg_state_dict(hn_list, ref_state=ref, device=device)
+
+        # Write aggregated HN into server model
+        gm = self.global_model.state_dict()
+        for k, v in aggregated_hn.items():
+            gm[k] = v.to(gm[k].device).to(gm[k].dtype)
+        self.global_model.load_state_dict(gm, strict=False)
+
+        # Broadcast aggregated HN to clients
+        for c in self.clients:
+            c.apply_client_update(aggregated_hn)
+
+        # Optional: centralized eval with global HN
+        self.accuracy_server_test_1.setdefault(0, {})[t] = self.evaluate_accuracy_single(
+            self.test_global_data, model=self.global_model, k=1, cluster_id=0
+        )
+        self.accuracy_global_data_1.setdefault(0, {})[t] = self.evaluate_accuracy_single(
+            self.global_data, model=self.global_model, k=1, cluster_id=0
+        )
+
+        # Clear inbox
+        self._inbox_hn_states.clear()
+
+    # ----------------- legacy-style helpers (kept for compatibility) -----------------
+    def _receive_hn_states(self) :
+        # If you still want the older pull-style, use the client payloads:
+        return [c.pfedhn_payload for c in self.clients]
+
+    def iteration_context(self, t: int):
+        """
+        If you prefer the legacy single-call style (pull → aggregate → push),
+        keep this. It also calls after_round(t) so both styles work.
+        """
+        self.current_iteration = t
+
+        # Pull client payloads:
+        for c in self.clients:
+            self.apply_client_update(c.id_, c.pfedhn_payload)
+
+        # End-of-round aggregate + broadcast:
+        self.after_round(t)
+
+
+# ---- in your model code, expose mid-layer features ----
+# example: modify your client nets so forward can return (logits, feat)
+# def forward(self, x, return_feat=False): ...
+#   if return_feat: return logits, feat
+#   else: return logits
+
+import torch, copy
+import torch.nn as nn
+import torch.nn.functional as F
+from torch.utils.data import DataLoader
+
+
+
+
+
+
+import copy
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+from torch.utils.data import DataLoader
+
+
+class Client_Ditto(Client):
+    """
+    Ditto client:
+      - self.model:          global-path model (sent to server; FedAvg)
+      - self.personal_model: local personalized model (kept on client)
+      - self.weights_received: set by server after aggregation (expected each round)
+      - self.weights_to_send: what we send to the server (global path)
+    """
+
+    def __init__(self, id_, client_data, global_data, global_test_data, local_test_data, lam_ditto=1.0):
+        super().__init__(id_, client_data, global_data, global_test_data, local_test_data)
+        self.personal_model = copy.deepcopy(self.model)
+        self.lam_ditto = float(lam_ditto)
+
+        self.weights_received = None
+        self.weights_to_send  = None
+
+        # Optional separate epoch knobs; will fallback to your existing var if absent.
+        self.epochs_global   = getattr(experiment_config, "epochs_global",
+                                getattr(experiment_config, "epochs_num_input_fine_tune_clients", 1))
+        self.epochs_personal = getattr(experiment_config, "epochs_personal",
+                                getattr(experiment_config, "epochs_num_input_fine_tune_clients", 1))
+
+        self.lr_c = experiment_config.learning_rate_fine_tune_c  # reuse your LR
+
+    # ---------- utilities ----------
+    @torch.no_grad()
+    def _load_state(self, model, state_dict):
+        model.load_state_dict(state_dict, strict=True)
+
+    def _eval_on(self, model, eval_fn, *args, **kwargs):
+        """Temporarily swap self.model to reuse your existing eval funcs unchanged."""
+        old = self.model
+        try:
+            self.model = model
+            return eval_fn(*args, **kwargs)
+        finally:
+            self.model = old
+
+    def _proximal_loss_L2_mean(self, model, anchor_state):
+        """
+        Mean L2 distance (not sum) between params and anchor.
+        Using mean makes lambda human-scaled (e.g., 0.05–2).
+        """
+        anchor = {k: v.to(next(model.parameters()).device) for k, v in anchor_state.items()}
+        sq, n = 0.0, 0
+        for name, p in model.named_parameters():
+            if not p.requires_grad:
+                continue
+            d = p - anchor[name]
+            sq += torch.sum(d * d)
+            n  += d.numel()
+        return sq / max(n, 1)
+
+    # ---------- training paths ----------
+    def _global_update_fedavg(self):
+        """Local supervised training on self.model; returns sd to send."""
+        print(f"*** {self} global-path (FedAvg) update ***")
+        loader = DataLoader(self.local_data, batch_size=experiment_config.batch_size, shuffle=True)
+        self.model.train()
+        criterion = nn.CrossEntropyLoss()
+        opt = torch.optim.Adam(self.model.parameters(), lr=self.lr_c)
+
+        for epoch in range(self.epochs_global):
+            self.epoch_count += 1
+            epoch_loss = 0.0
+            for x, y in loader:
+                x, y = x.to(device), y.to(device)
+                opt.zero_grad()
+                logits = self.model(x)
+                loss = criterion(logits, y)
+                loss.backward()
+                torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
+                opt.step()
+                epoch_loss += float(loss.item())
+            print(f"[Global] Epoch {epoch+1}/{self.epochs_global}  Loss: {epoch_loss/len(loader):.4f}")
+
+        return copy.deepcopy(self.model.state_dict())
+
+    def _personalized_update_ditto(self, anchor_state):
+        """Ditto objective on self.personal_model: CE + 0.5*λ*mean||θ-v||^2."""
+        print(f"*** {self} personalized-path (Ditto) update, lambda={self.lam_ditto} ***")
+        loader = DataLoader(self.local_data, batch_size=experiment_config.batch_size, shuffle=True)
+        self.personal_model.train()
+        criterion = nn.CrossEntropyLoss()
+        opt = torch.optim.Adam(self.personal_model.parameters(), lr=self.lr_c)
+
+        # Freeze a copy of the anchor
+        anchor = {k: v.detach().clone() for k, v in anchor_state.items()}
+
+        for epoch in range(self.epochs_personal):
+            epoch_obj = 0.0
+            for x, y in loader:
+                x, y = x.to(device), y.to(device)
+                opt.zero_grad()
+                logits = self.personal_model(x)
+                ce = criterion(logits, y)
+                prox = self._proximal_loss_L2_mean(self.personal_model, anchor)
+                loss = ce + 0.5 * self.lam_ditto * prox
+                loss.backward()
+                torch.nn.utils.clip_grad_norm_(self.personal_model.parameters(), max_norm=1.0)
+                opt.step()
+                epoch_obj += float(loss.item())
+            print(f"[Personalized] Epoch {epoch+1}/{self.epochs_personal}  Obj: {epoch_obj/len(loader):.4f}")
+
+    # ---------- round entry ----------
+    def iterate(self, t):
+        self.current_iteration = t
+
+        # (A) Model init / loading
+        if t == 0:
+            if self.weights_received is not None:
+                # Best case: server broadcasted a common w0
+                self._load_state(self.model, self.weights_received)
+                self.personal_model = copy.deepcopy(self.model)
+                print(f"{self}: loaded broadcast w0")
+            else:
+                # Fallback (try to avoid by broadcasting w0 from server)
+                self.model.apply(self.initialize_weights)
+                self.personal_model = copy.deepcopy(self.model)
+                print(f"{self}: WARNING—no broadcast w0; using local init")
+        else:
+            # Load aggregated global for this round
+            self._load_state(self.model, self.weights_received)
+
+        # Keep a PRE-UPDATE anchor in case no broadcast happened this round
+        pre_update_anchor = copy.deepcopy(self.model.state_dict())
+
+        # (B) Global-path update (what we send to server)
+        self.weights_to_send = self._global_update_fedavg()
+
+        # (C) Personalized Ditto update (kept local)
+        # Prefer the received global; fallback to the pre-update anchor on round 0
+        anchor = self.weights_received if self.weights_received is not None else pre_update_anchor
+        self._personalized_update_ditto(anchor)
+
+        # (D) Accounting & metrics
+        total_size = sum(p.numel() * p.element_size() for p in self.weights_to_send.values())
+        self.size_sent[t] = total_size / (1024 * 1024)
+
+        # Evaluate with personalized model on local test
+        self.accuracy_per_client_1[t]   = self._eval_on(self.personal_model, self.evaluate_accuracy_single, self.local_test_set, k=1)
+        self.accuracy_per_client_5[t]   = self._eval_on(self.personal_model, self.evaluate_accuracy,        self.local_test_set, k=5)
+        self.accuracy_per_client_10[t]  = self._eval_on(self.personal_model, self.evaluate_accuracy,        self.local_test_set, k=10)
+        self.accuracy_per_client_100[t] = self._eval_on(self.personal_model, self.evaluate_accuracy,        self.local_test_set, k=100)
+
+        # Optional: also log global-path accuracy on global test
+        _ = self.evaluate_accuracy_single(self.test_global_data)
+        return
+
+
+class Client_NoFederatedLearning(Client):
+    def __init__(self,id_, client_data, global_data,global_test_data,local_test_data,evaluate_every):
+        Client.__init__(self,id_, client_data, global_data,global_test_data,local_test_data)
+        self.evaluate_every = evaluate_every
+
+    def fine_tune(self):
+        print("*** " + self.__str__() + " fine-tune ***")
+
+        fine_tune_loader = DataLoader(self.local_data, batch_size=experiment_config.batch_size, shuffle=True)
+        self.model.train()  # Set the model to training mode
+
+        # Define loss function and optimizer
+
+        criterion = nn.CrossEntropyLoss()
+
+        optimizer = torch.optim.Adam(self.model.parameters(), lr=experiment_config.learning_rate_fine_tune_c)
+
+        epochs = experiment_config.epochs_num_input_fine_tune_clients_no_fl
+        for epoch in range(epochs):
+            self.epoch_count += 1
+            epoch_loss = 0
+            for inputs, targets in fine_tune_loader:
+                inputs, targets = inputs.to(device), targets.to(device)
+                optimizer.zero_grad()
+                outputs = self.model(inputs)
+
+                loss = criterion(outputs, targets)
+
+                # Backward pass and optimization
+                loss.backward()
+                optimizer.step()
+                epoch_loss += loss.item()
+            if   epoch % self.evaluate_every == 0 and epoch!=0:
+                self.accuracy_per_client_1[epoch] = self.evaluate_accuracy_single(self.local_test_set, k=1)
+                self.accuracy_per_client_5[epoch] = self.evaluate_accuracy(self.local_test_set, k=5)
+                self.accuracy_per_client_10[epoch] = self.evaluate_accuracy(self.local_test_set, k=10)
+                self.accuracy_per_client_100[epoch] = self.evaluate_accuracy(self.local_test_set, k=100)
+
+            result_to_print = epoch_loss / len(fine_tune_loader)
+            print(f"Epoch [{epoch + 1}/{epochs}], Loss: {result_to_print:.4f}")
+        #self.weights = self.model.state_dict()self.weights = self.model.state_dict()
+
+        return  result_to_print
+
+class Client_PseudoLabelsClusters_with_division(Client):
+    def __init__(self, id_, client_data, global_data, global_test_data, local_test_data):
+        Client.__init__(self,id_, client_data, global_data,global_test_data,local_test_data)
+
+
+
+    def train(self,mean_pseudo_labels):
+
+        print(f"Mean pseudo-labels shape: {mean_pseudo_labels.shape}")  # Should be (num_data_points, num_classes)
+
+        print(f"*** {self.__str__()} train ***")
+        server_loader = DataLoader(self.global_data[self.current_iteration-1], batch_size=experiment_config.batch_size, shuffle=False, num_workers=0,
+                                   drop_last=True)
+        #server_loader = DataLoader(self.global_data, batch_size=experiment_config.batch_size, shuffle=False,
+        #                           num_workers=0)
+        #print(1)
+        self.model.train()
+        criterion = nn.KLDivLoss(reduction='batchmean')
+        optimizer = torch.optim.Adam( self.model.parameters(), lr=experiment_config.learning_rate_train_c)
+        #optimizer = torch.optim.Adam(self.model.parameters(), lr=experiment_config.learning_rate_train_c,
+        #                             weight_decay=1e-4)
+
+        pseudo_targets_all = mean_pseudo_labels.to(device)
+
+        for epoch in range(experiment_config.epochs_num_train_client):
+            #print(2)
+
+            self.epoch_count += 1
+            epoch_loss = 0
+
+            for batch_idx, (inputs, _) in enumerate(server_loader):
+                #print(batch_idx)
+
+                inputs = inputs.to(device)
+                optimizer.zero_grad()
+
+                outputs =  self.model(inputs)
+                # Check for NaN or Inf in outputs
+
+                # Convert model outputs to log probabilities
+                outputs_prob = F.log_softmax(outputs, dim=1)
+                # Slice pseudo_targets to match the input batch size
+                start_idx = batch_idx * experiment_config.batch_size
+                end_idx = start_idx + inputs.size(0)
+                pseudo_targets = pseudo_targets_all[start_idx:end_idx].to(device)
+
+                # Check if pseudo_targets size matches the input batch size
+                if pseudo_targets.size(0) != inputs.size(0):
+                    print(
+                        f"Skipping batch {batch_idx}: Expected pseudo target size {inputs.size(0)}, got {pseudo_targets.size(0)}")
+                    continue  # Skip the rest of the loop for this batch
+
+                # Check for NaN or Inf in pseudo targets
+                if torch.isnan(pseudo_targets).any() or torch.isinf(pseudo_targets).any():
+                    print(f"NaN or Inf found in pseudo targets at batch {batch_idx}: {pseudo_targets}")
+                    continue
+
+                # Normalize pseudo targets to sum to 1
+                pseudo_targets = F.softmax(pseudo_targets, dim=1)
+
+                # Calculate the loss
+                loss = criterion(outputs_prob, pseudo_targets)
+
+                # Check if the loss is NaN or Inf
+                if torch.isnan(loss) or torch.isinf(loss):
+                    print(f"NaN or Inf loss encountered at batch {batch_idx}: {loss}")
+                    continue
+
+                loss.backward()
+
+                # Clip gradients
+                torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
+
+                optimizer.step()
+                epoch_loss += loss.item()
+
+            avg_loss = epoch_loss / len(server_loader)
+            print(f"Epoch [{epoch + 1}/{experiment_config.epochs_num_train_client}], Loss: {avg_loss:.4f}")
+
+        #self.weights =self.model.state_dict()
+        return avg_loss
+
+
+    def evaluate(self, model=None):
+        if model is None:
+            model = self.model
+    #    print("*** Generating Pseudo-Labels with Probabilities ***")
+
+        # Create a DataLoader for the global data
+        global_data_loader = DataLoader(self.global_data[self.current_iteration], batch_size=experiment_config.batch_size, shuffle=False)
+
+        model.eval()  # Set the model to evaluation mode
+
+        all_probs = []  # List to store the softmax probabilities
+        with torch.no_grad():  # Disable gradient computation
+            for inputs, _ in global_data_loader:
+                inputs = inputs.to(device)
+                outputs = model(inputs)  # Forward pass
+
+                # Apply softmax to get the class probabilities
+                probs = F.softmax(outputs, dim=1)  # Apply softmax along the class dimension
+
+                all_probs.append(probs.cpu())  # Store the probabilities on CPU
+
+        # Concatenate all probabilities into a single tensor (2D matrix)
+        all_probs = torch.cat(all_probs, dim=0)
+
+       #print(f"Shape of the 2D pseudo-label matrix: {all_probs.shape}")
+        return all_probs
 
 
 import numpy as np, copy, torch

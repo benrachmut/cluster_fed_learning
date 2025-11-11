@@ -1249,7 +1249,14 @@ def create_clients(client_data_dict,server_data,test_set,server_test_data):
                 c = Client_pFedMe(id_=id_, client_data=data_, global_data=server_data,
                                    global_test_data=server_test_data,
                                    local_test_data=test_set[group_name][data_index])
-
+            if experiment_config.algorithm_selection == AlgorithmSelected.FedSelect:
+                c = Client_FedSelect(id_=id_, client_data=data_, global_data=server_data,
+                                  global_test_data=server_test_data,
+                                  local_test_data=test_set[group_name][data_index])
+            if experiment_config.algorithm_selection == AlgorithmSelected.pFedHN:
+                c = Client_pFedHN(id_=id_, client_data=data_, global_data=server_data,
+                                     global_test_data=server_test_data,
+                                     local_test_data=test_set[group_name][data_index])
             ans.append(c)
             clients_test_by_id_dict[id_] = test_set[group_name][data_index]
             data_index = data_index+1
@@ -1471,8 +1478,8 @@ def save_record_to_results(record, *, addition_to_name = "",filename= None, inde
     folder_ = (
         f"{addition_to_name}"
         f"data_set{data_set_s}_alg{alg_s}"
-        f"_server{server_s}_clients{clients_s}_client{client_s}"
-        f"_ratio{ratio_s}"
+        f"_ser{server_s}_cli{clients_s}"
+        f"_ratio{ratio_s}_"
     )
 
     out_dir = Path("results") / folder_
@@ -1480,7 +1487,7 @@ def save_record_to_results(record, *, addition_to_name = "",filename= None, inde
 
     # Filename WITH seed (default)
     if filename is None:
-        filename = f"{folder_}_seed{seed_s}.json"
+        filename = f"{folder_}_seed{seed_s}_alph{alpha_s}.json"
 
     out_path = out_dir / filename
 

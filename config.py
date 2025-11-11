@@ -173,6 +173,8 @@ class InputConsistency(Enum):
     withInputConsistency = 1
     withoutInputConsistency = 2
 class AlgorithmSelected(Enum):
+    pFedHN = 13
+
     pFedMe = 11
     FedBABU = 10
     MAPL = 1
@@ -184,6 +186,8 @@ class AlgorithmSelected(Enum):
     pFedCK = 7
     COMET = 8
     Ditto = 9
+    FedSelect = 12
+
 
 class DataDistTypes(Enum):
     NaiveNonIID = 1
