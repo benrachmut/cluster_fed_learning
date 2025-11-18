@@ -41,6 +41,22 @@ import numpy as np
 
 Json = Union[Dict[str, Any], List[Any], str, int, float, bool, None]
 
+# =====================================================================
+# Global style: fonts + legend sizes
+# =====================================================================
+BASE_FONT_SIZE = 14
+TITLE_FONT_SIZE = 16
+LEGEND_FONT_SIZE = 13
+
+plt.rcParams.update({
+    "font.size": BASE_FONT_SIZE,
+    "axes.titlesize": TITLE_FONT_SIZE,
+    "axes.labelsize": BASE_FONT_SIZE,
+    "xtick.labelsize": BASE_FONT_SIZE - 2,
+    "ytick.labelsize": BASE_FONT_SIZE - 2,
+    "legend.fontsize": LEGEND_FONT_SIZE,
+})
+
 # ---------------------------------------------------------------------
 # Presentation policy:
 # - Non-MAPL algorithms -> plot CLIENT curves.
@@ -450,7 +466,7 @@ def find_server_data_ratio(root: Json, *, fallback_from=None):
         if key == "server_data_pct":
             val = _cast_float(v)
             if val is not None:
-                if v > 1.0: val = val / 100.0
+                if v > 1.0: val = v / 100.0
                 return val, tuple(p)
 
     if fallback_from:
@@ -524,6 +540,7 @@ def load_rows_from_dir(dir_path: Path, *, inspect: bool = False, alg_hint: Optio
         seed_num, _          = find_seed_num(raw)
 
         # ----------- Top-1 vs Top-5 selection per dataset -----------
+
         use_top5 = _is_top5_dataset(ds_name)
         topk = 5 if use_top5 else 1
 
@@ -811,24 +828,27 @@ def figure_diff_benchmarks(figset_dir: Path, out_root: Path, *, alpha_value: int
         for lab in sorted(g["algorithm_display"].astype(str).unique().tolist()):
             sub_lab = g[g["algorithm_display"].astype(str) == lab]
             ax.plot(sub_lab["iteration"], sub_lab["avg_accuracy"],
-                    marker=None, linewidth=2.0, label=str(lab),
+                    marker=None, linewidth=3.0, label=str(lab),
                     color=_get_color_for_label(lab),
                     linestyle=_linestyle_for(lab))
         ax.set_title(subfigure_label)
 
         # y-axis label reflects metric choice (Top-5 for ImageNetR/TinyImageNet, else Top-1)
         if _is_top5_dataset(choice):
-            ax.set_ylabel("Average Top-5 Accuracy")
+            ax.set_ylabel("Top-5 Accuracy")
         else:
-            ax.set_ylabel("Average Top-1 Accuracy")
+            ax.set_ylabel("Top-1 Accuracy")
 
         ax.grid(False)
 
-    fig.supxlabel("Iteration")
+    fig.supxlabel("Iteration", fontsize=BASE_FONT_SIZE)
     h, l = _legend_from_axes_row(axes)
-    fig.tight_layout(rect=[0.0, 0.0, 1.0, 0.82])
+    # bring legend closer: more space for subplots, legend slightly down
+    fig.tight_layout(rect=[0.0, 0.0, 1.0, 0.90])
     if h:
-        fig.legend(h, l, loc="upper center", ncol=min(6, len(h)), frameon=False, bbox_to_anchor=(0.5, 0.98))
+        fig.legend(h, l, loc="upper center", ncol=min(6, len(h)),
+                   frameon=False, bbox_to_anchor=(0.5, 0.96),
+                   fontsize=LEGEND_FONT_SIZE)
 
     outfile = out_root / f"{figset_dir.name}.pdf"
     _savefig_longpath(fig, outfile); plt.close(fig)
@@ -870,7 +890,12 @@ def figure_diff_clients_nets(figset_dir: Path, out_root: Path, *, inspect: bool,
     # scale figure size by grid
     fig_w = max(5.0 * ncols, 5.0)
     fig_h = max(4.5 * nrows, 4.5)
-    fig, axes = plt.subplots(nrows, ncols, figsize=(fig_w, fig_h), sharex=True, sharey=True, squeeze=False)
+    fig, axes = plt.subplots(
+        nrows, ncols,
+        figsize=(fig_w, fig_h),
+        sharex=True, sharey=True,  # shared axes
+        squeeze=False
+    )
     axes = axes.flatten()
 
     # global y-limits for consistency
@@ -879,8 +904,12 @@ def figure_diff_clients_nets(figset_dir: Path, out_root: Path, *, inspect: bool,
         dfm = _apply_measure_filter_for_comparison(df)
         if dfm.empty:
             continue
-        g = (dfm.groupby(["algorithm_display","iteration"], dropna=False)["accuracy"]
-                .mean().reset_index().rename(columns={"accuracy":"avg_accuracy"}))
+        g = (
+            dfm.groupby(["algorithm_display", "iteration"], dropna=False)["accuracy"]
+               .mean()
+               .reset_index()
+               .rename(columns={"accuracy": "avg_accuracy"})
+        )
         all_grp.append(g)
     if not all_grp:
         print(f"[WARN] No rows for comparison measures in {figset_dir}."); return
@@ -894,47 +923,72 @@ def figure_diff_clients_nets(figset_dir: Path, out_root: Path, *, inspect: bool,
     for ax, (sf, df) in zip(axes, loaded):
         dfp = _apply_measure_filter_for_comparison(df)
         if dfp.empty:
-            ax.set_visible(False); continue
+            ax.set_visible(False)
+            continue
 
-        dom_net = dfp["client_net_type_name"].astype(str).value_counts().index[0] \
-                  if "client_net_type_name" in dfp.columns and not dfp.empty else "clients"
+        dom_net = (
+            dfp["client_net_type_name"].astype(str).value_counts().index[0]
+            if "client_net_type_name" in dfp.columns and not dfp.empty
+            else "clients"
+        )
         dom_net_disp = TITLE_MAP.get(dom_net, dom_net)
 
         # CSV stats for this panel
         stats_rows.append(_final_stats_for_panel(dfp, subfigure=dom_net_disp))
 
         g = (
-            dfp.groupby(["algorithm_display","iteration"], dropna=False)["accuracy"]
-               .mean().reset_index().rename(columns={"accuracy":"avg_accuracy"})
-               .sort_values(["algorithm_display","iteration"])
+            dfp.groupby(["algorithm_display", "iteration"], dropna=False)["accuracy"]
+               .mean()
+               .reset_index()
+               .rename(columns={"accuracy": "avg_accuracy"})
+               .sort_values(["algorithm_display", "iteration"])
         )
         for lab in sorted(g["algorithm_display"].astype(str).unique().tolist()):
             sub_lab = g[g["algorithm_display"].astype(str) == lab]
-            ax.plot(sub_lab["iteration"], sub_lab["avg_accuracy"],
-                    marker=None, linewidth=2.0, label=str(lab),
-                    color=_get_color_for_label(lab),
-                    linestyle=_linestyle_for(lab))
+            ax.plot(
+                sub_lab["iteration"],
+                sub_lab["avg_accuracy"],
+                marker=None,
+                linewidth=3.0,
+                label=str(lab),
+                color=_get_color_for_label(lab),
+                linestyle=_linestyle_for(lab),
+            )
+
         ax.set_title(f"{dom_net_disp}")
-        ax.set_ylabel("Average Accuracy")
         ax.grid(False)
         ax.set_ylim(ymin, ymax)
+
+        # ensure y tick labels are visible on *all* subplots
+        ax.tick_params(labelleft=True)
 
     # hide any trailing empty axes if grid is larger than loaded
     for ax in axes[n:]:
         ax.set_visible(False)
 
-    fig.supxlabel("Iteration")
+    # Axis titles once for the whole figure
+    fig.supxlabel("Iteration", fontsize=BASE_FONT_SIZE)         # X title (already once)
+    fig.supylabel("Average Accuracy", fontsize=BASE_FONT_SIZE)  # Y title once
 
     # legend
     first_ax = next((a for a in axes[:n] if a.get_visible()), None)
     h, l = (first_ax.get_legend_handles_labels() if first_ax else ([], []))
 
-    fig.tight_layout(rect=[0.0, 0.0, 1.0, 0.85])
+    # bring legend closer
+    fig.tight_layout(rect=[0.0, 0.0, 1.0, 0.92])
     if h:
-        fig.legend(h, l, loc="upper center", ncol=min(6, len(h)), frameon=False, bbox_to_anchor=(0.5, 0.98))
+        fig.legend(
+            h, l,
+            loc="upper center",
+            ncol=min(6, len(h)),
+            frameon=False,
+            bbox_to_anchor=(0.5, 0.96),
+            fontsize=LEGEND_FONT_SIZE,
+        )
 
     outfile = out_root / f"{figset_dir.name}.pdf"
-    _savefig_longpath(fig, outfile); plt.close(fig)
+    _savefig_longpath(fig, outfile)
+    plt.close(fig)
     print(f"[OK] Saved: {outfile}")
     _save_stats_csv(stats_rows, outfile)
 
@@ -976,6 +1030,7 @@ def figure_by_client_net_type_value(figset_dir: Path, out_root: Path, *, inspect
         if "mobile" in v_low:    return (2, v)
         if "squeeze" in v_low:   return (3, v)
         return (10, v)
+
     values = sorted(raw_values, key=_facet_priority)[:4]
     n = len(values)
 
@@ -1017,7 +1072,7 @@ def figure_by_client_net_type_value(figset_dir: Path, out_root: Path, *, inspect
                 sub_lab["iteration"],
                 sub_lab["avg_accuracy"],
                 marker=None,
-                linewidth=2.0,
+                linewidth=3.0,
                 label=str(lab),
                 color=_get_color_for_label(lab),
                 linestyle=_linestyle_for(lab),
@@ -1028,11 +1083,20 @@ def figure_by_client_net_type_value(figset_dir: Path, out_root: Path, *, inspect
         ax.grid(False)
         ax.set_ylim(ymin, ymax)
 
-    fig.supxlabel("Iteration")
+    fig.supxlabel("Iteration", fontsize=BASE_FONT_SIZE)
     h, l = _legend_from_axes_row(axes)
-    fig.tight_layout(rect=[0.0, 0.0, 1.0, 0.82])
+
+    # Legend: force a single row (all entries in one row)
+    fig.tight_layout(rect=[0.0, 0.0, 1.0, 0.90])
     if h:
-        fig.legend(h, l, loc="upper center", ncol=min(6, len(h)), frameon=False, bbox_to_anchor=(0.5, 0.98))
+        fig.legend(
+            h, l,
+            loc="upper center",
+            ncol=len(h),          # <<< single row
+            frameon=False,
+            bbox_to_anchor=(0.5, 0.96),
+            fontsize=LEGEND_FONT_SIZE,
+        )
 
     outfile = out_root / "client_net_type_value.pdf"
     _savefig_longpath(fig, outfile); plt.close(fig)
@@ -1121,14 +1185,17 @@ def figure_global_data_size_oneplot(figset_dir: Path, out_root: Path, *, inspect
     for i, (lab, g) in enumerate(curves):
         ax.plot(
             g["iteration"], g["avg_accuracy"],
-            linewidth=2.0, marker=None,
+            linewidth=3.0, marker=None,
             label=lab, color=cmap(i % 10)
         )
 
     ax.set_xlabel("Iteration")
     ax.set_ylabel("Average Accuracy")
     ax.grid(False)
-    ax.legend(loc="upper center", bbox_to_anchor=(0.5, 1.12), ncol=min(6, len(curves)), frameon=False)
+    # bring legend closer to the plot
+    ax.legend(loc="upper center", bbox_to_anchor=(0.5, 1.03),
+              ncol=min(6, len(curves)), frameon=False,
+              fontsize=LEGEND_FONT_SIZE)
 
     suffix = "server" if use_server_measure else "client"
     outfile = out_root / f"{figset_dir.name}_by_server_data_ratio_{suffix}.pdf"
@@ -1298,15 +1365,18 @@ def figure_client_scale_oneplot(figset_dir: Path, out_root: Path, *, inspect: bo
         x = d["iter"].to_numpy()
         y = d["mean"].to_numpy(dtype=float)
         e = d["sem"].to_numpy(dtype=float)
-        ax.plot(x, y, linewidth=2.0, label=f"{int(nc)} clients")
+        ax.plot(x, y, linewidth=3.0, label=f"{int(nc)} clients")
         ax.fill_between(x, y - e, y + e, alpha=0.15)
 
     ax.set_xlabel("Iteration")
     ax.set_ylabel("Average Client Top-1 Accuracy (%)")
     ax.grid(False)
-    ax.legend(loc="upper center", bbox_to_anchor=(0.5, 1.12),
-              ncol=min(6, len(df_iter['num_clients'].unique())), frameon=False)
-    fig.tight_layout(rect=[0, 0, 1, 0.92])
+    # legend closer to the plot
+    ax.legend(loc="upper center", bbox_to_anchor=(0.5, 1.03),
+              ncol=min(6, len(df_iter['num_clients'].unique())),
+              frameon=False,
+              fontsize=LEGEND_FONT_SIZE)
+    fig.tight_layout(rect=[0, 0, 1, 0.94])
 
     out_pdf = out_dir / "client_scale.pdf"
     _savefig_longpath(fig, out_pdf); plt.close(fig)
