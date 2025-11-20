@@ -44,9 +44,9 @@ Json = Union[Dict[str, Any], List[Any], str, int, float, bool, None]
 # =====================================================================
 # Global style: fonts + legend sizes
 # =====================================================================
-BASE_FONT_SIZE = 14
+BASE_FONT_SIZE = 16
 TITLE_FONT_SIZE = 16
-LEGEND_FONT_SIZE = 13
+LEGEND_FONT_SIZE = 15
 
 plt.rcParams.update({
     "font.size": BASE_FONT_SIZE,
@@ -968,7 +968,7 @@ def figure_diff_clients_nets(figset_dir: Path, out_root: Path, *, inspect: bool,
 
     # Axis titles once for the whole figure
     fig.supxlabel("Iteration", fontsize=BASE_FONT_SIZE)         # X title (already once)
-    fig.supylabel("Average Accuracy", fontsize=BASE_FONT_SIZE)  # Y title once
+    fig.supylabel("Top-1 Accuracy", fontsize=BASE_FONT_SIZE)  # Y title once
 
     # legend
     first_ax = next((a for a in axes[:n] if a.get_visible()), None)
@@ -1079,7 +1079,7 @@ def figure_by_client_net_type_value(figset_dir: Path, out_root: Path, *, inspect
             )
 
         ax.set_title(title_name)
-        ax.set_ylabel("Average Accuracy")
+        ax.set_ylabel("Top-1 Accuracy")
         ax.grid(False)
         ax.set_ylim(ymin, ymax)
 
@@ -1190,7 +1190,7 @@ def figure_global_data_size_oneplot(figset_dir: Path, out_root: Path, *, inspect
         )
 
     ax.set_xlabel("Iteration")
-    ax.set_ylabel("Average Accuracy")
+    ax.set_ylabel("Top-1 Accuracy")
     ax.grid(False)
     # bring legend closer to the plot
     ax.legend(loc="upper center", bbox_to_anchor=(0.5, 1.03),
@@ -1369,7 +1369,7 @@ def figure_client_scale_oneplot(figset_dir: Path, out_root: Path, *, inspect: bo
         ax.fill_between(x, y - e, y + e, alpha=0.15)
 
     ax.set_xlabel("Iteration")
-    ax.set_ylabel("Average Client Top-1 Accuracy (%)")
+    ax.set_ylabel("Top-1 Accuracy")
     ax.grid(False)
     # legend closer to the plot
     ax.legend(loc="upper center", bbox_to_anchor=(0.5, 1.03),
