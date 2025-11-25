@@ -4821,3 +4821,299 @@ class Server_pFedMe(Server):
         # tmp = selected_clients[0].get_client_model().to(device)
         # tmp.load_state_dict(self.global_state, strict=True)
         # self.accuracy_server_test_1_global[t] = self.evaluate_accuracy_single(self.test_global_data, model=tmp, k=1)
+
+class ServerFedCT(Server):
+    """
+    FedCT-style server:
+    - Receives hard labels (int tensor of shape [|U|]) from each client.
+    - Forms a consensus labeling via majority vote (optionally with a threshold).
+    - Broadcasts the consensus hard labels back to all clients as pseudo-labels.
+    - No server model is trained.
+
+    Logging:
+      - self.accuracy_global_data_1[t] : consensus accuracy on global_data
+      - self.accuracy_server_test_1[t] : consensus accuracy on test_global_data
+    """
+
+    def __init__(self, id_, global_data, test_data, clients_ids, clients_test_data_dict):
+        super().__init__(id_, global_data, test_data, clients_ids, clients_test_data_dict)
+
+        # Override / simplify for FedCT
+        self.consensus_history = {}   # t -> tensor of shape [|U|]
+        self.consensus_accuracy = {}  # t -> scalar (%), optional metric
+
+        # FedCT does not use a server model
+        self.model = None
+        if hasattr(self, "multi_model_dict"):
+            self.multi_model_dict = {}
+
+        # For FedCT we want clean, flat logging dicts keyed by t
+        self.accuracy_global_data_1 = {}
+        self.accuracy_server_test_1 = {}
+
+    # --- communication API ---
+
+    def receive_single_pseudo_label(self, sender, info):
+        """
+        For FedCT, `info` is a 1D tensor of hard labels: shape [num_data_points].
+        """
+        self.pseudo_label_received[sender] = info
+
+    # --- majority vote ---
+
+    def majority_vote(self, votes_2d):
+        """
+        Majority vote over hard labels.
+
+        Args:
+            votes_2d: torch.LongTensor of shape [num_clients, num_points]
+
+        Returns:
+            consensus: torch.LongTensor of shape [num_points]
+        """
+        num_clients, num_points = votes_2d.shape
+        num_classes = experiment_config.num_classes
+        threshold = getattr(experiment_config, "fedct_majority_threshold", 0.5)
+
+        device_local = votes_2d.device
+        consensus = torch.empty(num_points, dtype=torch.long, device=device_local)
+
+        for i in range(num_points):
+            labels_i = votes_2d[:, i]
+            counts = torch.bincount(labels_i, minlength=num_classes)
+            max_count, max_label = torch.max(counts, dim=0)
+
+            if max_count.float() / num_clients >= threshold:
+                consensus[i] = max_label
+            else:
+                # Still choose majority label (you could set -1 here to "abstain")
+                consensus[i] = max_label
+
+        return consensus
+
+    # --- logging helpers ---
+
+    def _compute_accuracy_from_vector(self, preds_vec, dataset):
+        """
+        Compare an integer prediction vector with labels from a dataset.
+        Returns accuracy in percent.
+        """
+        loader = DataLoader(dataset, batch_size=len(dataset), shuffle=False)
+        _, y = next(iter(loader))
+        y = y.to(preds_vec.device)
+
+        preds = preds_vec[:y.size(0)]
+        acc = (preds == y).float().mean().item() * 100.0
+        return acc
+
+    def _log_consensus_metrics(self, consensus, t):
+        """
+        Log:
+          - accuracy_global_data_1[t]
+          - accuracy_server_test_1[t]
+        And store consensus_accuracy[t] for convenience.
+        """
+        # Accuracy on global public data U
+        try:
+            acc_global = self._compute_accuracy_from_vector(consensus, self.global_data)
+        except Exception as e:
+            print(f"[FedCT] Failed to evaluate global_data accuracy at round {t}: {e}")
+            acc_global = float("nan")
+
+        # Accuracy on global test data
+        try:
+            acc_test = self._compute_accuracy_from_vector(consensus, self.test_global_data)
+        except Exception as e:
+            print(f"[FedCT] Failed to evaluate test_global_data accuracy at round {t}: {e}")
+            acc_test = float("nan")
+
+        # Flat, t-indexed logs
+        self.accuracy_global_data_1[t] = acc_global
+        self.accuracy_server_test_1[t] = acc_test
+
+        # Extra helper
+        self.consensus_accuracy[t] = acc_global
+
+        print(f"[FedCT][Server] Round {t}: "
+              f"consensus acc global_data={acc_global:.2f}%, "
+              f"test_global_data={acc_test:.2f}%")
+
+    # --- main FedCT iteration ---
+
+    def iteration_context(self, t):
+        """
+        One FedCT communication round:
+        - Stack all clients' hard labels on U.
+        - Majority vote to form consensus.
+        - Log consensus accuracy.
+        - Broadcast consensus back to all clients as pseudo-labels.
+        """
+        self.current_iteration = t
+        self.pseudo_label_to_send = {}
+
+        # Stack clients' hard labels
+        client_ids = list(self.clients_ids)
+        label_tensors = []
+        for cid in client_ids:
+            labels = self.pseudo_label_received[cid]
+            if labels is None:
+                raise ValueError(f"[FedCT] Missing hard labels from client {cid} at round {t}.")
+            label_tensors.append(labels.to(device))
+
+        votes = torch.stack(label_tensors, dim=0)  # [num_clients, num_points]
+
+        # Majority-vote consensus
+        consensus = self.majority_vote(votes)
+        self.consensus_history[t] = consensus.detach().cpu()
+
+        # Log metrics
+        self._log_consensus_metrics(consensus, t)
+
+        # Broadcast consensus hard labels to all clients
+        for cid in client_ids:
+            self.pseudo_label_to_send[cid] = consensus  # (LongTensor, [|U|])
+
+        # Prepare for next round
+        self.reset_clients_received_pl()
+
+class ClientFedCT(Client):
+    """
+    FedCT-style client:
+    - Same local model as your usual Client.
+    - At each round:
+        * If t > 0: train on pseudo-labeled global data U (hard labels from server).
+        * Fine-tune on local labeled data.
+        * Predict hard labels on U and send them to the server.
+    Logging is aligned with base Client:
+        - accuracy_per_client_1[t], _5[t], _10[t], _100[t]
+    """
+
+    def __init__(self, id_, client_data, global_data, global_test_data, local_test_data):
+        super().__init__(id_, client_data, global_data, global_test_data, local_test_data)
+
+    # --- FedCT helpers ---
+
+    def predict_hard_labels_on_global(self):
+        self.model.eval()
+        preds = []
+
+        loader = DataLoader(self.global_data,
+                            batch_size=experiment_config.batch_size,
+                            shuffle=False,
+                            num_workers=0)
+
+        with torch.no_grad():
+            for inputs, _ in loader:
+                inputs = inputs.to(device)
+                outputs = self.model(inputs)
+                hard = outputs.argmax(dim=1)
+                preds.append(hard.cpu())
+
+        preds = torch.cat(preds, dim=0).long()
+        print(f"[FedCT][Client {self.id_}] hard labels shape on global: {preds.shape}")
+        return preds
+
+    def train_on_pseudo_labeled_global(self, hard_labels):
+        print(f"[FedCT][Client {self.id_}] Train on pseudo-labeled global data. "
+              f"Labels shape: {tuple(hard_labels.shape)}")
+
+        self.model.train()
+        criterion = nn.CrossEntropyLoss()
+        optimizer = torch.optim.Adam(self.model.parameters(),
+                                     lr=experiment_config.learning_rate_train_c)
+
+        hard_labels = hard_labels.to(device)
+
+        loader = DataLoader(self.global_data,
+                            batch_size=experiment_config.batch_size,
+                            shuffle=False,
+                            num_workers=0,
+                            drop_last=True)
+
+        num_epochs = experiment_config.epochs_num_train_client
+        last_avg_loss = 0.0
+
+        for epoch in range(num_epochs):
+            self.epoch_count += 1
+            epoch_loss = 0.0
+            processed = 0
+
+            for batch_idx, (inputs, _) in enumerate(loader):
+                inputs = inputs.to(device)
+                bs = inputs.size(0)
+
+                start_idx = batch_idx * experiment_config.batch_size
+                end_idx = start_idx + bs
+                if end_idx > hard_labels.size(0):
+                    print(f"[FedCT][Client {self.id_}] Skipping batch {batch_idx} "
+                          f"due to label length mismatch.")
+                    continue
+
+                targets = hard_labels[start_idx:end_idx]
+
+                optimizer.zero_grad()
+                outputs = self.model(inputs)
+                if outputs.dim() == 1:
+                    outputs = outputs.unsqueeze(0)
+
+                loss = criterion(outputs, targets)
+
+                if torch.isnan(loss) or torch.isinf(loss):
+                    print(f"[FedCT][Client {self.id_}] NaN/Inf loss at batch {batch_idx}. Skipping.")
+                    continue
+
+                loss.backward()
+                torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
+                optimizer.step()
+
+                epoch_loss += loss.item()
+                processed += 1
+
+            if processed > 0:
+                last_avg_loss = epoch_loss / processed
+            else:
+                last_avg_loss = float("nan")
+
+            print(f"[FedCT][Client {self.id_}] Epoch [{epoch+1}/{num_epochs}], "
+                  f"Loss: {last_avg_loss:.4f}")
+
+        return last_avg_loss
+
+    # --- main FedCT iteration ---
+
+    def iteration_context(self, t):
+        """
+        FedCT round t:
+        - If t > 0 and pseudo-labels from server are available, train on U with hard labels.
+        - Fine-tune on local data.
+        - Send new hard labels on U to server.
+        - Log local accuracies in the same structures as base Client.
+        """
+        self.current_iteration = t
+        print(f"[FedCT][Client {self.id_}] --- Iteration {t} ---")
+
+        # 1) Train on pseudo-labeled global data
+        if t > 0 and self.pseudo_label_received is not None:
+            self.train_on_pseudo_labeled_global(self.pseudo_label_received)
+
+        # 2) Fine-tune on local labeled data
+        self.fine_tune()
+
+        # 3) Send new hard labels
+        hard_preds = self.predict_hard_labels_on_global()
+        self.pseudo_label_to_send = hard_preds
+
+        # 4) Log accuracies (same dict names as in your base Client)
+        self.accuracy_per_client_1[self.current_iteration] = \
+            self.evaluate_accuracy_single(self.local_test_set, k=1)
+
+        self.accuracy_per_client_5[self.current_iteration] = \
+            self.evaluate_accuracy(self.local_test_set, k=5)
+
+        self.accuracy_per_client_10[self.current_iteration] = \
+            self.evaluate_accuracy(self.local_test_set, k=10)
+
+        self.accuracy_per_client_100[self.current_iteration] = \
+            self.evaluate_accuracy(self.local_test_set, k=100)
+
+        print(f"[FedCT][Client {self.id_}] Done iteration {t}")

@@ -1079,11 +1079,14 @@ def figure_by_client_net_type_value(figset_dir: Path, out_root: Path, *, inspect
             )
 
         ax.set_title(title_name)
-        ax.set_ylabel("Top-1 Accuracy")
+        # <- NO per-axis y-label here anymore
         ax.grid(False)
         ax.set_ylim(ymin, ymax)
 
+    # Single global axis labels
     fig.supxlabel("Iteration", fontsize=BASE_FONT_SIZE)
+    fig.supylabel("Top-1 Accuracy", fontsize=BASE_FONT_SIZE)  # <<< y-title once
+
     h, l = _legend_from_axes_row(axes)
 
     # Legend: force a single row (all entries in one row)
@@ -1092,7 +1095,7 @@ def figure_by_client_net_type_value(figset_dir: Path, out_root: Path, *, inspect
         fig.legend(
             h, l,
             loc="upper center",
-            ncol=len(h),          # <<< single row
+            ncol=len(h),          # single row
             frameon=False,
             bbox_to_anchor=(0.5, 0.96),
             fontsize=LEGEND_FONT_SIZE,
@@ -1192,10 +1195,19 @@ def figure_global_data_size_oneplot(figset_dir: Path, out_root: Path, *, inspect
     ax.set_xlabel("Iteration")
     ax.set_ylabel("Top-1 Accuracy")
     ax.grid(False)
-    # bring legend closer to the plot
-    ax.legend(loc="upper center", bbox_to_anchor=(0.5, 1.03),
-              ncol=min(6, len(curves)), frameon=False,
-              fontsize=LEGEND_FONT_SIZE)
+
+    # Figure-level legend outside (top center), consistent with other figs
+    h, l = ax.get_legend_handles_labels()
+    fig.tight_layout(rect=[0.0, 0.0, 1.0, 0.90])
+    if h:
+        fig.legend(
+            h, l,
+            loc="upper center",
+            ncol=min(6, len(curves)),
+            frameon=False,
+            bbox_to_anchor=(0.5, 0.96),
+            fontsize=LEGEND_FONT_SIZE,
+        )
 
     suffix = "server" if use_server_measure else "client"
     outfile = out_root / f"{figset_dir.name}_by_server_data_ratio_{suffix}.pdf"
@@ -1250,7 +1262,7 @@ def figure_client_scale_oneplot(figset_dir: Path, out_root: Path, *, inspect: bo
     """
     Scans results/client_scale for JSONs of one algorithm/config run across different seeds.
     Each JSON must contain summary['num_clients'].
-    We build one curve per num_clients (averaging across seeds), with SEM shading.
+    We build one curve per num_clients (averaging across seeds).
     Also emits two CSVs: per-iteration stats and final-iteration stats.
     """
     if not figset_dir.exists():
@@ -1279,24 +1291,22 @@ def figure_client_scale_oneplot(figset_dir: Path, out_root: Path, *, inspect: bo
     df_all["num_clients"] = pd.to_numeric(df_all["num_clients"], errors="coerce")
     df_all = df_all.dropna(subset=["num_clients"])
 
-    # Normalize accuracy scale to % if it looks like probabilities
-    # We'll do this after aggregating per-run
     # First: split per file path (run), average over clients per iteration
     iter_rows = []
     for (path, nc, seed), d in df_all.groupby(["_path","num_clients","seed"], dropna=False):
         if d.empty:
             continue
-        # Keep only iteration/client/accuracy
         sub = d[["iteration","client_id","accuracy"]].copy()
         s = _aggregate_run_mean_over_clients(sub)  # Series index=iteration
         if s.empty:
             continue
-        # store
-        iter_rows.append(pd.DataFrame({"iter": s.index.astype(int),
-                                       "value": s.values.astype(float),
-                                       "num_clients": nc,
-                                       "seed": seed,
-                                       "_path": path}))
+        iter_rows.append(pd.DataFrame({
+            "iter": s.index.astype(int),
+            "value": s.values.astype(float),
+            "num_clients": nc,
+            "seed": seed,
+            "_path": path
+        }))
 
     if not iter_rows:
         print(f"[WARN] No per-run curves produced for {figset_dir}"); return
@@ -1314,13 +1324,10 @@ def figure_client_scale_oneplot(figset_dir: Path, out_root: Path, *, inspect: bo
     # Align lengths across seeds per num_clients by truncating to common min length
     iter_stats = []
     for nc, g in df_runs.groupby("num_clients"):
-        # Build matrix SxT per seed (truncate to min T)
         mats = []
-        seeds = []
         for sd, d in g.groupby("seed"):
             d = d.sort_values("iter")
             mats.append(d["value"].to_numpy(dtype=float))
-            seeds.append(sd)
         if not mats:
             continue
         T = min(len(a) for a in mats)
@@ -1329,7 +1336,6 @@ def figure_client_scale_oneplot(figset_dir: Path, out_root: Path, *, inspect: bo
         arr = np.vstack([a[:T] for a in mats])  # shape [S, T]
         iters = np.sort(g["iter"].unique())[:T]
         means = np.nanmean(arr, axis=0)
-        # Sample SEM across seeds (rows)
         sems = (np.nanstd(arr, axis=0, ddof=1) / np.sqrt(arr.shape[0])) if arr.shape[0] > 1 else np.zeros(T)
         iter_stats.append(pd.DataFrame({
             "iter": iters.astype(int),
@@ -1357,29 +1363,36 @@ def figure_client_scale_oneplot(figset_dir: Path, out_root: Path, *, inspect: bo
     df_final.to_csv(_win_long_abs(final_csv), index=False)
     print(f"[OK] Saved: {final_csv}")
 
-    # Plot
+    # Plot (no shading, legend outside like other figs)
     fig, ax = plt.subplots(1, 1, figsize=(7.2, 4.8))
+
     # nice numeric order
     for nc in sorted(df_iter["num_clients"].unique().tolist()):
         d = df_iter[df_iter["num_clients"] == nc].sort_values("iter")
         x = d["iter"].to_numpy()
         y = d["mean"].to_numpy(dtype=float)
-        e = d["sem"].to_numpy(dtype=float)
         ax.plot(x, y, linewidth=3.0, label=f"{int(nc)} clients")
-        ax.fill_between(x, y - e, y + e, alpha=0.15)
 
     ax.set_xlabel("Iteration")
     ax.set_ylabel("Top-1 Accuracy")
     ax.grid(False)
-    # legend closer to the plot
-    ax.legend(loc="upper center", bbox_to_anchor=(0.5, 1.03),
-              ncol=min(6, len(df_iter['num_clients'].unique())),
-              frameon=False,
-              fontsize=LEGEND_FONT_SIZE)
-    fig.tight_layout(rect=[0, 0, 1, 0.94])
+
+    # Global legend outside (top center), single row-style like others
+    h, l = ax.get_legend_handles_labels()
+    fig.tight_layout(rect=[0.0, 0.0, 1.0, 0.90])
+    if h:
+        fig.legend(
+            h, l,
+            loc="upper center",
+            ncol=min(6, len(h)),
+            frameon=False,
+            bbox_to_anchor=(0.5, 0.96),
+            fontsize=LEGEND_FONT_SIZE,
+        )
 
     out_pdf = out_dir / "client_scale.pdf"
-    _savefig_longpath(fig, out_pdf); plt.close(fig)
+    _savefig_longpath(fig, out_pdf)
+    plt.close(fig)
     print(f"[OK] Saved: {out_pdf}")
 
 # --------------------- CLI ---------------------
@@ -1401,11 +1414,7 @@ def main():
     args = ap.parse_args()
 
     # Global-data-size: SERVER-only, labels are numeric ratios (+CSV)
-    figure_global_data_size_oneplot(
-        args.root / args.global_data_size_folder,
-        args.figdir,
-        inspect=args.inspect,
-        use_server_measure=True
+    figure_global_data_size_oneplot(args.root / args.global_data_size_folder,args.figdir,inspect=args.inspect,use_server_measure=True
     )
 
     # NEW: Client-scale oneplot (+CSVs with per-iter and final stats)
@@ -1418,6 +1427,7 @@ def main():
     # Comparison figures (+CSVs): client for non-MAPL + MAPL server-only (as "MAPL")
     figure_diff_clients_nets(args.root / "diff_clients_nets", args.figdir, inspect=args.inspect)
     figure_diff_benchmarks(args.root / "diff_benchmarks_05", args.figdir, alpha_value=5, inspect=args.inspect)
+    figure_diff_benchmarks(args.root / "diff_benchmarks_100", args.figdir, alpha_value=100, inspect=args.inspect)
 
     figure_diff_benchmarks(args.root / "diff_benchmarks_1", args.figdir, alpha_value=1, inspect=args.inspect)
     figure_by_client_net_type_value(args.root / "same_client_nets", args.figdir, inspect=args.inspect)

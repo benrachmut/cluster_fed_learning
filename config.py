@@ -187,6 +187,7 @@ class AlgorithmSelected(Enum):
     COMET = 8
     Ditto = 9
     FedSelect = 12
+    FedCT = 999
 
 
 class DataDistTypes(Enum):

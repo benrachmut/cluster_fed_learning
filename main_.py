@@ -627,23 +627,65 @@ def run_exp_by_algo():
     if algorithm_selection == algorithm_selection.pFedHN:
         run_pFedHN()
 
+    if algorithm_selection == AlgorithmSelected.FedCT:
+        run_FedCT()
 
+def run_FedCT():
+    # Example FedCT config
+    for net_type in homo_models:
+        experiment_config.update_net_type(net_type)
+        experiment_config.num_clusters = 1
+        experiment_config.fedct_majority_threshold = 0.5
+        experiment_config.input_consistency = InputConsistency.withoutInputConsistency
+        experiment_config.weights_for_ps = False
+
+        # Create FedCT clients
+        clients, clients_ids, clients_test_by_id_dict = create_clients(
+                clients_train_data_dict,
+                server_train_data,
+                clients_test_data_dict,
+                server_test_data,
+            )
+
+        # Create FedCT server
+
+        server = ServerFedCT(id_="server", global_data=server_train_data,
+                               test_data=server_test_data,
+                               clients_ids=clients_ids,
+                               clients_test_data_dict=clients_test_by_id_dict)
+
+
+        # Use your existing loop (or iterate_fl_clusters)
+        for t in range(experiment_config.iterations):
+            print("----------------------------iter number:", t)
+
+            for c in clients:
+                c.iterate(t)
+                server.receive_single_pseudo_label(c.id_, c.pseudo_label_to_send)
+
+            server.iterate(t)
+
+            for c in clients:
+                c.pseudo_label_received = server.pseudo_label_to_send[c.id_]
+
+            rd = RecordData(clients, server)
+            save_record_to_results(rd)
 
 
 if __name__ == '__main__':
     print(device)
-    seed_num_list = [3]
+    seed_num_list = [1]
     data_sets_list =[DataSet.CIFAR100]#,DataSet.ImageNetR,DataSet.TinyImageNet,DataSet.EMNIST_balanced,DataSet.CIFAR10]#[DataSet.CIFAR100]
     num_clients_list = [25]#[100,500]#[25]
     num_opt_clusters_list =[5] #[5]
     mix_percentage = 0.1
     server_split_ratio_list = [0.2]
-    alpha_dichts =[100] #[3,2,100,10,5,1] #[3,2,1,]
+    alpha_dichts =[5] #[3,2,100,10,5,1] #[3,2,1,]
     cluster_additions = [0]
     server_data_ratios = [1]#[-4,-3,-2,-1,0,1,2,3,4] #  # 0.96,0.5,0.75,1,1.25,1.5,1.75,2]
     print("epsilons:", cluster_additions)
     print(("alpha_dichts", alpha_dichts))
-    algorithm_selection_list = [AlgorithmSelected.MAPL]
+    algorithm_selection_list = [AlgorithmSelected.FedCT]
     #[AlgorithmSelected.COMET, AlgorithmSelected.Ditto, AlgorithmSelected.FedBABU]
         #[AlgorithmSelected.FedMD,AlgorithmSelected.pFedCK,AlgorithmSelected.FedAvg]
 
@@ -667,17 +709,17 @@ if __name__ == '__main__':
     # parameters for PseudoLabelsClusters
 
     #C_AlexSqueeze_S_vgg = 35
-    # C_AlexSqueeze_S_alex = 34
 
-    # C_AlexMobile_S_vgg = 33
-    # C_AlexMobile_S_alex = 32
-    #
-    # C_ResNetMobile_S_vgg = 31
-    # C_ResNetMobile_S_alex = 30
 
-    # C_ResNetSqueeze_S_vgg = 29
-    # C_ResNetSqueeze_S_alex = 28
-    nets_types_list_PseudoLabelsClusters  = [NetsType.C_rndWeak_S_VGG]#[NetsType.C_Mobile_S_alex,NetsType.C_ResNet_S_alex,NetsType.C_squeeze_S_alex,NetsType.C_alex_S_alex]#[NetsType.C_AlexSqueeze_S_alex,NetsType.C_AlexMobile_S_alex,NetsType.C_ResNetMobile_S_alex,NetsType.C_ResNetSqueeze_S_alex]#,NetsType.C_alex_S_vgg,NetsType.C_alex_S_alex]#,NetsType.C_alex_S_vgg]# ,NetsType.C_alex_S_vgg]#,NetsType.C_alex_S_vgg]#,NetsType.C_alex_S_vgg]
+    #nets_types_list_PseudoLabelsClusters  = #[NetsType.C_ResNetMobile_S_alex,NetsType.C_ResNetSqueeze_S_alex]#[NetsType.C_AlexSqueeze_S_alex,NetsType.C_AlexMobile_S_alex]
+
+
+
+    nets_types_list_PseudoLabelsClusters  =[NetsType.C_rndStrong_S_alex]
+    #NetsType.C_rndWeak_S_alex,
+    #NetsType.C_rnd_S_alex]
+
+    #nets_types_list_PseudoLabelsClusters  = [NetsType.C_rndWeak_S_alex,]#[NetsType.C_Mobile_S_alex,NetsType.C_ResNet_S_alex,NetsType.C_squeeze_S_alex,NetsType.C_alex_S_alex]#[NetsType.C_AlexSqueeze_S_alex,NetsType.C_AlexMobile_S_alex,NetsType.C_ResNetMobile_S_alex,NetsType.C_ResNetSqueeze_S_alex]#,NetsType.C_alex_S_vgg,NetsType.C_alex_S_alex]#,NetsType.C_alex_S_vgg]# ,NetsType.C_alex_S_vgg]#,NetsType.C_alex_S_vgg]#,NetsType.C_alex_S_vgg]
     homo_models =nets_types_list_PseudoLabelsClusters
 
 
