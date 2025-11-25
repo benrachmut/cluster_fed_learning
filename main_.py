@@ -674,7 +674,7 @@ def run_FedCT():
 
 if __name__ == '__main__':
     print(device)
-    seed_num_list = [3]
+    seed_num_list = [1]
     data_sets_list =[DataSet.CIFAR100]#,DataSet.ImageNetR,DataSet.TinyImageNet,DataSet.EMNIST_balanced,DataSet.CIFAR10]#[DataSet.CIFAR100]
     num_clients_list = [25]#[100,500]#[25]
     num_opt_clusters_list =[5] #[5]
@@ -715,7 +715,7 @@ if __name__ == '__main__':
 
 
 
-    nets_types_list_PseudoLabelsClusters  =[NetsType.C_rndStrong_S_alex]
+    nets_types_list_PseudoLabelsClusters  =[NetsType.C_rndWeak_S_alex]
     #NetsType.C_rndWeak_S_alex,
     #NetsType.C_rnd_S_alex]
 
