@@ -1480,8 +1480,8 @@ def save_record_to_results(record, *, addition_to_name = "",filename= None, inde
     folder_ = (
         f"{addition_to_name}"
         f"data_set{data_set_s}_alg{alg_s}"
-        f"_ser{server_s}_cli{clients_s}"
-        f"_ratio{ratio_s}_"
+        f"_cle{server_s}_cli{client_s}_{clients_s}"
+        f"_ratio{ratio_s}_clus{clusters_s}"
     )
 
     out_dir = Path("results") / folder_
@@ -1489,7 +1489,7 @@ def save_record_to_results(record, *, addition_to_name = "",filename= None, inde
 
     # Filename WITH seed (default)
     if filename is None:
-        filename = f"{folder_}_seed{seed_s}_alph{alpha_s}.json"
+        filename = f"{folder_}_alph{alpha_s}_seed{seed_s}.json"
 
     out_path = out_dir / filename
 

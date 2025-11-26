@@ -674,7 +674,7 @@ def run_FedCT():
 
 if __name__ == '__main__':
     print(device)
-    seed_num_list = [1]
+    seed_num_list = [1,2,3]
     data_sets_list =[DataSet.CIFAR100]#,DataSet.ImageNetR,DataSet.TinyImageNet,DataSet.EMNIST_balanced,DataSet.CIFAR10]#[DataSet.CIFAR100]
     num_clients_list = [25]#[100,500]#[25]
     num_opt_clusters_list =[5] #[5]
@@ -715,11 +715,11 @@ if __name__ == '__main__':
 
 
 
-    nets_types_list_PseudoLabelsClusters  =[NetsType.C_rndWeak_S_alex]
+    #nets_types_list_PseudoLabelsClusters  =[NetsType.C_rndWeak_S_alex]
     #NetsType.C_rndWeak_S_alex,
     #NetsType.C_rnd_S_alex]
 
-    #nets_types_list_PseudoLabelsClusters  = [NetsType.C_rndWeak_S_alex,]#[NetsType.C_Mobile_S_alex,NetsType.C_ResNet_S_alex,NetsType.C_squeeze_S_alex,NetsType.C_alex_S_alex]#[NetsType.C_AlexSqueeze_S_alex,NetsType.C_AlexMobile_S_alex,NetsType.C_ResNetMobile_S_alex,NetsType.C_ResNetSqueeze_S_alex]#,NetsType.C_alex_S_vgg,NetsType.C_alex_S_alex]#,NetsType.C_alex_S_vgg]# ,NetsType.C_alex_S_vgg]#,NetsType.C_alex_S_vgg]#,NetsType.C_alex_S_vgg]
+    nets_types_list_PseudoLabelsClusters  = [NetsType.C_Mobile_S_alex,NetsType.C_ResNet_S_alex,NetsType.C_squeeze_S_alex]#[NetsType.C_Mobile_S_alex,NetsType.C_ResNet_S_alex,NetsType.C_squeeze_S_alex,NetsType.C_alex_S_alex]#[NetsType.C_AlexSqueeze_S_alex,NetsType.C_AlexMobile_S_alex,NetsType.C_ResNetMobile_S_alex,NetsType.C_ResNetSqueeze_S_alex]#,NetsType.C_alex_S_vgg,NetsType.C_alex_S_alex]#,NetsType.C_alex_S_vgg]# ,NetsType.C_alex_S_vgg]#,NetsType.C_alex_S_vgg]#,NetsType.C_alex_S_vgg]
     homo_models =nets_types_list_PseudoLabelsClusters
 
 
