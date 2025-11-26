@@ -713,8 +713,8 @@ if __name__ == '__main__':
 
     #nets_types_list_PseudoLabelsClusters  = [NetsType.C_AlexSqueeze_S_alex,NetsType.C_AlexMobile_S_alex]
     #[NetsType.C_Mobile_S_alex, NetsType.C_ResNet_S_alex, NetsType.C_squeeze_S_alex]
-    #NetsType.C_rnd_S_alex
-    nets_types_list_PseudoLabelsClusters  = [NetsType.C_rndStrong_S_alex]
+    #NetsType.C_rnd_S_alex C_rndStrong_S_alex
+    nets_types_list_PseudoLabelsClusters  = [NetsType.C_rnd_S_alex ]
     homo_models =nets_types_list_PseudoLabelsClusters
 
 
