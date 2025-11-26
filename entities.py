@@ -260,16 +260,16 @@ def get_rnd_net(rnd:Random = None):
     p = rnd.random()
     if p <= 0.25:
         print("ResNet18Server")
-        return ResNet18Server(num_classes=experiment_config.num_classes).to(device)
+        return ResNet18Server(num_classes=experiment_config.num_classes).to(device), NetType.ResNet
     if 0.25 < p <= 0.50:
         print("MobileNetV2Server")
-        return MobileNetV2Server(num_classes=experiment_config.num_classes).to(device)
+        return MobileNetV2Server(num_classes=experiment_config.num_classes).to(device), NetType.MobileNet
     if 0.50 < p <= 0.75:
         print("SqueezeNetServer")
-        return SqueezeNetServer(num_classes=experiment_config.num_classes).to(device)
+        return SqueezeNetServer(num_classes=experiment_config.num_classes).to(device), NetType.SqueezeNet
     else:
         print("AlexNet")
-        return AlexNet(num_classes=experiment_config.num_classes).to(device)
+        return AlexNet(num_classes=experiment_config.num_classes).to(device), NetType.ALEXNET
 
 def get_rnd_strong_net(rnd:Random = None):
     p = rnd.random()
