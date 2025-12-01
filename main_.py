@@ -312,51 +312,59 @@ def run_PseudoLabelsClusters():
         for net_cluster_technique in net_cluster_technique_list:
             experiment_config.net_cluster_technique = net_cluster_technique
 
+            for temp_ in temp_distil_list_mapl: #temp_distil_list_mapl = [1]  # [0.3.0.5,0.7,1.5,2]
+                experiment_config.distill_temperature = temp_
+                for slr in server_learning_rate_mapl: # server_learning_rate_mapl = [0.0001]  # [0.005,0.001, 0.0005,0.0001,0.00001]
+                    experiment_config.server_learning_rate_mapl =slr
+                    for clr in client_lr_local_lr_distill_mapl: #        client_lr_local_lr_distill_mapl = [(1e-3, 1e-4)]  # ,(1e-3, 1e-5),(1e-3, 1e-3),(1e-4, 1e-3),(1e-2, 1e-4)]
+                        experiment_config.client_lr_local_lr_distill_mapl = clr
+                        for consis   in consistencies_lambda_mapl: #            consistencies_lambda_mapl = [1]  # [0,0.3,0.5,0.8,1.5,2]
+                            experiment_config.lambda_consistency = consis
 
 
-            for server_input_tech in server_input_tech_list:
-                experiment_config.server_input_tech = server_input_tech
+                            for server_input_tech in server_input_tech_list:
+                                experiment_config.server_input_tech = server_input_tech
 
 
-                for cluster_technique in cluster_technique_list:
-                    experiment_config.cluster_technique = cluster_technique
+                                for cluster_technique in cluster_technique_list:
+                                    experiment_config.cluster_technique = cluster_technique
 
 
-                    for server_feedback_technique in server_feedback_technique_list:
-                        experiment_config.server_feedback_technique = server_feedback_technique
-                        if len(num_cluster_list)==0:
-                            experiment_config.num_clusters = -1
-                        else:
-                            experiment_config.num_clusters = num_cluster_list[0]
-
-
-
-                        for epsilon in cluster_additions:
-                            experiment_config.cluster_addition = epsilon
+                                    for server_feedback_technique in server_feedback_technique_list:
+                                        experiment_config.server_feedback_technique = server_feedback_technique
+                                        if len(num_cluster_list)==0:
+                                            experiment_config.num_clusters = -1
+                                        else:
+                                            experiment_config.num_clusters = num_cluster_list[0]
 
 
 
-                            for weights_for_ps in weights_for_ps_list:
-                                experiment_config.weights_for_ps = weights_for_ps
-
-                                for input_consistency in input_consistency_list:
-                                    experiment_config.input_consistency = input_consistency
+                                        for epsilon in cluster_additions:
+                                            experiment_config.cluster_addition = epsilon
 
 
-                                    clients, clients_ids, clients_test_by_id_dict = create_clients(
-                                        clients_train_data_dict,
-                                        server_train_data,
-                                        clients_test_data_dict,
-                                        server_test_data)
-                                    server = Server(id_="server", global_data=server_train_data,
-                                                    test_data=server_test_data,
-                                                    clients_ids=clients_ids,
-                                                    clients_test_data_dict=clients_test_by_id_dict)
+
+                                            for weights_for_ps in weights_for_ps_list:
+                                                experiment_config.weights_for_ps = weights_for_ps
+
+                                                for input_consistency in input_consistency_list:
+                                                    experiment_config.input_consistency = input_consistency
 
 
-                                    iterate_fl_clusters(clients, server, net_type, net_cluster_technique, server_input_tech,
-                                                        cluster_technique, server_feedback_technique,
-                                                        -1, weights_for_ps,input_consistency,epsilon)
+                                                    clients, clients_ids, clients_test_by_id_dict = create_clients(
+                                                        clients_train_data_dict,
+                                                        server_train_data,
+                                                        clients_test_data_dict,
+                                                        server_test_data)
+                                                    server = Server(id_="server", global_data=server_train_data,
+                                                                    test_data=server_test_data,
+                                                                    clients_ids=clients_ids,
+                                                                    clients_test_data_dict=clients_test_by_id_dict)
+
+
+                                                    iterate_fl_clusters(clients, server, net_type, net_cluster_technique, server_input_tech,
+                                                                        cluster_technique, server_feedback_technique,
+                                                                        -1, weights_for_ps,input_consistency,epsilon)
 
 
 
@@ -675,17 +683,16 @@ def run_FedCT():
 if __name__ == '__main__':
     print(device)
     seed_num_list = [1,2,3]
-    data_sets_list =[DataSet.ImageNetR,DataSet.TinyImageNet,DataSet.EMNIST_balanced]#[DataSet.CIFAR100]
+    data_sets_list =[DataSet.CIFAR100]
     num_clients_list = [25]#[100,500]#[25]
     num_opt_clusters_list =[5] #[5]
     mix_percentage = 0.1
     server_split_ratio_list = [0.2]
-    alpha_dichts =[100] #[3,2,100,10,5,1] #[3,2,1,]
-    cluster_additions = [0]
+    alpha_dichts =[5] #[3,2,100,10,5,1] #[3,2,1,]
     server_data_ratios = [1]#[-4,-3,-2,-1,0,1,2,3,4] #  # 0.96,0.5,0.75,1,1.25,1.5,1.75,2]
-    print("epsilons:", cluster_additions)
+
     print(("alpha_dichts", alpha_dichts))
-    algorithm_selection_list = [AlgorithmSelected.MAPL]
+    algorithm_selection_list = [AlgorithmSelected.FedCT]
     #[AlgorithmSelected.COMET, AlgorithmSelected.Ditto, AlgorithmSelected.FedBABU]
         #[AlgorithmSelected.FedMD,AlgorithmSelected.pFedCK,AlgorithmSelected.FedAvg]
 
@@ -714,17 +721,29 @@ if __name__ == '__main__':
     #nets_types_list_PseudoLabelsClusters  = [NetsType.C_AlexSqueeze_S_alex,NetsType.C_AlexMobile_S_alex]
     #[NetsType.C_Mobile_S_alex, NetsType.C_ResNet_S_alex, NetsType.C_squeeze_S_alex]
     #NetsType.C_rnd_S_alex C_rndStrong_S_alex
-    nets_types_list_PseudoLabelsClusters  = [NetsType.C_rndWeak_S_VGG]
+    nets_types_list_PseudoLabelsClusters  = [NetsType.C_Mobile_S_alex,NetsType.C_alex_S_alex, NetsType.C_squeeze_S_alex,NetsType.C_ResNet_S_alex]
     homo_models =nets_types_list_PseudoLabelsClusters
 
 
     net_cluster_technique_list = [NetClusterTechnique.multi_model]#,NetClusterTechnique.multi_head]
-    server_input_tech_list = [ServerInputTech.max]
-    cluster_technique_list = [ClusterTechnique.greedy_elimination_L2]#[ClusterTechnique.greedy_elimination_cross_entropy]#[ClusterTechnique.manual_single_iter,ClusterTechnique.manual,ClusterTechnique.kmeans]
+    cluster_additions = [0]
+    print("epsilons:", cluster_additions)
+
+    server_input_tech_list = [ServerInputTech.max]#ServerInputTech.mean
+    temp_distil_list_mapl = [1]#[0.5,2]#[0.3.0.5,0.7,1.5,2]
+    server_learning_rate_mapl = [0.0001]#[0.005,0.001, 0.0005,0.0001,0.00001]
+    client_lr_local_lr_distill_mapl=[(1e-3, 1e-4)]#,(1e-3, 1e-5),(1e-3, 1e-3),(1e-4, 1e-3),(1e-2, 1e-4)]
+    consistencies_lambda_mapl = [1]#[0,0.3,0.5,0.8,1.5,2]
+
+
+    cluster_technique_list = [ClusterTechnique.greedy_elimination_L2]#ClusterTechnique.kmeans#[ClusterTechnique.greedy_elimination_cross_entropy]#[ClusterTechnique.manual_single_iter,ClusterTechnique.manual,ClusterTechnique.kmeans]
     server_feedback_technique_list = [ServerFeedbackTechnique.similar_to_cluster]#[ServerFeedbackTechnique.similar_to_cluster,ServerFeedbackTechnique.similar_to_client]
-    num_cluster_list = ["Optimal"]
+
+
     weights_for_ps_list = [WeightForPS.withWeights]#,WeightForPS.withoutWeights ]
     input_consistency_list = [InputConsistency.withInputConsistency]#,InputConsistency.withoutInputConsistency]
+
+    num_cluster_list = ["Optimal"]
     # centralized
     nets_types_Centralized_list = [NetsType.S_vgg]
     num_cluster_Centralized_list = [1]

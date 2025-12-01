@@ -1448,6 +1448,11 @@ def save_record_to_results(record, *, addition_to_name = "",filename= None, inde
         return "None" if x is None else getattr(x, "name", str(x))
 
     # Extract
+    server_input_tech1 = summary.get("server_input_tech")
+    distill_temper1 = summary.get("distill_temperature")
+    server_learning1 = summary.get("server_learning_rate_mapl")
+    client_lr_local1 = summary.get("client_lr_local_lr_distill_mapl")
+    lambda_consis1 = summary.get("lambda_consistency")
     seed               = summary.get("seed_num", "unknown_seed")
     alg_val            = summary.get("algorithm_selection", "unknown_alg")
     alpha              = summary.get("alpha_dich", "unknown_alpha")
@@ -1475,13 +1480,23 @@ def save_record_to_results(record, *, addition_to_name = "",filename= None, inde
     server_s    = _slugify(server_str)
     client_s    = _slugify(client_str)
     ratio_s     = _slugify(server_ratio_scaled)
+    server_input_tech = _slugify(server_input_tech1)
+    distill_temper = _slugify(distill_temper1)
+    server_learning = _slugify(server_learning1)
+    client_lr_local= _slugify(client_lr_local1)
+    lambda_consis = _slugify(lambda_consis1)
 
     # Folder WITHOUT seed
     folder_ = (
-        f"{addition_to_name}"
-        f"data_set{data_set_s}_alg{alg_s}"
-        f"_cle{server_s}_cli{client_s}_{clients_s}"
-        f"_ratio{ratio_s}_clus{clusters_s}"
+        f"{addition_to_name}_"
+        f"{data_set_s}_{alg_s}"
+        f"{server_s}_{client_s}_"
+        f"_{server_input_tech}_"
+        f"_{distill_temper}_"
+        f"_{lambda_consis}"
+
+
+        #f"_ratio{ratio_s}_clus{clusters_s}"
     )
 
     out_dir = Path("results") / folder_

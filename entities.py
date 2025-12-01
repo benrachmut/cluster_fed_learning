@@ -414,6 +414,28 @@ class LearningEntity(ABC):
         #else:
         #    self.model.apply(self.weights)
 
+    def apply_temperature_to_probs(self, pseudo_probs: torch.Tensor) -> torch.Tensor:
+        """
+        Apply temperature T to probability vectors.
+
+        - T = 1.0  -> no change
+        - T < 1.0  -> sharpen (harder labels)
+        - T > 1.0  -> smooth (softer labels)
+        """
+        T = getattr(experiment_config, "distill_temperature", 1.0)
+
+        # Make sure everything is valid
+        pseudo_probs = pseudo_probs.clamp_min(1e-8)
+        pseudo_probs = pseudo_probs / pseudo_probs.sum(dim=1, keepdim=True)
+
+        if T is None or abs(T - 1.0) < 1e-6:
+            return pseudo_probs  # no change
+
+        # p_T ∝ p^(1/T)
+        pseudo_probs_T = pseudo_probs.pow(1.0 / T)
+        pseudo_probs_T = pseudo_probs_T / pseudo_probs_T.sum(dim=1, keepdim=True)
+
+        return pseudo_probs_T
 
     def get_pseudo_label_L2(self,pseudo_labels):
         loader = DataLoader(self.global_data, batch_size=len(self.global_data))
@@ -681,6 +703,9 @@ class LearningEntity(ABC):
 class Client(LearningEntity):
     def __init__(self, id_, client_data, global_data,global_test_data,local_test_data):
         LearningEntity.__init__(self,id_,global_data,global_test_data)
+
+
+
         self.num = (self.id_+1)*17
         self.local_test_set= local_test_data
 
@@ -772,6 +797,7 @@ class Client(LearningEntity):
                 start_idx = batch_idx * experiment_config.batch_size
                 end_idx = start_idx + inputs.size(0)
                 pseudo_targets = pseudo_targets_all[start_idx:end_idx].to(device)
+                pseudo_targets = self.apply_temperature_to_probs(pseudo_targets)
 
                 if pseudo_targets.size(0) != inputs.size(0):
                     print(f"Skipping batch {batch_idx}: Pseudo target size mismatch.")
@@ -780,7 +806,7 @@ class Client(LearningEntity):
                     print(f"NaN/Inf in pseudo targets at batch {batch_idx}")
                     continue
 
-                pseudo_targets = F.softmax(pseudo_targets, dim=1)
+                #pseudo_targets = F.softmax(pseudo_targets, dim=1)
 
                 # Compute weights based on global label distribution
                 weights = torch.tensor(
@@ -915,6 +941,7 @@ class Client(LearningEntity):
                 start_idx = batch_idx * experiment_config.batch_size
                 end_idx = start_idx + inputs.size(0)
                 pseudo_targets = pseudo_targets_all[start_idx:end_idx].to(device)
+                pseudo_targets = self.apply_temperature_to_probs(pseudo_targets)
 
                 if pseudo_targets.size(0) != inputs.size(0):
                     print(f"Skipping batch {batch_idx}: Pseudo target size mismatch.")
@@ -923,7 +950,7 @@ class Client(LearningEntity):
                     print(f"NaN/Inf in pseudo targets at batch {batch_idx}")
                     continue
 
-                pseudo_targets = F.softmax(pseudo_targets, dim=1)
+                #pseudo_targets = F.softmax(pseudo_targets, dim=1)
                 loss_kl = criterion_kl(outputs_log_prob, pseudo_targets)
 
                 # Input consistency regularization
@@ -987,6 +1014,7 @@ class Client(LearningEntity):
                 start_idx = batch_idx * experiment_config.batch_size
                 end_idx = start_idx + inputs.size(0)
                 pseudo_targets = pseudo_targets_all[start_idx:end_idx].to(device)
+                pseudo_targets = self.apply_temperature_to_probs(pseudo_targets)
 
                 if pseudo_targets.size(0) != inputs.size(0):
                     print(
@@ -997,7 +1025,7 @@ class Client(LearningEntity):
                     print(f"NaN or Inf found in pseudo targets at batch {batch_idx}: {pseudo_targets}")
                     continue
 
-                pseudo_targets = F.softmax(pseudo_targets, dim=1)
+                #pseudo_targets = F.softmax(pseudo_targets, dim=1)
 
                 # Get weights based on true labels
                 weights = torch.tensor(
@@ -1081,6 +1109,7 @@ class Client(LearningEntity):
                 start_idx = batch_idx * experiment_config.batch_size
                 end_idx = start_idx + inputs.size(0)
                 pseudo_targets = pseudo_targets_all[start_idx:end_idx].to(device)
+                pseudo_targets = self.apply_temperature_to_probs(pseudo_targets)
 
                 # Check if pseudo_targets size matches the input batch size
                 if pseudo_targets.size(0) != inputs.size(0):
@@ -1094,7 +1123,7 @@ class Client(LearningEntity):
                     continue
 
                 # Normalize pseudo targets to sum to 1
-                pseudo_targets = F.softmax(pseudo_targets, dim=1)
+                #pseudo_targets = F.softmax(pseudo_targets, dim=1)
 
                 # Calculate the loss
                 loss = criterion(outputs_prob, pseudo_targets)
@@ -1733,13 +1762,14 @@ class Server(LearningEntity):
                 start_idx = batch_idx * experiment_config.batch_size
                 end_idx = start_idx + inputs.size(0)
                 pseudo_targets = pseudo_targets_all[start_idx:end_idx].to(device)
+                pseudo_targets = self.apply_temperature_to_probs(pseudo_targets)
 
                 if pseudo_targets.size(0) != inputs.size(0):
                     print(
                         f"Skipping batch {batch_idx}: Expected pseudo target size {inputs.size(0)}, got {pseudo_targets.size(0)}")
                     continue
 
-                pseudo_targets = F.softmax(pseudo_targets, dim=1)
+                #pseudo_targets = F.softmax(pseudo_targets, dim=1)
 
                 loss_kl = criterion_kl(outputs_prob, pseudo_targets)
 
@@ -1810,6 +1840,7 @@ class Server(LearningEntity):
                 start_idx = batch_idx * experiment_config.batch_size
                 end_idx = start_idx + inputs.size(0)
                 pseudo_targets = pseudo_targets_all[start_idx:end_idx].to(device)
+                pseudo_targets = self.apply_temperature_to_probs(pseudo_targets)
 
                 # Check if pseudo_targets size matches the input batch size
                 if pseudo_targets.size(0) != inputs.size(0):
@@ -1819,7 +1850,7 @@ class Server(LearningEntity):
                     continue
 
                 # Normalize pseudo targets to sum to 1
-                pseudo_targets = F.softmax(pseudo_targets, dim=1)
+                #pseudo_targets = F.softmax(pseudo_targets, dim=1)
 
                 # Calculate the loss
                 loss = criterion(outputs_prob, pseudo_targets)
@@ -3247,6 +3278,7 @@ class Client_PseudoLabelsClusters_with_division(Client):
                 start_idx = batch_idx * experiment_config.batch_size
                 end_idx = start_idx + inputs.size(0)
                 pseudo_targets = pseudo_targets_all[start_idx:end_idx].to(device)
+                pseudo_targets = self.apply_temperature_to_probs(pseudo_targets)
 
                 # Check if pseudo_targets size matches the input batch size
                 if pseudo_targets.size(0) != inputs.size(0):
@@ -3260,7 +3292,7 @@ class Client_PseudoLabelsClusters_with_division(Client):
                     continue
 
                 # Normalize pseudo targets to sum to 1
-                pseudo_targets = F.softmax(pseudo_targets, dim=1)
+                #pseudo_targets = F.softmax(pseudo_targets, dim=1)
 
                 # Calculate the loss
                 loss = criterion(outputs_prob, pseudo_targets)
@@ -3647,6 +3679,7 @@ class Server_PseudoLabelsClusters_with_division(Server):
                 start_idx = batch_idx * experiment_config.batch_size
                 end_idx = start_idx + inputs.size(0)
                 pseudo_targets = pseudo_targets_all[start_idx:end_idx].to(device)
+                pseudo_targets = self.apply_temperature_to_probs(pseudo_targets)
 
                 # Check if pseudo_targets size matches the input batch size
                 if pseudo_targets.size(0) != inputs.size(0):
@@ -3656,7 +3689,7 @@ class Server_PseudoLabelsClusters_with_division(Server):
                     continue
 
                 # Normalize pseudo targets to sum to 1
-                pseudo_targets = F.softmax(pseudo_targets, dim=1)
+                #pseudo_targets = F.softmax(pseudo_targets, dim=1)
 
                 # Calculate the loss
                 loss = criterion(outputs_prob, pseudo_targets)

@@ -196,12 +196,19 @@ class DataDistTypes(Enum):
 
 class ExperimentConfig:
     def __init__(self):
+
+        self.server_learning_rate_mapl = 0.0001#_mapl = [0.005, 0.001, 0.0005, 0.0001, 0.00001]  # 0.005,
+        self.client_lr_local_lr_distill_mapl = (1e-3, 1e-3)#_mapl = [(1e-3, 1e-3)]  # ,(1e-3, 1e-5),(1e-3, 1e-4),(1e-4, 1e-3),(1e-2, 1e-4)]
+        self.distill_temperature = 1
+        self.lambda_consistency = 1
+
+
         self.weights_for_ps = None
         self.input_consistency = None
         self.lambda_ditto = 1
         self.which_net_arch = None
         self.seed_num = 1
-        self.iterations = 20
+        self.iterations = 10
         self.is_with_memory_load = None
 
         # CIFAR10/CIFAR 100
@@ -241,7 +248,8 @@ class ExperimentConfig:
         self.epochs_num_input_fine_tune_clients_no_fl = self.epochs_num_input_fine_tune_clients*self.iterations
         self.epochs_num_input_fine_tune_centralized_server = self.epochs_num_input_fine_tune_clients*self.iterations
         self.alpha_dich = 100
-        self.lambda_consistency = 1
+
+
 
 
         # general vars
@@ -379,6 +387,20 @@ class ExperimentConfig:
             self.learning_rate_train_c = 0.0001
             self.learning_rate_fine_tune_c = 0.001
             self.learning_rate_train_s = 0.0001
+
+
+            if self.algorithm_selection == AlgorithmSelected.MAPL:
+
+                #       self.server_learning_rate = 0.0001#_mapl = [0.005, 0.001, 0.0005, 0.0001, 0.00001]  # 0.005,
+        #self.client_lr_local_lr_distill = (1e-3, 1e-3)#_mapl = [(1e-3, 1e-3)]  # ,(1e-3, 1e-5),(1e-3, 1e-4),(1e-4, 1e-3),(1e-2, 1e-4)]
+
+                self.learning_rate_train_c = self.client_lr_local_lr_distill_mapl[1]
+                self.learning_rate_fine_tune_c = self.client_lr_local_lr_distill_mapl[0]
+                self.learning_rate_train_s = self.server_learning_rate_mapl
+
+
+            print("self.learning_rate_train_c",self.learning_rate_train_c )
+            print("self.learning_rate_fine_tune_c",self.learning_rate_fine_tune_c )
             print("self.learning_rate_train_s",self.learning_rate_train_s )
 
         if  self.server_net_type is not None:
