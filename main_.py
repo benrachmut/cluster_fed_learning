@@ -729,8 +729,8 @@ if __name__ == '__main__':
     cluster_additions = [0]
     print("epsilons:", cluster_additions)
 
-    server_input_tech_list = [ServerInputTech.mean]#ServerInputTech.mean
-    temp_distil_list_mapl = [1]#[0.5,2]#[0.3.0.5,0.7,1.5,2]
+    server_input_tech_list = [ServerInputTech.max]#ServerInputTech.mean
+    temp_distil_list_mapl = [0.5]#[0.5,2]#[0.3.0.5,0.7,1.5,2]
     server_learning_rate_mapl = [0.0001]#[0.005,0.001, 0.0005,0.0001,0.00001]
     client_lr_local_lr_distill_mapl=[(1e-3, 1e-4)]#,(1e-3, 1e-5),(1e-3, 1e-3),(1e-4, 1e-3),(1e-2, 1e-4)]
     consistencies_lambda_mapl = [1]#[0,0.3,0.5,0.8,1.5,2]
