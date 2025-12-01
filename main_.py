@@ -692,7 +692,7 @@ if __name__ == '__main__':
     server_data_ratios = [1]#[-4,-3,-2,-1,0,1,2,3,4] #  # 0.96,0.5,0.75,1,1.25,1.5,1.75,2]
 
     print(("alpha_dichts", alpha_dichts))
-    algorithm_selection_list = [AlgorithmSelected.FedCT]
+    algorithm_selection_list = [AlgorithmSelected.MAPL]
     #[AlgorithmSelected.COMET, AlgorithmSelected.Ditto, AlgorithmSelected.FedBABU]
         #[AlgorithmSelected.FedMD,AlgorithmSelected.pFedCK,AlgorithmSelected.FedAvg]
 
@@ -721,7 +721,7 @@ if __name__ == '__main__':
     #nets_types_list_PseudoLabelsClusters  = [NetsType.C_AlexSqueeze_S_alex,NetsType.C_AlexMobile_S_alex]
     #[NetsType.C_Mobile_S_alex, NetsType.C_ResNet_S_alex, NetsType.C_squeeze_S_alex]
     #NetsType.C_rnd_S_alex C_rndStrong_S_alex
-    nets_types_list_PseudoLabelsClusters  = [NetsType.C_Mobile_S_alex,NetsType.C_alex_S_alex, NetsType.C_squeeze_S_alex,NetsType.C_ResNet_S_alex]
+    nets_types_list_PseudoLabelsClusters  = [NetsType.C_rndWeak_S_VGG]#[NetsType.C_Mobile_S_alex,NetsType.C_alex_S_alex, NetsType.C_squeeze_S_alex,NetsType.C_ResNet_S_alex]
     homo_models =nets_types_list_PseudoLabelsClusters
 
 
@@ -730,7 +730,7 @@ if __name__ == '__main__':
     print("epsilons:", cluster_additions)
 
     server_input_tech_list = [ServerInputTech.max]#ServerInputTech.mean
-    temp_distil_list_mapl = [2]#[0.5,2]#[0.3.0.5,0.7,1.5,2]
+    temp_distil_list_mapl = [1]#[0.5,2]#[0.3.0.5,0.7,1.5,2]
     server_learning_rate_mapl = [0.0001]#[0.005,0.001, 0.0005,0.0001,0.00001]
     client_lr_local_lr_distill_mapl=[(1e-3, 1e-4)]#,(1e-3, 1e-5),(1e-3, 1e-3),(1e-4, 1e-3),(1e-2, 1e-4)]
     consistencies_lambda_mapl = [1]#[0,0.3,0.5,0.8,1.5,2]
