@@ -414,6 +414,9 @@ class LearningEntity(ABC):
         #else:
         #    self.model.apply(self.weights)
 
+    import torch
+    import torch.nn.functional as F
+
     def apply_temperature_to_probs(self, pseudo_probs: torch.Tensor) -> torch.Tensor:
         """
         Apply temperature T to probability vectors.
@@ -421,17 +424,27 @@ class LearningEntity(ABC):
         - T = 1.0  -> no change
         - T < 1.0  -> sharpen (harder labels)
         - T > 1.0  -> smooth (softer labels)
+        - T = 0.0  -> HARD labels (argmax -> one-hot)
         """
         T = getattr(experiment_config, "distill_temperature", 1.0)
 
-        # Make sure everything is valid
+        # Basic sanity / normalization
         pseudo_probs = pseudo_probs.clamp_min(1e-8)
         pseudo_probs = pseudo_probs / pseudo_probs.sum(dim=1, keepdim=True)
 
-        if T is None or abs(T - 1.0) < 1e-6:
-            return pseudo_probs  # no change
+        # Handle T = 0 → hard labels (one-hot)
+        if T is not None and abs(T) < 1e-8:
+            # pseudo_probs: [batch_size, num_classes]
+            hard_idx = torch.argmax(pseudo_probs, dim=1)  # [batch_size]
+            num_classes = pseudo_probs.size(1)
+            hard_one_hot = F.one_hot(hard_idx, num_classes=num_classes).float()
+            return hard_one_hot
 
-        # p_T ∝ p^(1/T)
+        # T = 1 → no change
+        if T is None or abs(T - 1.0) < 1e-6:
+            return pseudo_probs
+
+        # General case: p_T ∝ p^(1/T)
         pseudo_probs_T = pseudo_probs.pow(1.0 / T)
         pseudo_probs_T = pseudo_probs_T / pseudo_probs_T.sum(dim=1, keepdim=True)
 
