@@ -2160,6 +2160,12 @@ class Server(LearningEntity):
                 # Average the pseudo labels across clients
                 average_pseudo_labels = torch.mean(stacked_labels, dim=0)
                 mean_per_cluster[cluster_id] = average_pseudo_labels
+            if experiment_config.server_input_tech ==  ServerInputTech.median:
+                stacked_labels = torch.stack(pseudo_labels_list)  # [num_clients, ...]
+                # elementwise median across clients
+                median_pseudo_labels, _ = torch.median(stacked_labels, dim=0)
+                mean_per_cluster[cluster_id] = median_pseudo_labels
+
             if experiment_config.server_input_tech ==  ServerInputTech.max:
                 mean_per_cluster[cluster_id] = self.select_confident_pseudo_labels(pseudo_labels_list)
         return mean_per_cluster, clusters_client_id_dict

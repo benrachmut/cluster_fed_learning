@@ -75,6 +75,8 @@ def transform_to_TensorDataset(data_):
 class ServerInputTech(Enum):
     mean = 1
     max = 2
+    median =3
+
 class NetType(Enum):
     AlexSqueeze = "AlexSqueeze"
     AlexMobile = "AlexMobile"

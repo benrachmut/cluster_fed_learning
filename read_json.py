@@ -1570,7 +1570,6 @@ def figure_temp_serverinput_oneplot(figset_dir: Path, out_root: Path, *, inspect
         return
 
     # -------- Step 1: per-run curves (avg over clients) --------
-    # group by curve meta + file + seed, exactly like num_clients does
     run_rows = []
     for (tech, temp, path, seed), d in df_all.groupby(
         ["server_input_tech_name", "distill_temperature", "_path", "seed"],
@@ -1652,15 +1651,35 @@ def figure_temp_serverinput_oneplot(figset_dir: Path, out_root: Path, *, inspect
 
     # -------- Step 3: plot accuracy vs iteration --------
     fig, ax = plt.subplots(1, 1, figsize=(7.2, 4.8))
+
+    # Y starts at global min mean
+    ymin = float(df_iter["mean"].min())
+    ymax = float(df_iter["mean"].max())
+    ax.set_ylim(ymin, ymax)
+
     cmap = plt.get_cmap("tab10")
 
-    # stable order: by tech then temperature
-    curve_keys = df_iter[["server_input_tech_name", "distill_temperature"]].drop_duplicates()
-    curve_keys = curve_keys.sort_values(["server_input_tech_name", "distill_temperature"]).reset_index(drop=True)
+    # Color per temperature, linestyle per server_input_tech
+    temps = sorted(df_iter["distill_temperature"].dropna().unique().tolist())
+    temp_color: Dict[float, Any] = {}
+    for i, t in enumerate(temps):
+        temp_color[t] = cmap(i % 10)
 
-    for i, row in curve_keys.iterrows():
+    def _ls_for_tech(tech: str) -> str:
+        tl = (tech or "").strip().lower()
+        if "mean" in tl:
+            return ":"       # dotted
+        if "max" in tl:
+            return "-"       # solid
+        return "-"           # default solid
+
+    # stable order: by temp then tech (so legend also sorted)
+    curve_keys = df_iter[["server_input_tech_name", "distill_temperature"]].drop_duplicates()
+    curve_keys = curve_keys.sort_values(["distill_temperature", "server_input_tech_name"]).reset_index(drop=True)
+
+    for _, row in curve_keys.iterrows():
         tech = row["server_input_tech_name"]
-        temp = row["distill_temperature"]
+        temp = float(row["distill_temperature"])
         d = df_iter[
             (df_iter["server_input_tech_name"] == tech) &
             (df_iter["distill_temperature"] == temp)
@@ -1669,27 +1688,33 @@ def figure_temp_serverinput_oneplot(figset_dir: Path, out_root: Path, *, inspect
         x = d["iter"].to_numpy()
         y = d["mean"].to_numpy(dtype=float)
 
-        label = f"{tech}, T={temp:g}"
+        color = temp_color.get(temp, cmap(0))
+        ls = _ls_for_tech(tech)
+
+        # Legend label: same color for same T; different linestyle per tech
+        label = f"T={temp:g}, {tech}"
         ax.plot(
             x,
             y,
             linewidth=3.0,
             marker=None,
             label=label,
-            color=cmap(i % 10),
+            color=color,
+            linestyle=ls,
         )
 
     ax.set_xlabel("Iteration")
     ax.set_ylabel("Top-1 Accuracy")
     ax.grid(False)
 
+    # Legend outside, single row
     h, l = ax.get_legend_handles_labels()
     fig.tight_layout(rect=[0.0, 0.0, 1.0, 0.90])
     if h:
         fig.legend(
             h, l,
             loc="upper center",
-            ncol=min(4, len(h)),
+            ncol=len(h),            # one row
             frameon=False,
             bbox_to_anchor=(0.5, 0.96),
             fontsize=LEGEND_FONT_SIZE,
