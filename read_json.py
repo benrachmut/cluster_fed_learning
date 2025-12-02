@@ -190,9 +190,25 @@ def walk(obj: Json, path: Tuple[str, ...] = ()):
 def _concat_or_empty(frames: List[pd.DataFrame]) -> pd.DataFrame:
     frames = [f for f in frames if f is not None and not f.empty]
     return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame(
-        columns=["dataset","algorithm_display","measure","seed","client_id",
-                 "iteration","accuracy","client_net_type_name","client_net_type_value",
-                 "alpha_dich","lambda_ditto","server_data_ratio","num_clients","_path","algorithm"]
+        columns=[
+            "dataset",
+            "algorithm_display",
+            "measure",
+            "seed",
+            "client_id",
+            "iteration",
+            "accuracy",
+            "client_net_type_name",
+            "client_net_type_value",
+            "alpha_dich",
+            "lambda_ditto",
+            "server_data_ratio",
+            "num_clients",
+            "server_input_tech_name",
+            "distill_temperature",
+            "_path",
+            "algorithm",
+        ]
     )
 
 # --------------------- field finders ---------------------
@@ -540,7 +556,6 @@ def load_rows_from_dir(dir_path: Path, *, inspect: bool = False, alg_hint: Optio
         seed_num, _          = find_seed_num(raw)
 
         # ----------- Top-1 vs Top-5 selection per dataset -----------
-
         use_top5 = _is_top5_dataset(ds_name)
         topk = 5 if use_top5 else 1
 
@@ -555,6 +570,27 @@ def load_rows_from_dir(dir_path: Path, *, inspect: bool = False, alg_hint: Optio
         lambda_ditto, _      = find_lambda_ditto(raw)
         server_data_ratio, _ = find_server_data_ratio(raw, fallback_from=p)
         num_clients, _       = find_num_clients(raw)
+
+        # ---- NEW: grab server_input_tech and distill_temperature from summary ----
+        server_input_tech_name = None
+        distill_temperature = None
+        try:
+            s = raw.get("summary", {}) if isinstance(raw, dict) else {}
+            if isinstance(s, dict):
+                sit = s.get("server_input_tech", None)
+                if isinstance(sit, dict):
+                    server_input_tech_name = sit.get("_name_") or sit.get("_value_")
+                elif isinstance(sit, (str, int, float)):
+                    server_input_tech_name = str(sit)
+
+                if "distill_temperature" in s and s["distill_temperature"] is not None:
+                    try:
+                        distill_temperature = float(s["distill_temperature"])
+                    except Exception:
+                        distill_temperature = None
+        except Exception:
+            pass
+        # -------------------------------------------------------------------------
 
         is_mapl = bool(alg_name and "mapl" in str(alg_name).lower())
         used_any = False
@@ -573,8 +609,10 @@ def load_rows_from_dir(dir_path: Path, *, inspect: bool = False, alg_hint: Optio
                     try:
                         iteration = int(iter_k)
                     except Exception:
-                        try: iteration = int(float(iter_k))
-                        except Exception: continue
+                        try:
+                            iteration = int(float(iter_k))
+                        except Exception:
+                            continue
                     try:
                         acc = float(acc_v)
                     except Exception:
@@ -595,6 +633,8 @@ def load_rows_from_dir(dir_path: Path, *, inspect: bool = False, alg_hint: Optio
                         "lambda_ditto": lambda_ditto,
                         "server_data_ratio": server_data_ratio,
                         "num_clients": num_clients,
+                        "server_input_tech_name": server_input_tech_name,
+                        "distill_temperature": distill_temperature,
                     })
                     used_any = True
 
@@ -610,8 +650,10 @@ def load_rows_from_dir(dir_path: Path, *, inspect: bool = False, alg_hint: Optio
                     try:
                         iteration = int(iter_k)
                     except Exception:
-                        try: iteration = int(float(iter_k))
-                        except Exception: continue
+                        try:
+                            iteration = int(float(iter_k))
+                        except Exception:
+                            continue
                     try:
                         acc = float(acc_v)
                     except Exception:
@@ -632,6 +674,8 @@ def load_rows_from_dir(dir_path: Path, *, inspect: bool = False, alg_hint: Optio
                         "lambda_ditto": lambda_ditto,
                         "server_data_ratio": server_data_ratio,
                         "num_clients": num_clients,
+                        "server_input_tech_name": server_input_tech_name,
+                        "distill_temperature": distill_temperature,
                     })
                     used_any = True
 
@@ -642,9 +686,23 @@ def load_rows_from_dir(dir_path: Path, *, inspect: bool = False, alg_hint: Optio
         print(f"[SUMMARY] scanned={files_scanned}, used={files_used} in {dir_path}")
 
     cols = [
-        "dataset","algorithm_display","measure","seed","client_id",
-        "iteration","accuracy","client_net_type_name","client_net_type_value",
-        "alpha_dich","lambda_ditto","server_data_ratio","num_clients","_path","algorithm"
+        "dataset",
+        "algorithm_display",
+        "measure",
+        "seed",
+        "client_id",
+        "iteration",
+        "accuracy",
+        "client_net_type_name",
+        "client_net_type_value",
+        "alpha_dich",
+        "lambda_ditto",
+        "server_data_ratio",
+        "num_clients",
+        "server_input_tech_name",
+        "distill_temperature",
+        "_path",
+        "algorithm",
     ]
     return pd.DataFrame(rows, columns=cols) if rows else pd.DataFrame(columns=cols)
 
@@ -1397,6 +1455,255 @@ def figure_client_scale_oneplot(figset_dir: Path, out_root: Path, *, inspect: bo
 
 # --------------------- CLI ---------------------
 
+def _extract_tech_temp_from_path(path_str: str) -> Tuple[Optional[str], Optional[float]]:
+    """
+    Given a JSON path (string), open it, look in summary for:
+      - summary['server_input_tech']['_name_'] (or '_value_' / str(server_input_tech))
+      - summary['distill_temperature']
+    Returns (tech_name, temperature) or (None, None) if not found.
+    """
+    p = Path(path_str)
+    try:
+        with _open_json_win_safe(p) as fh:
+            raw = json.load(fh)
+    except Exception as e:
+        print(f"[WARN] failed to read {p}: {e}")
+        return None, None
+
+    tech = None
+    temp = None
+
+    # Prefer direct summary access
+    try:
+        if isinstance(raw, dict) and "summary" in raw:
+            s = raw["summary"]
+            if isinstance(s, dict):
+                sit = s.get("server_input_tech", None)
+                if isinstance(sit, dict):
+                    tech = sit.get("_name_") or sit.get("_value_")
+                elif isinstance(sit, (str, int, float)):
+                    tech = str(sit)
+
+                if "distill_temperature" in s and s["distill_temperature"] is not None:
+                    try:
+                        temp = float(s["distill_temperature"])
+                    except Exception:
+                        temp = None
+    except Exception:
+        pass
+
+    # Fallback: scan the JSON (if missing above)
+    if tech is None or temp is None:
+        for path, val in walk(raw):
+            if tech is None:
+                # anything with 'server_input_tech' in the path
+                pl = [seg.lower() for seg in path]
+                if any("server_input_tech" in seg for seg in pl) and isinstance(val, (str, int, float)):
+                    tech = str(val)
+            if temp is None and path and path[-1] == "distill_temperature":
+                try:
+                    temp = float(val)
+                except Exception:
+                    temp = None
+            if tech is not None and temp is not None:
+                break
+
+    return tech, temp
+
+def figure_temp_serverinput_oneplot(figset_dir: Path, out_root: Path, *, inspect: bool):
+    """
+    results/temp_serverinput:
+      - all runs are MAPL.
+      - One curve per (server_input_tech_name, distill_temperature) combination.
+
+    For each combo:
+      - For each run (JSON file / seed), average accuracy across clients per iteration.
+      - Then average across seeds, truncating all seeds to the common min length
+        (same style as figure_client_scale_oneplot).
+
+    X-axis: iteration
+    Y-axis: Top-1 Accuracy (or Top-5, depending on dataset; loader already chose).
+    """
+    if not figset_dir.exists():
+        print(f"[SKIP] {figset_dir} (missing)")
+        return
+
+    # Load all JSONs under this folder (including possible subdirs)
+    df_all = _load_any_jsons_under(figset_dir, inspect=inspect)
+    if df_all.empty:
+        print(f"[WARN] No data under {figset_dir}")
+        return
+
+    # Prefer CIFAR100 if present
+    mask_cifar = df_all["dataset"].astype(str).str.lower() == "cifar100"
+    if mask_cifar.any():
+        df_all = df_all[mask_cifar]
+
+    if df_all.empty:
+        print(f"[WARN] No rows left after CIFAR100 filtering in {figset_dir}")
+        return
+
+    # Apply standard presentation policy: MAPL -> server only, others -> client
+    df_all = _apply_measure_filter_for_comparison(df_all)
+    if df_all.empty:
+        print(f"[WARN] No usable rows (policy-filtered) under {figset_dir}")
+        return
+
+    # We MUST have server_input_tech_name and distill_temperature
+    if "server_input_tech_name" not in df_all.columns or "distill_temperature" not in df_all.columns:
+        print(f"[WARN] server_input_tech_name/distill_temperature missing in df under {figset_dir}")
+        return
+
+    df_all = df_all.copy()
+    df_all["server_input_tech_name"] = df_all["server_input_tech_name"].astype(str)
+    df_all["distill_temperature"] = pd.to_numeric(df_all["distill_temperature"], errors="coerce")
+
+    # Drop rows with missing metadata
+    df_all = df_all.dropna(subset=["distill_temperature"])
+    df_all = df_all[df_all["server_input_tech_name"].str.lower().ne("none")]
+    if df_all.empty:
+        print(f"[WARN] No rows with valid server_input_tech_name and distill_temperature in {figset_dir}")
+        return
+
+    if "_path" not in df_all.columns:
+        print(f"[WARN] _path column missing in df under {figset_dir}")
+        return
+
+    # -------- Step 1: per-run curves (avg over clients) --------
+    # group by curve meta + file + seed, exactly like num_clients does
+    run_rows = []
+    for (tech, temp, path, seed), d in df_all.groupby(
+        ["server_input_tech_name", "distill_temperature", "_path", "seed"],
+        dropna=False,
+    ):
+        if d.empty:
+            continue
+        sub = d[["iteration", "client_id", "accuracy"]].copy()
+        s = _aggregate_run_mean_over_clients(sub)  # Series: index=iteration, values=accuracy
+        if s.empty:
+            continue
+        run_rows.append(pd.DataFrame({
+            "iter": s.index.astype(int),
+            "value": s.values.astype(float),
+            "server_input_tech_name": tech,
+            "distill_temperature": float(temp),
+            "seed": seed,
+            "_path": path,
+        }))
+
+    if not run_rows:
+        print(f"[WARN] No per-run curves produced for {figset_dir}")
+        return
+
+    df_runs = pd.concat(run_rows, ignore_index=True)
+
+    # If values look like probabilities (<=1), scale to %, per (tech,temp) combo
+    def _maybe_scale_group_temp(g: pd.DataFrame) -> pd.DataFrame:
+        vals = g["value"].to_numpy(dtype=float)
+        g = g.copy()
+        g["value"] = _maybe_scale_to_percent(vals)
+        return g
+
+    df_runs = df_runs.groupby(
+        ["server_input_tech_name", "distill_temperature"],
+        group_keys=False,
+    ).apply(_maybe_scale_group_temp)
+
+    # -------- Step 2: aggregate across seeds per (tech, temp) --------
+    iter_stats = []
+    for (tech, temp), g in df_runs.groupby(["server_input_tech_name", "distill_temperature"]):
+        mats = []
+        for seed, d in g.groupby("seed"):
+            d = d.sort_values("iter")
+            vals = d["value"].to_numpy(dtype=float)
+            if vals.size == 0:
+                continue
+            mats.append(vals)
+
+        if not mats:
+            continue
+
+        # Truncate to common min length (same as client_scale)
+        T = min(len(a) for a in mats)
+        if T == 0:
+            continue
+        arr = np.vstack([a[:T] for a in mats])  # [S, T]
+
+        iters = np.sort(g["iter"].unique())[:T]
+        means = np.nanmean(arr, axis=0)
+        sems = (np.nanstd(arr, axis=0, ddof=1) / np.sqrt(arr.shape[0])) if arr.shape[0] > 1 else np.zeros(T)
+
+        iter_stats.append(pd.DataFrame({
+            "iter": iters.astype(int),
+            "server_input_tech_name": tech,
+            "distill_temperature": float(temp),
+            "mean": means.astype(float),
+            "sem": sems.astype(float),
+            "n_seeds": int(arr.shape[0]),
+        }))
+
+    if not iter_stats:
+        print(f"[WARN] No per-iteration stats available for {figset_dir}")
+        return
+
+    df_iter = pd.concat(iter_stats, ignore_index=True).sort_values(
+        ["server_input_tech_name", "distill_temperature", "iter"]
+    )
+
+    # -------- Step 3: plot accuracy vs iteration --------
+    fig, ax = plt.subplots(1, 1, figsize=(7.2, 4.8))
+    cmap = plt.get_cmap("tab10")
+
+    # stable order: by tech then temperature
+    curve_keys = df_iter[["server_input_tech_name", "distill_temperature"]].drop_duplicates()
+    curve_keys = curve_keys.sort_values(["server_input_tech_name", "distill_temperature"]).reset_index(drop=True)
+
+    for i, row in curve_keys.iterrows():
+        tech = row["server_input_tech_name"]
+        temp = row["distill_temperature"]
+        d = df_iter[
+            (df_iter["server_input_tech_name"] == tech) &
+            (df_iter["distill_temperature"] == temp)
+        ].sort_values("iter")
+
+        x = d["iter"].to_numpy()
+        y = d["mean"].to_numpy(dtype=float)
+
+        label = f"{tech}, T={temp:g}"
+        ax.plot(
+            x,
+            y,
+            linewidth=3.0,
+            marker=None,
+            label=label,
+            color=cmap(i % 10),
+        )
+
+    ax.set_xlabel("Iteration")
+    ax.set_ylabel("Top-1 Accuracy")
+    ax.grid(False)
+
+    h, l = ax.get_legend_handles_labels()
+    fig.tight_layout(rect=[0.0, 0.0, 1.0, 0.90])
+    if h:
+        fig.legend(
+            h, l,
+            loc="upper center",
+            ncol=min(4, len(h)),
+            frameon=False,
+            bbox_to_anchor=(0.5, 0.96),
+            fontsize=LEGEND_FONT_SIZE,
+        )
+
+    out_dir = out_root / "temp_serverinput"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    out_pdf = out_dir / "temp_serverinput.pdf"
+    _savefig_longpath(fig, out_pdf)
+    plt.close(fig)
+    print(f"[OK] Saved: {out_pdf}")
+
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--root", type=Path, default=Path("results"), help="Root results folder (contains figure-set folders)")
@@ -1432,5 +1739,11 @@ def main():
     figure_diff_benchmarks(args.root / "diff_benchmarks_1", args.figdir, alpha_value=1, inspect=args.inspect)
     figure_by_client_net_type_value(args.root / "same_client_nets", args.figdir, inspect=args.inspect)
 
+
+    figure_temp_serverinput_oneplot(
+    args.root / "temp_serverinput",
+    args.figdir,
+    inspect=args.inspect,
+    )
 if __name__ == "__main__":
     main()
