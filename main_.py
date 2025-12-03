@@ -733,7 +733,7 @@ if __name__ == '__main__':
     temp_distil_list_mapl = [1]#[0.5,2]#[0.3.0.5,0.7,1.5,2]
     server_learning_rate_mapl = [0.0001]#[0.005,0.001, 0.0005,0.0001,0.00001]
     client_lr_local_lr_distill_mapl=[(1e-3, 1e-4)]#,(1e-3, 1e-5),(1e-3, 1e-3),(1e-4, 1e-3),(1e-2, 1e-4)]
-    consistencies_lambda_mapl = [0.3]#, 0.3, 0.5,  2.0,3.0, 5.0, 10.0]
+    consistencies_lambda_mapl = [0.5]#, 0.3, 0.5,  2.0,3.0, 5.0, 10.0]
 
 
 
