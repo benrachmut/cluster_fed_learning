@@ -1652,10 +1652,14 @@ def figure_temp_serverinput_oneplot(figset_dir: Path, out_root: Path, *, inspect
     # -------- Step 3: plot accuracy vs iteration --------
     fig, ax = plt.subplots(1, 1, figsize=(7.2, 4.8))
 
-    # Y starts at global min mean
-    ymin = float(df_iter["mean"].min())
-    ymax = float(df_iter["mean"].max())
+    # Y starts at chosen bounds
+    ymin = 15  # or float(df_iter["mean"].min())
+    ymax = 50  # or float(df_iter["mean"].max())
     ax.set_ylim(ymin, ymax)
+
+    # X goes only up to iter = 9
+    xmin = int(df_iter["iter"].min())
+    ax.set_xlim(xmin, 9)
 
     cmap = plt.get_cmap("tab10")
 
@@ -1668,18 +1672,31 @@ def figure_temp_serverinput_oneplot(figset_dir: Path, out_root: Path, *, inspect
     def _ls_for_tech(tech: str) -> str:
         tl = (tech or "").strip().lower()
         if "mean" in tl:
-            return ":"       # dotted
+            return ":"        # dotted  (mean)
         if "max" in tl:
-            return "-"       # solid
-        return "-"           # default solid
+            return "-"        # solid   (max)
+        if "median" in tl or "med" in tl:
+            return "--"       # dashed  (median)
+        return "-"            # default solid
 
-    # stable order: by temp then tech (so legend also sorted)
-    curve_keys = df_iter[["server_input_tech_name", "distill_temperature"]].drop_duplicates()
-    curve_keys = curve_keys.sort_values(["distill_temperature", "server_input_tech_name"]).reset_index(drop=True)
+    def _tech_order(tech: str) -> int:
+        tl = (tech or "").strip().lower()
+        if "max" in tl:
+            return 0
+        if "mean" in tl:
+            return 1
+        if "median" in tl or "med" in tl:
+            return 2
+        return 3  # anything else last
 
-    for _, row in curve_keys.iterrows():
-        tech = row["server_input_tech_name"]
-        temp = float(row["distill_temperature"])
+    # Stable order: group by temperature, then by tech type (max, mean, median)
+    raw_keys = df_iter[["server_input_tech_name", "distill_temperature"]].drop_duplicates()
+    curve_keys = sorted(
+        [(row["server_input_tech_name"], float(row["distill_temperature"])) for _, row in raw_keys.iterrows()],
+        key=lambda x: (x[1], _tech_order(x[0]))
+    )
+
+    for tech, temp in curve_keys:
         d = df_iter[
             (df_iter["server_input_tech_name"] == tech) &
             (df_iter["distill_temperature"] == temp)
@@ -1707,17 +1724,21 @@ def figure_temp_serverinput_oneplot(figset_dir: Path, out_root: Path, *, inspect
     ax.set_ylabel("Top-1 Accuracy")
     ax.grid(False)
 
-    # Legend outside, single row
+    # Legend on the right, 1 column, tight spacing
     h, l = ax.get_legend_handles_labels()
-    fig.tight_layout(rect=[0.0, 0.0, 1.0, 0.90])
+
+    # Leave only a small margin on the right
+    fig.tight_layout(rect=[0.0, 0.0, 0.90, 1.0])
+
     if h:
         fig.legend(
             h, l,
-            loc="upper center",
-            ncol=len(h),            # one row
+            loc="center left",  # right side of plot
+            bbox_to_anchor=(0.96, 0.5),  # very close to axes
+            ncol=1,  # SINGLE COLUMN
             frameon=False,
-            bbox_to_anchor=(0.5, 0.96),
             fontsize=LEGEND_FONT_SIZE,
+            borderaxespad=0.3,  # minimal padding between axes & legend
         )
 
     out_dir = out_root / "temp_serverinput"
