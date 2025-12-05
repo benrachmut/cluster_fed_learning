@@ -682,7 +682,7 @@ def run_FedCT():
 
 if __name__ == '__main__':
     print(device)
-    seed_num_list = [1,2,3]
+    seed_num_list = [3]
     data_sets_list =[DataSet.CIFAR100]
     num_clients_list = [25]#[100,500]#[25]
     num_opt_clusters_list =[5] #[5]
@@ -721,7 +721,23 @@ if __name__ == '__main__':
     #nets_types_list_PseudoLabelsClusters  = [NetsType.C_AlexSqueeze_S_alex,NetsType.C_AlexMobile_S_alex]
     #[NetsType.C_Mobile_S_alex, NetsType.C_ResNet_S_alex, NetsType.C_squeeze_S_alex]
     #NetsType.C_rnd_S_alex C_rndStrong_S_alex
-    nets_types_list_PseudoLabelsClusters  = [NetsType.C_rndWeak_S_VGG]#[NetsType.C_Mobile_S_alex,NetsType.C_alex_S_alex, NetsType.C_squeeze_S_alex,NetsType.C_ResNet_S_alex]
+
+    # C_rndWeak_S_VGG = 13
+
+    # C_AlexSqueeze_S_vgg = 35
+    # C_AlexMobile_S_vgg = 33
+    # C_ResNetMobile_S_vgg = 31
+    #
+    # C_ResNetSqueeze_S_vgg = 29
+    # C_rndStrong_S_VGG = 11
+    # C_rnd_S_VGG = 14
+
+    # C_squeeze_S_vgg = 26
+    # C_ResNet_S_vgg = 24
+    # C_Mobile_S_VGG = 21
+    # C_rndStrong_S_VGG = 11
+    # C_rndWeak_S_VGG = 13
+    nets_types_list_PseudoLabelsClusters  = [NetsType.C_rndWeak_S_VGG,NetsType.C_AlexSqueeze_S_vgg]#[NetsType.C_rnd_S_VGG, NetsType.C_rndStrong_S_VGG,NetsType.C_ResNetSqueeze_S_vgg]#[NetsType.C_Mobile_S_alex,NetsType.C_alex_S_alex, NetsType.C_squeeze_S_alex,NetsType.C_ResNet_S_alex]
     homo_models =nets_types_list_PseudoLabelsClusters
 
 
@@ -733,7 +749,7 @@ if __name__ == '__main__':
     temp_distil_list_mapl = [1]#[0.5,2]#[0.3.0.5,0.7,1.5,2]
     server_learning_rate_mapl = [0.0001]#[0.005,0.001, 0.0005,0.0001,0.00001]
     client_lr_local_lr_distill_mapl=[(1e-3, 1e-4)]#,(1e-3, 1e-5),(1e-3, 1e-3),(1e-4, 1e-3),(1e-2, 1e-4)]
-    consistencies_lambda_mapl = [10]#, 0.3, 0.5,  2.0,3.0, 5.0, 10.0]
+    consistencies_lambda_mapl = [5]#, 0.3, 0.5,  2.0,3.0, 5.0, 10.0]
 
 
 

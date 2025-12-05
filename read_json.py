@@ -202,6 +202,7 @@ def _concat_or_empty(frames: List[pd.DataFrame]) -> pd.DataFrame:
             "client_net_type_value",
             "alpha_dich",
             "lambda_ditto",
+            "lambda_consistency",          # <<< NEW
             "server_data_ratio",
             "num_clients",
             "server_input_tech_name",
@@ -528,6 +529,35 @@ def find_num_clients(root: Json):
     return None, None
 
 # --------------------- loading ---------------------
+def find_lambda_consistency(root: Json):
+    """
+    Extract summary['lambda_consistency'] as float if present.
+    """
+    try:
+        if isinstance(root, dict) and "summary" in root:
+            s = root["summary"]
+            if isinstance(s, dict) and "lambda_consistency" in s:
+                v = s["lambda_consistency"]
+                try:
+                    return float(v), ("summary", "lambda_consistency")
+                except Exception:
+                    try:
+                        return float(str(v).strip()), ("summary", "lambda_consistency")
+                    except Exception:
+                        return None, ("summary", "lambda_consistency")
+    except Exception:
+        pass
+
+    for p, v in walk(root):
+        if p and p[-1] == "lambda_consistency":
+            try:
+                return float(v), p
+            except Exception:
+                try:
+                    return float(str(v).strip()), p
+                except Exception:
+                    return None, p
+    return None, None
 
 def load_rows_from_dir(dir_path: Path, *, inspect: bool = False, alg_hint: Optional[str] = None) -> pd.DataFrame:
     rows: List[Dict[str, Any]] = []
@@ -570,6 +600,7 @@ def load_rows_from_dir(dir_path: Path, *, inspect: bool = False, alg_hint: Optio
         lambda_ditto, _      = find_lambda_ditto(raw)
         server_data_ratio, _ = find_server_data_ratio(raw, fallback_from=p)
         num_clients, _       = find_num_clients(raw)
+        lambda_consistency, _ = find_lambda_consistency(raw)
 
         # ---- NEW: grab server_input_tech and distill_temperature from summary ----
         server_input_tech_name = None
@@ -635,6 +666,8 @@ def load_rows_from_dir(dir_path: Path, *, inspect: bool = False, alg_hint: Optio
                         "num_clients": num_clients,
                         "server_input_tech_name": server_input_tech_name,
                         "distill_temperature": distill_temperature,
+                        "lambda_consistency": lambda_consistency,  # <<< NEW
+
                     })
                     used_any = True
 
@@ -676,6 +709,8 @@ def load_rows_from_dir(dir_path: Path, *, inspect: bool = False, alg_hint: Optio
                         "num_clients": num_clients,
                         "server_input_tech_name": server_input_tech_name,
                         "distill_temperature": distill_temperature,
+                        "lambda_consistency": lambda_consistency,  # <<< NEW
+
                     })
                     used_any = True
 
@@ -697,6 +732,7 @@ def load_rows_from_dir(dir_path: Path, *, inspect: bool = False, alg_hint: Optio
         "client_net_type_value",
         "alpha_dich",
         "lambda_ditto",
+        "lambda_consistency",        # <<< ADD THIS LINE
         "server_data_ratio",
         "num_clients",
         "server_input_tech_name",
@@ -1749,6 +1785,225 @@ def figure_temp_serverinput_oneplot(figset_dir: Path, out_root: Path, *, inspect
     print(f"[OK] Saved: {out_pdf}")
 
 
+def _final_stats_for_mapl_lambda(df_iter: pd.DataFrame) -> pd.DataFrame:
+    """
+    df_iter columns: iter, lambda_consistency, mean, sem, n_seeds
+    Return final-iteration stats per lambda_consistency.
+    """
+    out = []
+    for lam, d in df_iter.groupby("lambda_consistency"):
+        if d.empty:
+            continue
+        max_it = pd.to_numeric(d["iter"], errors="coerce").dropna().max()
+        row = d[d["iter"] == max_it]
+        if row.empty:
+            continue
+        r = row.iloc[0]
+        out.append({
+            "lambda_consistency": float(lam) if pd.notna(lam) else None,
+            "max_iteration": int(max_it),
+            "mean": float(r["mean"]),
+            "sem": float(r["sem"]),
+            "n_seeds": int(r["n_seeds"]),
+        })
+    return pd.DataFrame(out, columns=["lambda_consistency","max_iteration","mean","sem","n_seeds"])
+
+
+
+def figure_mapl_lambda_oneplot(figset_dir: Path, out_root: Path, *, inspect: bool):
+    """
+    results/mapl_lambda:
+      - runs are MAPL with different summary['lambda_consistency'] and seeds.
+      - One curve per distinct lambda_consistency value (averaged over seeds).
+
+    For each lambda:
+      - For each run (JSON file / seed), average accuracy across clients per iteration.
+      - Then average across seeds, truncating all seeds to the common min length.
+
+    X-axis: iteration
+    Y-axis: Top-1 Accuracy (or % if values were in [0,1]).
+    """
+    if not figset_dir.exists():
+        print(f"[SKIP] {figset_dir} (missing)")
+        return
+
+    # Load all JSONs under this folder (including possible subdirs)
+    df_all = _load_any_jsons_under(figset_dir, inspect=inspect)
+    if df_all.empty:
+        print(f"[WARN] No data under {figset_dir}")
+        return
+
+    # Prefer CIFAR100 if present
+    mask_cifar = df_all["dataset"].astype(str).str.lower() == "cifar100"
+    if mask_cifar.any():
+        df_all = df_all[mask_cifar]
+
+    if df_all.empty:
+        print(f"[WARN] No rows left after CIFAR100 filtering in {figset_dir}")
+        return
+
+    # Apply standard presentation policy: MAPL -> server only, others -> client
+    df_all = _apply_measure_filter_for_comparison(df_all)
+    if df_all.empty:
+        print(f"[WARN] No usable rows (policy-filtered) under {figset_dir}")
+        return
+
+    # Keep only MAPL rows (just in case there is other stuff here)
+    is_mapl = df_all["algorithm_display"].astype(str).str.lower().str.contains("mapl")
+    df_all = df_all[is_mapl]
+    if df_all.empty:
+        print(f"[WARN] No MAPL rows found in {figset_dir}")
+        return
+
+    # Need lambda_consistency metadata
+    if "lambda_consistency" not in df_all.columns:
+        print(f"[WARN] lambda_consistency missing in df under {figset_dir}")
+        return
+
+    df_all = df_all.copy()
+    df_all["lambda_consistency"] = pd.to_numeric(df_all["lambda_consistency"], errors="coerce")
+    df_all = df_all.dropna(subset=["lambda_consistency"])
+
+    if df_all.empty:
+        print(f"[WARN] No rows with valid lambda_consistency in {figset_dir}")
+        return
+
+    if "_path" not in df_all.columns:
+        print(f"[WARN] _path column missing in df under {figset_dir}")
+        return
+
+    # -------- Step 1: per-run curves (avg over clients) --------
+    run_rows = []
+    for (lam, path, seed), d in df_all.groupby(
+        ["lambda_consistency", "_path", "seed"],
+        dropna=False,
+    ):
+        if d.empty:
+            continue
+        sub = d[["iteration", "client_id", "accuracy"]].copy()
+        s = _aggregate_run_mean_over_clients(sub)  # Series: index=iteration, values=accuracy
+        if s.empty:
+            continue
+        run_rows.append(pd.DataFrame({
+            "iter": s.index.astype(int),
+            "value": s.values.astype(float),
+            "lambda_consistency": float(lam),
+            "seed": seed,
+            "_path": path,
+        }))
+
+    if not run_rows:
+        print(f"[WARN] No per-run curves produced for {figset_dir}")
+        return
+
+    df_runs = pd.concat(run_rows, ignore_index=True)
+
+    # If values look like probabilities (<=1), scale to %, per lambda group
+    def _maybe_scale_group_lambda(g: pd.DataFrame) -> pd.DataFrame:
+        vals = g["value"].to_numpy(dtype=float)
+        g = g.copy()
+        g["value"] = _maybe_scale_to_percent(vals)
+        return g
+
+    df_runs = df_runs.groupby(
+        ["lambda_consistency"],
+        group_keys=False,
+    ).apply(_maybe_scale_group_lambda)
+
+    # -------- Step 2: aggregate across seeds per lambda --------
+    iter_stats = []
+    for lam, g in df_runs.groupby("lambda_consistency"):
+        mats = []
+        for seed, d in g.groupby("seed"):
+            d = d.sort_values("iter")
+            vals = d["value"].to_numpy(dtype=float)
+            if vals.size == 0:
+                continue
+            mats.append(vals)
+
+        if not mats:
+            continue
+
+        T = min(len(a) for a in mats)
+        if T == 0:
+            continue
+        arr = np.vstack([a[:T] for a in mats])  # [S, T]
+
+        iters = np.sort(g["iter"].unique())[:T]
+        means = np.nanmean(arr, axis=0)
+        sems = (np.nanstd(arr, axis=0, ddof=1) / np.sqrt(arr.shape[0])) if arr.shape[0] > 1 else np.zeros(T)
+
+        iter_stats.append(pd.DataFrame({
+            "iter": iters.astype(int),
+            "lambda_consistency": float(lam),
+            "mean": means.astype(float),
+            "sem": sems.astype(float),
+            "n_seeds": int(arr.shape[0]),
+        }))
+
+    if not iter_stats:
+        print(f"[WARN] No per-iteration stats available for {figset_dir}")
+        return
+
+    df_iter = pd.concat(iter_stats, ignore_index=True).sort_values(
+        ["lambda_consistency", "iter"]
+    )
+
+    # -------- Step 3: save CSVs --------
+    out_dir = out_root / "mapl_lambda"
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    iter_csv = out_dir / "mapl_lambda_iter.csv"
+    df_iter.to_csv(_win_long_abs(iter_csv), index=False)
+    print(f"[OK] Saved: {iter_csv}")
+
+    df_final = _final_stats_for_mapl_lambda(df_iter)
+    final_csv = out_dir / "mapl_lambda_final.csv"
+    df_final.to_csv(_win_long_abs(final_csv), index=False)
+    print(f"[OK] Saved: {final_csv}")
+
+    # -------- Step 4: plot accuracy vs iteration (one curve per lambda) --------
+    fig, ax = plt.subplots(1, 1, figsize=(7.2, 4.8))
+
+    # Nicely ordered λ values
+    lambdas = sorted(df_iter["lambda_consistency"].unique().tolist())
+    cmap = plt.get_cmap("tab10")
+
+    for i, lam in enumerate(lambdas):
+        d = df_iter[df_iter["lambda_consistency"] == lam].sort_values("iter")
+        x = d["iter"].to_numpy()
+        y = d["mean"].to_numpy(dtype=float)
+        ax.plot(
+            x,
+            y,
+            linewidth=3.0,
+            marker=None,
+            label=f"λ={lam:g}",
+            color=cmap(i % 10),
+        )
+
+    ax.set_xlabel("Iteration")
+    ax.set_ylabel("Top-1 Accuracy")
+    ax.grid(False)
+
+    # Legend outside, one row, like client_scale
+    h, l = ax.get_legend_handles_labels()
+    fig.tight_layout(rect=[0.0, 0.0, 1.0, 0.90])
+    if h:
+        fig.legend(
+            h, l,
+            loc="upper center",
+            ncol=min(6, len(lambdas)),
+            frameon=False,
+            bbox_to_anchor=(0.5, 0.96),
+            fontsize=LEGEND_FONT_SIZE,
+        )
+
+    out_pdf = out_dir / "mapl_lambda.pdf"
+    _savefig_longpath(fig, out_pdf)
+    plt.close(fig)
+    print(f"[OK] Saved: {out_pdf}")
+
 
 def main():
     ap = argparse.ArgumentParser()
@@ -1790,6 +2045,11 @@ def main():
     args.root / "temp_serverinput",
     args.figdir,
     inspect=args.inspect,
+    )
+    figure_mapl_lambda_oneplot(
+        args.root / "mapl_lambda",
+        args.figdir,
+        inspect=args.inspect,
     )
 if __name__ == "__main__":
     main()
