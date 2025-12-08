@@ -1507,7 +1507,7 @@ def save_record_to_results(record, *, addition_to_name = "",filename= None, inde
 
     # Filename WITH seed (default)
     if filename is None:
-        filename = f"{folder_}_alph{alpha_s}_seed{seed_s}.json"
+        filename = f"{folder_}_seed{seed_s}.json"
 
     out_path = out_dir / filename
 
