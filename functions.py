@@ -1496,6 +1496,7 @@ def save_record_to_results(record, *, addition_to_name = "",filename= None, inde
         #f"_{lambda_consis}"
         f"_{clients_s}_"
         f"_{ratio_s}"
+        f"_{alpha_s}"
 
 
         #f"_ratio{ratio_s}_clus{clusters_s}"
