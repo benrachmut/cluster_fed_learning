@@ -849,6 +849,18 @@ def _legend_from_axes_row(axes):
     uniq = [(h, l) for h, l in zip(handles, labels) if not (l in seen or seen.add(l))]
     return [h for h,_ in uniq], [l for _,l in uniq]
 
+# --------------------- NEW: force all x-axes to [0, 9] ---------------------
+
+def _force_x_axes_0_to_9(fig):
+    """
+    Set x-axis limits to [0, 9] for all axes in a given figure.
+    """
+    for ax in fig.get_axes():
+        try:
+            ax.set_xlim(0, 9)
+        except Exception:
+            pass
+
 # --------------------- plotting (ONE FIGURE per FIGSET) ---------------------
 
 def _apply_measure_filter_for_comparison(df: pd.DataFrame) -> pd.DataFrame:
@@ -934,6 +946,9 @@ def figure_diff_benchmarks(figset_dir: Path, out_root: Path, *, alpha_value: int
             ax.set_ylabel("Top-1 Accuracy")
 
         ax.grid(False)
+
+    # Force x from 0 to 9 for all axes
+    _force_x_axes_0_to_9(fig)
 
     fig.supxlabel("Iteration", fontsize=BASE_FONT_SIZE)
     h, l = _legend_from_axes_row(axes)
@@ -1060,6 +1075,9 @@ def figure_diff_clients_nets(figset_dir: Path, out_root: Path, *, inspect: bool,
     for ax in axes[n:]:
         ax.set_visible(False)
 
+    # Force x from 0 to 9 for all axes
+    _force_x_axes_0_to_9(fig)
+
     # Axis titles once for the whole figure
     fig.supxlabel("Iteration", fontsize=BASE_FONT_SIZE)         # X title (already once)
     fig.supylabel("Top-1 Accuracy", fontsize=BASE_FONT_SIZE)  # Y title once
@@ -1177,6 +1195,9 @@ def figure_by_client_net_type_value(figset_dir: Path, out_root: Path, *, inspect
         ax.grid(False)
         ax.set_ylim(ymin, ymax)
 
+    # Force x from 0 to 9 for all axes
+    _force_x_axes_0_to_9(fig)
+
     # Single global axis labels
     fig.supxlabel("Iteration", fontsize=BASE_FONT_SIZE)
     fig.supylabel("Top-1 Accuracy", fontsize=BASE_FONT_SIZE)  # <<< y-title once
@@ -1289,6 +1310,9 @@ def figure_global_data_size_oneplot(figset_dir: Path, out_root: Path, *, inspect
     ax.set_xlabel("Iteration")
     ax.set_ylabel("Top-1 Accuracy")
     ax.grid(False)
+
+    # Force x from 0 to 9
+    _force_x_axes_0_to_9(fig)
 
     # Figure-level legend outside (top center), consistent with other figs
     h, l = ax.get_legend_handles_labels()
@@ -1470,6 +1494,9 @@ def figure_client_scale_oneplot(figset_dir: Path, out_root: Path, *, inspect: bo
     ax.set_xlabel("Iteration")
     ax.set_ylabel("Top-1 Accuracy")
     ax.grid(False)
+
+    # Force x from 0 to 9
+    _force_x_axes_0_to_9(fig)
 
     # Global legend outside (top center), single row-style like others
     h, l = ax.get_legend_handles_labels()
@@ -1693,10 +1720,6 @@ def figure_temp_serverinput_oneplot(figset_dir: Path, out_root: Path, *, inspect
     ymax = 50  # or float(df_iter["mean"].max())
     ax.set_ylim(ymin, ymax)
 
-    # X goes only up to iter = 9
-    xmin = int(df_iter["iter"].min())
-    ax.set_xlim(xmin, 9)
-
     cmap = plt.get_cmap("tab10")
 
     # Color per temperature, linestyle per server_input_tech
@@ -1759,6 +1782,9 @@ def figure_temp_serverinput_oneplot(figset_dir: Path, out_root: Path, *, inspect
     ax.set_xlabel("Iteration")
     ax.set_ylabel("Top-1 Accuracy")
     ax.grid(False)
+
+    # Force x from 0 to 9
+    _force_x_axes_0_to_9(fig)
 
     # Legend on the right, 1 column, tight spacing
     h, l = ax.get_legend_handles_labels()
@@ -1985,6 +2011,9 @@ def figure_mapl_lambda_oneplot(figset_dir: Path, out_root: Path, *, inspect: boo
     ax.set_xlabel("Iteration")
     ax.set_ylabel("Top-1 Accuracy")
     ax.grid(False)
+
+    # Force x from 0 to 9
+    _force_x_axes_0_to_9(fig)
 
     # Legend outside, one row, like client_scale
     h, l = ax.get_legend_handles_labels()

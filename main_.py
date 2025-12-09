@@ -683,12 +683,12 @@ def run_FedCT():
 if __name__ == '__main__':
     print(device)
     seed_num_list = [3]
-    data_sets_list =[DataSet.CIFAR10,DataSet.CIFAR100]
+    data_sets_list =[DataSet.CIFAR100]
     num_clients_list = [25]#[100,500]#[25]
     num_opt_clusters_list =[5] #[5]
     mix_percentage = 0.1
     server_split_ratio_list = [0.2]
-    alpha_dichts =[100] #[3,2,100,10,5,1] #[3,2,1,]
+    alpha_dichts =[5] #[3,2,100,10,5,1] #[3,2,1,]
     server_data_ratios = [1]#[-4,-3,-2,-1,0,1,2,3,4] #  # 0.96,0.5,0.75,1,1.25,1.5,1.75,2]
 
     print(("alpha_dichts", alpha_dichts))
@@ -737,7 +737,7 @@ if __name__ == '__main__':
     # C_Mobile_S_VGG = 21
     # C_rndStrong_S_VGG = 11
     # C_rndWeak_S_VGG = 13
-    nets_types_list_PseudoLabelsClusters  = [NetsType.C_rndWeak_S_VGG]#[NetsType.C_AlexMobile_S_vgg, NetsType.C_ResNetMobile_S_vgg]#[NetsType.C_rnd_S_VGG, NetsType.C_rndStrong_S_VGG,NetsType.C_ResNetSqueeze_S_vgg]#[NetsType.C_Mobile_S_alex,NetsType.C_alex_S_alex, NetsType.C_squeeze_S_alex,NetsType.C_ResNet_S_alex]
+    nets_types_list_PseudoLabelsClusters  = [NetsType.C_rndWeak_S_VGG, NetsType.C_alex_S_vgg]#[NetsType.C_AlexMobile_S_vgg, NetsType.C_ResNetMobile_S_vgg]#[NetsType.C_rnd_S_VGG, NetsType.C_rndStrong_S_VGG,NetsType.C_ResNetSqueeze_S_vgg]#[NetsType.C_Mobile_S_alex,NetsType.C_alex_S_alex, NetsType.C_squeeze_S_alex,NetsType.C_ResNet_S_alex]
     homo_models =nets_types_list_PseudoLabelsClusters
 
 
