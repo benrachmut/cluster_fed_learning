@@ -82,6 +82,7 @@ class NetType(Enum):
     AlexMobile = "AlexMobile"
     ResMobile = "ResNetMobile"
     ResNetSqueeze = "ResNetSqueeze"
+    AlexMobileResnet = "AlexMobileResnet"
 
 
     SqueezeNet = "SqueezeNet"
@@ -114,6 +115,8 @@ class NetsType(Enum):
     C_AlexSqueeze_S_alex = 34
     C_AlexMobile_S_vgg = 33
     C_AlexMobile_S_alex = 32
+    C_AlexMobileResnet_S_alex = 2000
+    C_AlexMobileResnet_S_VGG = 2001
 
     C_ResNetMobile_S_vgg = 31
     C_ResNetMobile_S_alex = 30
@@ -139,7 +142,9 @@ class NetsType(Enum):
 
     C_rndWeak_S_alex = 12
     C_rndWeak_S_VGG = 13
-
+    C_rndWeak_S_Mobile = 1000
+    C_rndWeak_S_ResNet = 1001
+    C_rndWeak_S_Squeeze = 1003
 
 
     C_alex_S_DenseNet = 7
@@ -317,14 +322,15 @@ class ExperimentConfig:
             self.learning_rate_fine_tune_c = 0.001
             self.learning_rate_train_s = 0.001
 
-
         if net_type == NetsType.C_alex_S_alex or net_type == NetsType.C_alex or net_type==NetsType.S_alex or net_type==NetsType.S_vgg or  net_type == NetsType.C_rndStrong_S_alex or net_type == NetsType.C_rndWeak_S_alex or net_type == NetsType.C_rnd_S_alex or net_type ==NetsType.C_Mobile_S_alex  or  net_type == NetsType.C_ResNet_S_alex \
-                or net_type == NetsType.C_squeeze_S_alex or net_type == NetsType.C_ResNetSqueeze_S_alex or net_type == NetsType.C_ResNetMobile_S_alex or net_type == NetsType.C_AlexMobile_S_alex or net_type == NetsType.C_AlexSqueeze_S_alex:
+                or net_type == NetsType.C_squeeze_S_alex or net_type == NetsType.C_ResNetSqueeze_S_alex or net_type == NetsType.C_ResNetMobile_S_alex or net_type == NetsType.C_AlexMobile_S_alex or net_type == NetsType.C_AlexSqueeze_S_alex or net_type == NetsType.C_AlexMobileResnet_S_alex:
 
             if net_type == NetsType.C_rndStrong_S_alex:
                 self.client_net_type = NetType.rndStrong
             elif net_type == NetsType.C_AlexMobile_S_alex:
                 self.client_net_type = NetType.AlexMobile
+            elif net_type == NetsType.C_AlexMobileResnet_S_alex:
+                self.client_net_type = NetType.AlexMobileResnet
             elif net_type == NetsType.C_AlexSqueeze_S_alex:
                 self.client_net_type = NetType.AlexSqueeze
             elif net_type == NetsType.C_ResNetMobile_S_alex:
@@ -356,14 +362,35 @@ class ExperimentConfig:
 
 
 
+        if net_type == NetsType.C_rndWeak_S_Mobile or  net_type ==NetsType.C_rndWeak_S_ResNet  or net_type ==NetsType.C_rndWeak_S_Squeeze:
+            if net_type ==NetsType.C_rndWeak_S_Mobile:
+                self.server_net_type = NetType.MobileNet
+            if net_type ==NetsType.C_rndWeak_S_ResNet:
+                self.server_net_type = NetType.ResNet
+            if net_type ==NetsType.C_rndWeak_S_Squeeze:
+                self.server_net_type = NetType.SqueezeNet
 
 
 
+                self.client_net_type = NetType.rndWeak
+                self.learning_rate_train_c = 0.0001
+                self.learning_rate_fine_tune_c = 0.001
+                self.learning_rate_train_s = 0.0001
+            if self.algorithm_selection == AlgorithmSelected.MAPL:
+                #       self.server_learning_rate = 0.0001#_mapl = [0.005, 0.001, 0.0005, 0.0001, 0.00001]  # 0.005,
+                # self.client_lr_local_lr_distill = (1e-3, 1e-3)#_mapl = [(1e-3, 1e-3)]  # ,(1e-3, 1e-5),(1e-3, 1e-4),(1e-4, 1e-3),(1e-2, 1e-4)]
+
+                self.learning_rate_train_c = self.client_lr_local_lr_distill_mapl[1]
+                self.learning_rate_fine_tune_c = self.client_lr_local_lr_distill_mapl[0]
+                self.learning_rate_train_s = self.server_learning_rate_mapl
 
 
-        if net_type == NetsType.C_alex_S_vgg or net_type == NetsType.S_vgg or net_type == NetsType.C_rndStrong_S_VGG or net_type == NetsType.C_rndWeak_S_VGG or net_type == NetsType.C_rnd_S_VGG or   net_type == NetsType.C_Mobile_S_VGG or  net_type == NetsType.C_ResNet_S_vgg or net_type == NetsType.C_squeeze_S_vgg or net_type == NetsType.C_ResNetSqueeze_S_vgg or net_type == NetsType.C_ResNetMobile_S_vgg or net_type == NetsType.C_AlexMobile_S_vgg or net_type == NetsType.C_AlexSqueeze_S_vgg:
+        if net_type == NetsType.C_alex_S_vgg or net_type == NetsType.S_vgg or net_type == NetsType.C_rndStrong_S_VGG or net_type == NetsType.C_rndWeak_S_VGG or net_type == NetsType.C_rnd_S_VGG or   net_type == NetsType.C_Mobile_S_VGG or  net_type == NetsType.C_ResNet_S_vgg or net_type == NetsType.C_squeeze_S_vgg or net_type == NetsType.C_ResNetSqueeze_S_vgg or net_type == NetsType.C_ResNetMobile_S_vgg or net_type == NetsType.C_AlexMobile_S_vgg or net_type == NetsType.C_AlexSqueeze_S_vgg  or net_type == NetsType.C_AlexMobileResnet_S_VGG:
+
             if net_type == NetsType.C_ResNet_S_vgg:
                 self.client_net_type= NetType.ResNet
+            elif net_type == NetsType.C_AlexMobileResnet_S_VGG:
+                self.client_net_type = NetType.AlexMobileResnet
             elif net_type == NetsType.C_AlexMobile_S_vgg:
                 self.client_net_type = NetType.AlexMobile
             elif net_type == NetsType.C_AlexSqueeze_S_vgg:

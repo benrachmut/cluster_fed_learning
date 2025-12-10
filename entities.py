@@ -348,6 +348,17 @@ def get_AlexSqueeze(rand_client):
         print("SqueezeNetServer")
         return SqueezeNetServer(num_classes=experiment_config.num_classes).to(device), NetType.SqueezeNet
 
+def get_AlexMobileResnet(rand_client):
+    p = rand_client.random()
+    if p <= 0.3:
+        print("Alex")
+        return AlexNet(num_classes=experiment_config.num_classes).to(device),NetType.ALEXNET
+    elif 0.3<p <= 0.6:
+        print("Mobile")
+        return MobileNetV2Server(num_classes=experiment_config.num_classes).to(device), NetType.MobileNet
+    else:
+        print("Res")
+        return ResNet18Server(num_classes=experiment_config.num_classes).to(device),NetType.ResNet
 
 def get_server_model():
     if experiment_config.net_cluster_technique== NetClusterTechnique.multi_head:
@@ -763,6 +774,8 @@ class Client(LearningEntity):
             return get_rnd_net(self.rand_client)
         if experiment_config.client_net_type == NetType.AlexSqueeze:
             return get_AlexSqueeze(self.rand_client)
+        if experiment_config.client_net_type == NetType.AlexMobileResnet:
+            return get_AlexMobileResnet(self.rand_client)
 
     def get_label_distribution(self):
         label_counts = defaultdict(int)
