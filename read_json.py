@@ -73,6 +73,8 @@ TITLE_MAP = {
     "AlexSqueeze":"{AlexNet, SqueezeNet}",
     "ResMobile":"{ResNet, MobileNet}",
     "ResNetSqueeze":"{ResNet, SqueezeNet}",
+    "AlexMobileResnet": "{MobileNet,ResNet, AlexNet}",
+
 }
 
 TITLE_NET_MAP = {
