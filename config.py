@@ -372,10 +372,10 @@ class ExperimentConfig:
 
 
 
-                self.client_net_type = NetType.rndWeak
-                self.learning_rate_train_c = 0.0001
-                self.learning_rate_fine_tune_c = 0.001
-                self.learning_rate_train_s = 0.0001
+            self.client_net_type = NetType.rndWeak
+            self.learning_rate_train_c = 0.0001
+            self.learning_rate_fine_tune_c = 0.001
+            self.learning_rate_train_s = 0.0001
             if self.algorithm_selection == AlgorithmSelected.MAPL:
                 #       self.server_learning_rate = 0.0001#_mapl = [0.005, 0.001, 0.0005, 0.0001, 0.00001]  # 0.005,
                 # self.client_lr_local_lr_distill = (1e-3, 1e-3)#_mapl = [(1e-3, 1e-3)]  # ,(1e-3, 1e-5),(1e-3, 1e-4),(1e-4, 1e-3),(1e-2, 1e-4)]

@@ -74,8 +74,19 @@ TITLE_MAP = {
     "ResMobile":"{ResNet, MobileNet}",
     "ResNetSqueeze":"{ResNet, SqueezeNet}",
     "AlexMobileResnet": "{MobileNet,ResNet, AlexNet}",
-
 }
+
+# Desired subfigure order (by client_net_type_name)
+CLIENT_NET_SUBFIG_ORDER = [
+    "rndNet",
+    "AlexMobileResnet",
+    "rndStrong",
+    "AlexMobile",
+    "AlexSqueeze",
+    "ResMobile",
+    "ResNetSqueeze",
+    "rndWeak",
+]
 
 TITLE_NET_MAP = {
     "ALEXNET": "AlexNet",
@@ -990,9 +1001,38 @@ def figure_diff_clients_nets(figset_dir: Path, out_root: Path, *, inspect: bool,
         mask = df["dataset"].astype(str).str.lower() == "cifar100"
         return df[mask] if mask.any() else df
 
-    loaded = [(sf, _prefer_cifar(df)) for sf, df in loaded if not _prefer_cifar(df).empty]
+    loaded = [(sf, _load_subfig_df(sf, inspect)) for sf in subfigs]
+    loaded = [(sf, df) for sf, df in loaded if not df.empty]
     if not loaded:
-        print(f"[WARN] No usable rows (after CIFAR100 preference) for {figset_dir}."); return
+        print(f"[WARN] No data for client_net_type row figure.");
+        return
+
+    def _mode_or_none(series):
+        if series is None:
+            return None
+        s = series.dropna().astype(str)
+        if s.empty:
+            return None
+        return s.value_counts().index[0]
+
+    def _subfig_sort_key(item):
+        sf, df = item
+        # Try to infer the logical client_net_type_name for this subfigure
+        key_name = None
+        if "client_net_type_name" in df.columns:
+            key_name = _mode_or_none(df["client_net_type_name"])
+        # Fallback: use client_net_type_value if name missing
+        if (not key_name) and ("client_net_type_value" in df.columns):
+            key_name = _mode_or_none(df["client_net_type_value"])
+
+        # Map to desired order
+        if key_name in CLIENT_NET_SUBFIG_ORDER:
+            return (CLIENT_NET_SUBFIG_ORDER.index(key_name), key_name or sf.name)
+        # Unknown types go after the known ones, sorted by folder name for stability
+        return (len(CLIENT_NET_SUBFIG_ORDER), sf.name)
+
+    # Reorder subfigures according to CLIENT_NET_SUBFIG_ORDER
+    loaded.sort(key=_subfig_sort_key)
 
     n = len(loaded)
     ncols = max(1, min(max_cols, n))
@@ -2036,6 +2076,713 @@ def figure_mapl_lambda_oneplot(figset_dir: Path, out_root: Path, *, inspect: boo
     print(f"[OK] Saved: {out_pdf}")
 
 
+def figure_mapl_lambda_and_temp_two_panel(
+    lambda_dir: Path,
+    temp_dir: Path,
+    out_root: Path,
+    *,
+    inspect: bool,
+):
+    """
+    Combined figure:
+      LEFT  subplot → MAPL λ (lambda_consistency) sweeps
+      RIGHT subplot → MAPL temperature × server_input_tech_name sweeps
+
+    IMPORTANT:
+      - Each subplot uses its OWN data and pipeline (no mixing).
+      - Left reuses logic of figure_mapl_lambda_oneplot.
+      - Right reuses logic of figure_temp_serverinput_oneplot.
+      - Each subplot has its own legend on the right side.
+    """
+
+    # ============================================================
+    # LEFT: MAPL λ  (lambda_consistency)
+    # ============================================================
+    # --- Load and filter like figure_mapl_lambda_oneplot ---
+    if not lambda_dir.exists():
+        print(f"[SKIP] {lambda_dir} (missing)")
+        return
+
+    df_lam = _load_any_jsons_under(lambda_dir, inspect=inspect)
+    if df_lam.empty:
+        print(f"[WARN] No data under {lambda_dir}")
+        return
+
+    # Prefer CIFAR100 if present
+    mask_cifar = df_lam["dataset"].astype(str).str.lower() == "cifar100"
+    if mask_cifar.any():
+        df_lam = df_lam[mask_cifar]
+    if df_lam.empty:
+        print(f"[WARN] No rows left after CIFAR100 filtering in {lambda_dir}")
+        return
+
+    # Apply standard measure policy
+    df_lam = _apply_measure_filter_for_comparison(df_lam)
+    if df_lam.empty:
+        print(f"[WARN] No usable rows (policy-filtered) under {lambda_dir}")
+        return
+
+    # Keep only MAPL rows
+    is_mapl = df_lam["algorithm_display"].astype(str).str.lower().str.contains("mapl")
+    df_lam = df_lam[is_mapl]
+    if df_lam.empty:
+        print(f"[WARN] No MAPL rows found in {lambda_dir}")
+        return
+
+    if "lambda_consistency" not in df_lam.columns:
+        print(f"[WARN] lambda_consistency missing in df under {lambda_dir}")
+        return
+
+    df_lam = df_lam.copy()
+    df_lam["lambda_consistency"] = pd.to_numeric(
+        df_lam["lambda_consistency"], errors="coerce"
+    )
+    df_lam = df_lam.dropna(subset=["lambda_consistency"])
+    if df_lam.empty:
+        print(f"[WARN] No rows with valid lambda_consistency in {lambda_dir}")
+        return
+
+    if "_path" not in df_lam.columns:
+        print(f"[WARN] _path column missing in df under {lambda_dir}")
+        return
+
+    # --- Step 1: per-run curves (avg over clients) ---
+    run_rows_lam = []
+    for (lam, path, seed), d in df_lam.groupby(
+        ["lambda_consistency", "_path", "seed"],
+        dropna=False,
+    ):
+        if d.empty:
+            continue
+        sub = d[["iteration", "client_id", "accuracy"]].copy()
+        s = _aggregate_run_mean_over_clients(sub)
+        if s.empty:
+            continue
+        run_rows_lam.append(pd.DataFrame({
+            "iter": s.index.astype(int),
+            "value": s.values.astype(float),
+            "lambda_consistency": float(lam),
+            "seed": seed,
+            "_path": path,
+        }))
+
+    if not run_rows_lam:
+        print(f"[WARN] No per-run curves produced for {lambda_dir}")
+        return
+
+    df_runs_lam = pd.concat(run_rows_lam, ignore_index=True)
+
+    # --- Step 2: aggregate across seeds per lambda ---
+    iter_stats_lam = []
+    for lam, g in df_runs_lam.groupby("lambda_consistency"):
+        mats = []
+        for seed, d in g.groupby("seed"):
+            d = d.sort_values("iter")
+            vals = d["value"].to_numpy(dtype=float)
+            if vals.size == 0:
+                continue
+            mats.append(vals)
+        if not mats:
+            continue
+        T = min(len(a) for a in mats)
+        if T == 0:
+            continue
+        arr = np.vstack([a[:T] for a in mats])  # [S, T]
+
+        iters = np.sort(g["iter"].unique())[:T]
+        means = np.nanmean(arr, axis=0)
+        sems = (np.nanstd(arr, axis=0, ddof=1) / np.sqrt(arr.shape[0])) if arr.shape[0] > 1 else np.zeros(T)
+
+        iter_stats_lam.append(pd.DataFrame({
+            "iter": iters.astype(int),
+            "lambda_consistency": float(lam),
+            "mean": means.astype(float),
+            "sem": sems.astype(float),
+            "n_seeds": int(arr.shape[0]),
+        }))
+
+    if not iter_stats_lam:
+        print(f"[WARN] No per-iteration stats available for {lambda_dir}")
+        return
+
+    df_iter_lam = pd.concat(iter_stats_lam, ignore_index=True).sort_values(
+        ["lambda_consistency", "iter"]
+    )
+
+    # ============================================================
+    # RIGHT: MAPL Temperature × Server Input Tech
+    # ============================================================
+    if not temp_dir.exists():
+        print(f"[SKIP] {temp_dir} (missing)")
+        return
+
+    df_temp = _load_any_jsons_under(temp_dir, inspect=inspect)
+    if df_temp.empty:
+        print(f"[WARN] No data under {temp_dir}")
+        return
+
+    # Prefer CIFAR100 if present
+    mask_cifar_t = df_temp["dataset"].astype(str).str.lower() == "cifar100"
+    if mask_cifar_t.any():
+        df_temp = df_temp[mask_cifar_t]
+    if df_temp.empty:
+        print(f"[WARN] No rows left after CIFAR100 filtering in {temp_dir}")
+        return
+
+    df_temp = _apply_measure_filter_for_comparison(df_temp)
+    if df_temp.empty:
+        print(f"[WARN] No usable rows (policy-filtered) under {temp_dir}")
+        return
+
+    # We expect all to be MAPL, but we can enforce if needed:
+    is_mapl_t = df_temp["algorithm_display"].astype(str).str.lower().str.contains("mapl")
+    if is_mapl_t.any():
+        df_temp = df_temp[is_mapl_t]
+    if df_temp.empty:
+        print(f"[WARN] No MAPL rows in temp data under {temp_dir}")
+        return
+
+    required_cols = ["server_input_tech_name", "distill_temperature"]
+    for col in required_cols:
+        if col not in df_temp.columns:
+            print(f"[WARN] {col} missing in df under {temp_dir}")
+            return
+
+    df_temp = df_temp.copy()
+    df_temp["distill_temperature"] = pd.to_numeric(
+        df_temp["distill_temperature"], errors="coerce"
+    )
+    df_temp = df_temp.dropna(subset=["distill_temperature"])
+    df_temp["server_input_tech_name"] = df_temp["server_input_tech_name"].astype(str)
+    df_temp = df_temp[df_temp["server_input_tech_name"].str.lower().ne("none")]
+    if df_temp.empty:
+        print(f"[WARN] No rows with valid server_input_tech_name and distill_temperature in {temp_dir}")
+        return
+
+    if "_path" not in df_temp.columns:
+        print(f"[WARN] _path column missing in df under {temp_dir}")
+        return
+
+    # --- Step 1: per-run curves (avg over clients) ---
+    run_rows_temp = []
+    for (tech, temp, path, seed), d in df_temp.groupby(
+        ["server_input_tech_name", "distill_temperature", "_path", "seed"],
+        dropna=False,
+    ):
+        if d.empty:
+            continue
+        sub = d[["iteration", "client_id", "accuracy"]].copy()
+        s = _aggregate_run_mean_over_clients(sub)
+        if s.empty:
+            continue
+        run_rows_temp.append(pd.DataFrame({
+            "iter": s.index.astype(int),
+            "value": s.values.astype(float),
+            "server_input_tech_name": tech,
+            "distill_temperature": float(temp),
+            "seed": seed,
+            "_path": path,
+        }))
+
+    if not run_rows_temp:
+        print(f"[WARN] No per-run curves produced for {temp_dir}")
+        return
+
+    df_runs_temp = pd.concat(run_rows_temp, ignore_index=True)
+
+    # --- Step 2: aggregate across seeds per (tech, temp) ---
+    iter_stats_temp = []
+    for (tech, temp), g in df_runs_temp.groupby(
+        ["server_input_tech_name", "distill_temperature"]
+    ):
+        mats = []
+        for seed, d in g.groupby("seed"):
+            d = d.sort_values("iter")
+            vals = d["value"].to_numpy(dtype=float)
+            if vals.size == 0:
+                continue
+            mats.append(vals)
+        if not mats:
+            continue
+        T = min(len(a) for a in mats)
+        if T == 0:
+            continue
+        arr = np.vstack([a[:T] for a in mats])  # [S, T]
+
+        iters = np.sort(g["iter"].unique())[:T]
+        means = np.nanmean(arr, axis=0)
+        sems = (np.nanstd(arr, axis=0, ddof=1) / np.sqrt(arr.shape[0])) if arr.shape[0] > 1 else np.zeros(T)
+
+        iter_stats_temp.append(pd.DataFrame({
+            "iter": iters.astype(int),
+            "server_input_tech_name": tech,
+            "distill_temperature": float(temp),
+            "mean": means.astype(float),
+            "sem": sems.astype(float),
+            "n_seeds": int(arr.shape[0]),
+        }))
+
+    if not iter_stats_temp:
+        print(f"[WARN] No per-iteration stats available for {temp_dir}")
+        return
+
+    df_iter_temp = pd.concat(iter_stats_temp, ignore_index=True).sort_values(
+        ["server_input_tech_name", "distill_temperature", "iter"]
+    )
+
+    # ============================================================
+    # Step 3: build the combined 2-subplot figure
+    # ============================================================
+    fig, (ax_lam, ax_temp_ax) = plt.subplots(
+        1, 2,
+        figsize=(13.0, 4.8),
+        constrained_layout=False,
+    )
+
+    # ---------------- LEFT: λ subplot ----------------
+    lambdas = sorted(df_iter_lam["lambda_consistency"].unique().tolist())
+    cmap = plt.get_cmap("tab10")
+
+    for i, lam in enumerate(lambdas):
+        d = df_iter_lam[df_iter_lam["lambda_consistency"] == lam].sort_values("iter")
+        x = d["iter"].to_numpy()
+        y = d["mean"].to_numpy(dtype=float)
+        ax_lam.plot(
+            x,
+            y,
+            linewidth=3.0,
+            marker=None,
+            label=f"λ={lam:g}",
+            color=cmap(i % 10),
+        )
+
+    ax_lam.set_xlabel("Iteration")
+    ax_lam.set_ylabel("Top-1 Accuracy")
+    ax_lam.grid(False)
+
+    # Legend for λ on the right of the left subplot
+    h_lam, l_lam = ax_lam.get_legend_handles_labels()
+    if h_lam:
+        ax_lam.legend(
+            h_lam,
+            l_lam,
+            loc="center left",
+            bbox_to_anchor=(1.02, 0.5),
+            frameon=False,
+            fontsize=LEGEND_FONT_SIZE,
+            title="λ",
+        )
+
+    # ---------------- RIGHT: Temp × Tech subplot ----------------
+    cmap_t = plt.get_cmap("tab10")
+
+    # Color per temperature, linestyle per server_input_tech
+    temps = sorted(df_iter_temp["distill_temperature"].dropna().unique().tolist())
+    temp_color: Dict[float, Any] = {}
+    for i, t in enumerate(temps):
+        temp_color[t] = cmap_t(i % 10)
+
+    def _ls_for_tech(tech: str) -> str:
+        tl = (tech or "").strip().lower()
+        if "mean" in tl:
+            return ":"        # dotted  (mean)
+        if "max" in tl:
+            return "-"        # solid   (max)
+        if "median" in tl or "med" in tl:
+            return "--"       # dashed  (median)
+        return "-"            # default solid
+
+    def _tech_order(tech: str) -> int:
+        tl = (tech or "").strip().lower()
+        if "max" in tl:
+            return 0
+        if "mean" in tl:
+            return 1
+        if "median" in tl or "med" in tl:
+            return 2
+        return 3
+
+    # Stable order: group by temperature, then by tech type
+    raw_keys = df_iter_temp[["server_input_tech_name", "distill_temperature"]].drop_duplicates()
+    curve_keys = sorted(
+        [
+            (row["server_input_tech_name"], float(row["distill_temperature"]))
+            for _, row in raw_keys.iterrows()
+        ],
+        key=lambda x: (x[1], _tech_order(x[0])),
+    )
+
+    for tech, temp in curve_keys:
+        d = df_iter_temp[
+            (df_iter_temp["server_input_tech_name"] == tech) &
+            (df_iter_temp["distill_temperature"] == temp)
+        ].sort_values("iter")
+
+        x = d["iter"].to_numpy()
+        y = d["mean"].to_numpy(dtype=float)
+
+        color = temp_color.get(temp, cmap_t(0))
+        ls = _ls_for_tech(tech)
+
+        ax_temp_ax.plot(
+            x,
+            y,
+            linewidth=2.5,
+            linestyle=ls,
+            color=color,
+            label=f"{tech}, T={temp:g}",
+        )
+
+    ax_temp_ax.set_xlabel("Iteration")
+    ax_temp_ax.set_ylabel("Top-1 Accuracy")
+    ax_temp_ax.grid(False)
+
+    # -------- Shared Y-limits and panel labels --------
+    for ax in (ax_lam, ax_temp_ax):
+        ax.set_ylim(19, 46)
+
+    ax_lam.text(
+        0.02, 0.98,
+        "(a)",
+        transform=ax_lam.transAxes,
+        ha="left",
+        va="top",
+        fontsize=LEGEND_FONT_SIZE,
+        fontweight="bold",
+    )
+    ax_temp_ax.text(
+        0.02, 0.98,
+        "(b)",
+        transform=ax_temp_ax.transAxes,
+        ha="left",
+        va="top",
+        fontsize=LEGEND_FONT_SIZE,
+        fontweight="bold",
+    )
+
+    # Legend for temp subplot on the right of the RIGHT axes
+    h_t, l_t = ax_temp_ax.get_legend_handles_labels()
+    if h_t:
+        ax_temp_ax.legend(
+            h_t,
+            l_t,
+            loc="center left",
+            bbox_to_anchor=(1.02, 0.5),
+            frameon=False,
+            fontsize=LEGEND_FONT_SIZE,
+            title="Tech × Temp",
+        )
+
+    # Force x from 0 to 9 for the whole figure (both subplots)
+    _force_x_axes_0_to_9(fig)
+
+    # Leave some room on the right for legends of both subplots
+    fig.tight_layout(rect=[0.0, 0.0, 0.90, 1.0])
+
+    out_dir = out_root / "mapl_lambda_and_temp"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    out_pdf = out_dir / "mapl_lambda_and_temp.pdf"
+    _savefig_longpath(fig, out_pdf)
+    plt.close(fig)
+    print(f"[OK] Saved: {out_pdf}")
+
+
+def figure_client_scale_and_global_data_size_two_panel(
+    client_scale_dir: Path,
+    global_data_dir: Path,
+    out_root: Path,
+    *,
+    inspect: bool,
+    use_server_measure: bool = False,
+):
+    """
+    Combined figure:
+      LEFT  subplot  → client_scale (one curve per num_clients)
+      RIGHT subplot  → global_data_size (one curve per server_data_ratio)
+
+    IMPORTANT:
+      - Each subplot uses its OWN data and pipeline (no mixing).
+      - Left reuses logic of figure_client_scale_oneplot.
+      - Right reuses logic of figure_global_data_size_oneplot.
+      - Each subplot has its own legend on the right side.
+      - Both subplots share the same y-axis range [19, 46] and x-axis [0, 9].
+    """
+
+    # ============================================================
+    # LEFT: client_scale (num_clients)
+    # ============================================================
+    if not client_scale_dir.exists():
+        print(f"[SKIP] {client_scale_dir} (missing)")
+        return
+
+    df_all = _load_any_jsons_under(client_scale_dir, inspect=inspect)
+    if df_all.empty:
+        print(f"[WARN] No data under {client_scale_dir}")
+        return
+
+    # Prefer CIFAR100 when available
+    mask_cifar = df_all["dataset"].astype(str).str.lower() == "cifar100"
+    if mask_cifar.any():
+        df_all = df_all[mask_cifar]
+
+    # Apply presentation policy
+    df_all = _apply_measure_filter_for_comparison(df_all)
+    if df_all.empty:
+        print(f"[WARN] No usable rows (policy-filtered) under {client_scale_dir}")
+        return
+
+    # Require num_clients
+    if "num_clients" not in df_all.columns or df_all["num_clients"].isna().all():
+        print(f"[WARN] No summary[num_clients] detected in {client_scale_dir}")
+        return
+
+    # Ensure types
+    df_all = df_all.copy()
+    df_all["num_clients"] = pd.to_numeric(df_all["num_clients"], errors="coerce")
+    df_all = df_all.dropna(subset=["num_clients"])
+
+    # First: split per file path (run), average over clients per iteration
+    iter_rows_cs = []
+    for (path, nc, seed), d in df_all.groupby(["_path", "num_clients", "seed"], dropna=False):
+        if d.empty:
+            continue
+        sub = d[["iteration", "client_id", "accuracy"]].copy()
+        s = _aggregate_run_mean_over_clients(sub)  # Series index=iteration
+        if s.empty:
+            continue
+        iter_rows_cs.append(pd.DataFrame({
+            "iter": s.index.astype(int),
+            "value": s.values.astype(float),
+            "num_clients": nc,
+            "seed": seed,
+            "_path": path,
+        }))
+
+    if not iter_rows_cs:
+        print(f"[WARN] No per-run curves produced for {client_scale_dir}")
+        return
+
+    df_runs_cs = pd.concat(iter_rows_cs, ignore_index=True)
+
+    # If values look like probs, scale to % (per num_clients to be safe)
+    def _maybe_scale_group_cs(g: pd.DataFrame) -> pd.DataFrame:
+        vals = g["value"].to_numpy(dtype=float)
+        g = g.copy()
+        g["value"] = _maybe_scale_to_percent(vals)
+        return g
+
+    df_runs_cs = df_runs_cs.groupby("num_clients", group_keys=False).apply(_maybe_scale_group_cs)
+
+    # Align lengths across seeds per num_clients by truncating to common min length
+    iter_stats_cs = []
+    for nc, g in df_runs_cs.groupby("num_clients"):
+        mats = []
+        for sd, d in g.groupby("seed"):
+            d = d.sort_values("iter")
+            mats.append(d["value"].to_numpy(dtype=float))
+        if not mats:
+            continue
+        T = min(len(a) for a in mats)
+        if T == 0:
+            continue
+        arr = np.vstack([a[:T] for a in mats])  # shape [S, T]
+        iters = np.sort(g["iter"].unique())[:T]
+        means = np.nanmean(arr, axis=0)
+        sems = (np.nanstd(arr, axis=0, ddof=1) / np.sqrt(arr.shape[0])) if arr.shape[0] > 1 else np.zeros(T)
+        iter_stats_cs.append(pd.DataFrame({
+            "iter": iters.astype(int),
+            "num_clients": int(nc),
+            "mean": means.astype(float),
+            "sem": sems.astype(float),
+            "n_seeds": int(arr.shape[0]),
+        }))
+
+    if not iter_stats_cs:
+        print(f"[WARN] No per-iteration stats available for {client_scale_dir}")
+        return
+
+    df_iter_cs = pd.concat(iter_stats_cs, ignore_index=True).sort_values(["num_clients", "iter"])
+
+    # ============================================================
+    # RIGHT: global_data_size (server_data_ratio)
+    # ============================================================
+    if not global_data_dir.exists():
+        print(f"[SKIP] {global_data_dir} (missing)")
+        return
+
+    curve_dirs = [d for d in sorted(global_data_dir.iterdir()) if d.is_dir()]
+    if not curve_dirs:
+        print(f"[WARN] No curve folders under {global_data_dir}")
+        return
+
+    ratio_curves: List[Tuple[str, pd.DataFrame]] = []
+    for cd in curve_dirs:
+        df = load_rows_from_dir(cd, inspect=inspect, alg_hint=None)
+        if df.empty:
+            continue
+
+        # Prefer CIFAR100
+        mask_cifar_g = df["dataset"].astype(str).str.lower() == "cifar100"
+        if mask_cifar_g.any():
+            df = df[mask_cifar_g]
+        if df.empty:
+            continue
+
+        # Prefer MAPL rows; fall back if none match
+        is_mapl = df["algorithm"].astype(str).str.lower().str.contains("mapl") | \
+                  df["algorithm_display"].astype(str).str.lower().str.contains("mapl")
+        df_mapl = df[is_mapl]
+        if not df_mapl.empty:
+            df = df_mapl
+
+        target_measure = "server" if use_server_measure else "client"
+        if "measure" in df.columns:
+            df = df[df["measure"].astype(str) == target_measure]
+        if df.empty:
+            continue
+
+        if "server_data_ratio" not in df.columns:
+            df["server_data_ratio"] = None
+        r = df["server_data_ratio"].dropna()
+        if len(r) > 0:
+            ratio = float(r.iloc[0])
+            label = f"{ratio:g}"
+        else:
+            ratio, _ = find_server_data_ratio({}, fallback_from=cd.name)
+            label = f"{ratio:g}" if ratio is not None else cd.name
+
+        # Per-iteration average accuracy for this ratio
+        g = (
+            df.groupby(["iteration"], dropna=False)["accuracy"]
+              .mean()
+              .reset_index()
+              .rename(columns={"accuracy": "avg_accuracy"})
+              .sort_values(["iteration"])
+        )
+        if not g.empty:
+            ratio_curves.append((label, g))
+
+    if not ratio_curves:
+        print(f"[WARN] No usable rows with server_data_ratio in {global_data_dir}")
+        return
+
+    # ============================================================
+    # Step 3: build the combined 2-subplot figure
+    # ============================================================
+    fig, (ax_cs, ax_gd) = plt.subplots(
+        1, 2,
+        figsize=(13.0, 4.8),
+        constrained_layout=False,
+    )
+
+    # ---------------- LEFT: client_scale subplot ----------------
+    # nice numeric order
+    for nc in sorted(df_iter_cs["num_clients"].unique().tolist()):
+        d = df_iter_cs[df_iter_cs["num_clients"] == nc].sort_values("iter")
+        x = d["iter"].to_numpy()
+        y = d["mean"].to_numpy(dtype=float)
+        ax_cs.plot(
+            x,
+            y,
+            linewidth=3.0,
+            marker=None,
+            label=f"{int(nc)} clients",
+        )
+
+    ax_cs.set_xlabel("Iteration")
+    ax_cs.set_ylabel("Top-1 Accuracy")
+    ax_cs.grid(False)
+
+    # Legend for client_scale on the right of the left subplot
+    h_cs, l_cs = ax_cs.get_legend_handles_labels()
+    if h_cs:
+        ax_cs.legend(
+            h_cs,
+            l_cs,
+            loc="center left",
+            bbox_to_anchor=(1.02, 0.5),
+            frameon=False,
+            fontsize=LEGEND_FONT_SIZE,
+            title="# Clients",
+        )
+
+    # ---------------- RIGHT: global_data_size subplot ----------------
+    cmap = plt.get_cmap("tab10")
+
+    def _ratio_key(lbl: str):
+        try:
+            return float(lbl)
+        except Exception:
+            return float("inf")
+
+    ratio_curves.sort(key=lambda t: _ratio_key(t[0]))
+
+    for i, (lab, g) in enumerate(ratio_curves):
+        ax_gd.plot(
+            g["iteration"],
+            g["avg_accuracy"],
+            linewidth=3.0,
+            marker=None,
+            label=lab,
+            color=cmap(i % 10),
+        )
+
+    ax_gd.set_xlabel("Iteration")
+    ax_gd.set_ylabel("Top-1 Accuracy")
+    ax_gd.grid(False)
+
+    # Legend for global_data_size on the right of the RIGHT subplot
+    h_gd, l_gd = ax_gd.get_legend_handles_labels()
+    if h_gd:
+        ax_gd.legend(
+            h_gd,
+            l_gd,
+            loc="center left",
+            bbox_to_anchor=(1.02, 0.5),
+            frameon=False,
+            fontsize=LEGEND_FONT_SIZE,
+            title="Server Data Ratio",
+        )
+
+    # -------- Shared Y-limits and panel labels --------
+    for ax in (ax_cs, ax_gd):
+        ax.set_ylim(19, 50)
+
+    ax_cs.text(
+        0.02, 0.98,
+        "(a)",
+        transform=ax_cs.transAxes,
+        ha="left",
+        va="top",
+        fontsize=LEGEND_FONT_SIZE,
+        fontweight="bold",
+    )
+    ax_gd.text(
+        0.02, 0.98,
+        "(b)",
+        transform=ax_gd.transAxes,
+        ha="left",
+        va="top",
+        fontsize=LEGEND_FONT_SIZE,
+        fontweight="bold",
+    )
+
+    # Force x from 0 to 9 for the whole figure (both subplots)
+    _force_x_axes_0_to_9(fig)
+
+    # Leave some room on the right for legends of both subplots
+    fig.tight_layout(rect=[0.0, 0.0, 0.90, 1.0])
+
+    out_dir = out_root / "client_scale_and_global_data_size"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    suffix = "server" if use_server_measure else "client"
+    out_pdf = out_dir / f"client_scale_and_global_data_size_{suffix}.pdf"
+    _savefig_longpath(fig, out_pdf)
+    plt.close(fig)
+    print(f"[OK] Saved: {out_pdf}")
+
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--root", type=Path, default=Path("results"), help="Root results folder (contains figure-set folders)")
@@ -2053,7 +2800,7 @@ def main():
     args = ap.parse_args()
 
     # Global-data-size: SERVER-only, labels are numeric ratios (+CSV)
-    figure_global_data_size_oneplot(args.root / args.global_data_size_folder,args.figdir,inspect=args.inspect,use_server_measure=True
+    figure_global_data_size_oneplot(args.root / "global_data_size",args.figdir,inspect=args.inspect,use_server_measure=True
     )
 
     # NEW: Client-scale oneplot (+CSVs with per-iter and final stats)
@@ -2082,5 +2829,20 @@ def main():
         args.figdir,
         inspect=args.inspect,
     )
+
+    figure_mapl_lambda_and_temp_two_panel(
+        lambda_dir=Path("results/mapl_lambda"),  # folder with λ sweeps
+        temp_dir=Path("results/temp_serverinput"),  # folder with T × server tech
+        out_root=Path("figures/hyperparams/mapl_hyperparams_combined.pdf"),
+        inspect=False,
+    )
+    figure_client_scale_and_global_data_size_two_panel(
+        client_scale_dir = Path("results/client_scale"),
+        global_data_dir  = Path("results/global_data_size"),  # whatever folder you use
+        out_root         = Path("figures"),
+        inspect          = False,
+        use_server_measure = True,  # or True, to match your other runs
+    )
+
 if __name__ == "__main__":
     main()

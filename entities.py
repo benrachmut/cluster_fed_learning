@@ -376,6 +376,11 @@ def get_server_model():
         return MobileNetV2Server(num_classes=experiment_config.num_classes).to(device)
     if experiment_config.server_net_type == NetType.DenseNetServer:
         return DenseNetServer(num_classes=experiment_config.num_classes,num_clusters=num_heads).to(device)
+    if experiment_config.server_net_type == NetType.ResNet:
+        return ResNet18Server(num_classes=experiment_config.num_classes).to(device)
+
+    if experiment_config.server_net_type == NetType.SqueezeNet:
+        return SqueezeNetServer(num_classes=experiment_config.num_classes).to(device)
 
 
 class LearningEntity(ABC):
