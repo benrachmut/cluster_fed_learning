@@ -692,7 +692,7 @@ if __name__ == '__main__':
     server_data_ratios = [1]#[-4,-3,-2,-1,0,1,2,3,4] #  # 0.96,0.5,0.75,1,1.25,1.5,1.75,2]
 
     print(("alpha_dichts", alpha_dichts))
-    algorithm_selection_list = [AlgorithmSelected.MAPL,AlgorithmSelected.FedCT,AlgorithmSelected.COMET]
+    algorithm_selection_list = [AlgorithmSelected.MAPL]
     #[AlgorithmSelected.COMET, AlgorithmSelected.Ditto, AlgorithmSelected.FedBABU]
         #[AlgorithmSelected.FedMD,AlgorithmSelected.pFedCK,AlgorithmSelected.FedAvg]
 
