@@ -25,6 +25,10 @@ Figures / outputs (PDF + CSV where applicable):
       + figures/client_scale_and_global_data_size_client_scale_final.csv
       + figures/client_scale_and_global_data_size_global_data_final.csv
 
+NEW:
+  - figures/diff_server_nets.pdf + figures/diff_server_nets_final.csv
+    (curves keyed by summary["server_net_type"]["_value_"], MAPL server-only)
+
 Also:
   - Forces all x-axes to [0, 9].
   - MAPL plotting policy: use MAPL server curve only, labeled "MAPL".
@@ -99,6 +103,58 @@ TITLE_NET_MAP = {
     "RESNET": "ResNet",
     "SqueezeNet": "SqueezeNet",
 }
+
+def _tab10_colors_excluding_blue():
+    cmap = plt.get_cmap("tab10")
+    colors = [cmap(i) for i in range(10)]
+    # tab10[0] is the default blue — exclude it
+    return colors[1:]
+
+
+def _make_color_map(keys, *, special_key=None, special_color="tab:blue"):
+    """
+    Build a mapping key -> color such that:
+      - special_key (if provided and present) gets special_color (blue)
+      - all other keys get distinct colors, none of which is the tab10 blue
+    """
+    keys = list(keys)
+    palette = _tab10_colors_excluding_blue()
+
+    cmap = {}
+    if special_key is not None and special_key in keys:
+        cmap[special_key] = special_color
+
+    j = 0
+    for k in keys:
+        if k == special_key:
+            continue
+        cmap[k] = palette[j % len(palette)]
+        j += 1
+    return cmap
+
+def _color_override_global_data_ratio(label: str):
+    """
+    global_data_size color override:
+      - ratio == 1.0 must be tab:blue
+    """
+    try:
+        if float(label) == 1.0:
+            return "tab:blue"
+    except Exception:
+        pass
+    return None
+
+
+def _color_override_server_net(sn: str):
+    """
+    diff_server_nets color override:
+      - any server net containing 'vgg' -> tab:blue
+    """
+    if sn is None:
+        return None
+    if "vgg" in str(sn).strip().lower():
+        return "tab:blue"
+    return None
 
 def _net_title_from_map(*candidates: str) -> str:
     for c in candidates:
@@ -204,6 +260,7 @@ def _concat_or_empty(frames: List[pd.DataFrame]) -> pd.DataFrame:
             "accuracy",
             "client_net_type_name",
             "client_net_type_value",
+            "server_net_type_value",
             "alpha_dich",
             "lambda_ditto",
             "lambda_consistency",
@@ -642,6 +699,7 @@ def load_rows_from_dir(dir_path: Path, *, inspect: bool = False, alg_hint: Optio
                         "accuracy": acc,
                         "client_net_type_name": client_net_name or "unknown_client_net",
                         "client_net_type_value": client_net_value or "unknown_client_net",
+                        "server_net_type_value": server_net_val,
                         "alpha_dich": alpha_dich,
                         "lambda_ditto": lambda_ditto,
                         "server_data_ratio": server_data_ratio,
@@ -684,6 +742,7 @@ def load_rows_from_dir(dir_path: Path, *, inspect: bool = False, alg_hint: Optio
                         "accuracy": acc,
                         "client_net_type_name": client_net_name or "unknown_client_net",
                         "client_net_type_value": client_net_value or "unknown_client_net",
+                        "server_net_type_value": server_net_val,
                         "alpha_dich": alpha_dich,
                         "lambda_ditto": lambda_ditto,
                         "server_data_ratio": server_data_ratio,
@@ -710,6 +769,7 @@ def load_rows_from_dir(dir_path: Path, *, inspect: bool = False, alg_hint: Optio
         "accuracy",
         "client_net_type_name",
         "client_net_type_value",
+        "server_net_type_value",
         "alpha_dich",
         "lambda_ditto",
         "lambda_consistency",
@@ -1258,10 +1318,12 @@ def figure_global_data_size_oneplot(figset_dir: Path, out_root: Path, *, inspect
     curves.sort(key=lambda t: _ratio_key(t[0]))
 
     for i, (lab, g) in enumerate(curves):
+        override = _color_override_global_data_ratio(lab)
         ax.plot(
             g["iteration"], g["avg_accuracy"],
             linewidth=3.0, marker=None,
-            label=lab, color=cmap(i % 10)
+            label=lab,
+            color=(override if override is not None else cmap(i % 10)),
         )
 
     ax.set_xlabel("Iteration")
@@ -1731,6 +1793,141 @@ def figure_mapl_lambda_oneplot(figset_dir: Path, out_root: Path, *, inspect: boo
     plt.close(fig)
     print(f"[OK] Saved: {out_pdf}")
 
+# --------------------- NEW: diff_server_nets (ONE plot) + FINAL CSV only ---------------------
+
+def _final_stats_for_diff_server_nets_from_runs(df_runs: pd.DataFrame, *, final_iter: int = FINAL_ITER) -> pd.DataFrame:
+    d = df_runs.copy()
+    d["iter"] = pd.to_numeric(d["iter"], errors="coerce")
+    d = d[d["iter"] == final_iter].copy()
+    if d.empty:
+        return pd.DataFrame(columns=["server_net_type_value","iteration","mean","std","sem","n"])
+
+    out = []
+    for sn, g in d.groupby("server_net_type_value"):
+        vals = pd.to_numeric(g["run_value"], errors="coerce").dropna().to_numpy(dtype=float)
+        if vals.size == 0:
+            continue
+        n = int(vals.size)
+        mean = float(np.mean(vals))
+        std = float(np.std(vals, ddof=1)) if n > 1 else 0.0
+        sem = float(std / np.sqrt(n)) if n > 1 else 0.0
+        out.append({
+            "server_net_type_value": str(sn),
+            "iteration": int(final_iter),
+            "mean": mean,
+            "std": std,
+            "sem": sem,
+            "n": n,
+        })
+    return pd.DataFrame(out, columns=["server_net_type_value","iteration","mean","std","sem","n"])
+
+def figure_diff_server_nets_oneplot(figset_dir: Path, out_root: Path, *, inspect: bool):
+    """
+    results/diff_server_nets/
+      <any subfolders or jsons>
+
+    Curves are keyed by summary["server_net_type"]["_value_"] (stored as df["server_net_type_value"]).
+    Uses MAPL policy: server-measure only, labeled MAPL.
+    """
+    if not figset_dir.exists():
+        print(f"[SKIP] {figset_dir} (missing)")
+        return
+
+    df_all = _load_any_jsons_under(figset_dir, inspect=inspect)
+    if df_all.empty:
+        print(f"[WARN] No data under {figset_dir}")
+        return
+
+    mask_cifar = df_all["dataset"].astype(str).str.lower() == "cifar100"
+    if mask_cifar.any():
+        df_all = df_all[mask_cifar]
+
+    df_all = _apply_measure_filter_for_comparison(df_all)
+    if df_all.empty:
+        print(f"[WARN] No usable rows (policy-filtered) under {figset_dir}")
+        return
+
+    # Ensure MAPL server-only (extra guard)
+    df_all = df_all[df_all["measure"].astype(str) == "server"].copy()
+    df_all = df_all[df_all["algorithm_display"].astype(str) == "MAPL"].copy()
+    if df_all.empty:
+        print(f"[WARN] No MAPL server rows under {figset_dir}")
+        return
+
+    if "server_net_type_value" not in df_all.columns:
+        print(f"[WARN] server_net_type_value missing (check load_rows_from_dir additions).")
+        return
+
+    df_all["server_net_type_value"] = df_all["server_net_type_value"].astype(str)
+    df_all = df_all[~df_all["server_net_type_value"].str.lower().isin(["none", "nan", ""])].copy()
+    if df_all.empty:
+        print(f"[WARN] No valid server_net_type_value rows under {figset_dir}")
+        return
+
+    # Build per-run curves: mean over clients per iteration, for each (server_net_type_value, path, seed)
+    run_rows = []
+    for (sn, path, seed), d in df_all.groupby(["server_net_type_value", "_path", "seed"], dropna=False):
+        s = _aggregate_run_mean_over_clients(d[["iteration", "client_id", "accuracy"]].copy())
+        if s.empty:
+            continue
+        run_rows.append(pd.DataFrame({
+            "iter": s.index.astype(int),
+            "run_value": _maybe_scale_to_percent(s.values.astype(float)),
+            "server_net_type_value": str(sn),
+            "seed": seed,
+            "_path": path,
+        }))
+
+    if not run_rows:
+        print(f"[WARN] No per-run curves produced for {figset_dir}")
+        return
+
+    df_runs = pd.concat(run_rows, ignore_index=True)
+
+    # Final CSV only
+    df_final = _final_stats_for_diff_server_nets_from_runs(df_runs)
+    _save_df_csv(df_final, out_root / "diff_server_nets_final.csv")
+
+    # Per-iteration mean curve (for plotting)
+    df_iter = (
+        df_runs.groupby(["server_net_type_value", "iter"], dropna=False)["run_value"]
+              .mean()
+              .reset_index()
+              .rename(columns={"run_value": "mean"})
+              .sort_values(["server_net_type_value", "iter"])
+    )
+
+    fig, ax = plt.subplots(1, 1, figsize=(7.2, 4.8))
+    keys = sorted(df_iter["server_net_type_value"].unique().tolist())
+
+    cmap = plt.get_cmap("tab10")
+    for i, sn in enumerate(keys):
+        d = df_iter[df_iter["server_net_type_value"] == sn].sort_values("iter")
+        override = _color_override_server_net(sn)
+        ax.plot(
+            d["iter"], d["mean"],
+            linewidth=3.0, marker=None,
+            label=str(sn),
+            color=(override if override is not None else cmap(i % 10)),
+        )
+
+    ax.set_xlabel("Iteration")
+    ax.set_ylabel("Top-1 Accuracy")
+    ax.grid(False)
+    _force_x_axes_0_to_9(fig)
+
+    h, l = ax.get_legend_handles_labels()
+    fig.tight_layout(rect=[0.0, 0.0, 1.0, 0.90])
+    if h:
+        fig.legend(h, l, loc="upper center", ncol=min(6, len(h)),
+                   frameon=False, bbox_to_anchor=(0.5, 0.96),
+                   fontsize=LEGEND_FONT_SIZE)
+
+    out_pdf = out_root / "diff_server_nets.pdf"
+    _savefig_longpath(fig, out_pdf)
+    plt.close(fig)
+    print(f"[OK] Saved: {out_pdf}")
+
 # --------------------- Combined: MAPL lambda + temp (two panel) + FINAL CSVs only ---------------------
 
 def _normalize_accuracy_df(df: pd.DataFrame) -> pd.DataFrame:
@@ -1808,9 +2005,7 @@ def figure_mapl_lambda_and_temp_two_panel(lambda_dir: Path, temp_dir: Path, out_
     lam_final = _final_stats_for_mapl_lambda_from_runs(runs_lam, final_iter=FINAL_ITER)
     _save_df_csv(lam_final, out_root / "mapl_lambda_and_temp_lambda_final.csv")
 
-    tmp_final = _final_stats_for_temp_serverinput_from_runs(
-        runs_tmp.rename(columns={"run_value":"run_value"}), final_iter=FINAL_ITER
-    )
+    tmp_final = _final_stats_for_temp_serverinput_from_runs(runs_tmp, final_iter=FINAL_ITER)
     _save_df_csv(tmp_final, out_root / "mapl_lambda_and_temp_temp_final.csv")
 
     # Per-iteration means for plotting
@@ -2042,6 +2237,327 @@ def figure_client_scale_and_global_data_size_two_panel(
     plt.close(fig)
     print(f"[OK] Saved: {out_pdf}")
 
+
+
+def _final_stats_for_diff_server_nets_from_runs(df_runs: pd.DataFrame, *, final_iter: int = FINAL_ITER) -> pd.DataFrame:
+    d = df_runs.copy()
+    d["iter"] = pd.to_numeric(d["iter"], errors="coerce")
+    d = d[d["iter"] == final_iter].copy()
+    if d.empty:
+        return pd.DataFrame(columns=["server_net_type_value","iteration","mean","std","sem","n"])
+
+    out = []
+    for sn, g in d.groupby("server_net_type_value"):
+        vals = pd.to_numeric(g["run_value"], errors="coerce").dropna().to_numpy(dtype=float)
+        if vals.size == 0:
+            continue
+        n = int(vals.size)
+        mean = float(np.mean(vals))
+        std = float(np.std(vals, ddof=1)) if n > 1 else 0.0
+        sem = float(std / np.sqrt(n)) if n > 1 else 0.0
+        out.append({
+            "server_net_type_value": str(sn),
+            "iteration": int(final_iter),
+            "mean": mean,
+            "std": std,
+            "sem": sem,
+            "n": n,
+        })
+
+    return pd.DataFrame(out, columns=["server_net_type_value","iteration","mean","std","sem","n"])
+
+
+def _normalize_diff_server_nets_df(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Keep CIFAR100 if present, apply MAPL policy filter, then keep MAPL rows,
+    ensure server_net_type_value exists and is usable.
+    """
+    if df is None or df.empty:
+        return df
+
+    d = df.copy()
+
+    mask_cifar = d["dataset"].astype(str).str.lower() == "cifar100"
+    if mask_cifar.any():
+        d = d[mask_cifar].copy()
+
+    d = _apply_measure_filter_for_comparison(d)
+    if d is None or d.empty:
+        return d
+
+    # only MAPL (since you're varying server nets for MAPL)
+    is_mapl = d["algorithm_display"].astype(str).str.lower().str.contains("mapl")
+    d = d[is_mapl].copy()
+    if d.empty:
+        return d
+
+    if "server_net_type_value" not in d.columns:
+        d["server_net_type_value"] = None
+
+    # clean missing/None
+    sn = d["server_net_type_value"].astype(str)
+    bad = sn.isna() | sn.str.lower().isin(["none", "nan", ""])
+    d = d[~bad].copy()
+
+    if "iteration" in d.columns:
+        d["iteration"] = pd.to_numeric(d["iteration"], errors="coerce")
+        d = d.dropna(subset=["iteration"])
+        d["iteration"] = d["iteration"].astype(int)
+
+    return d
+
+def figure_client_scale_and_global_data_size_three_panel(
+    client_scale_dir: Path,
+    global_data_dir: Path,
+    diff_server_nets_dir: Path,
+    out_root: Path,
+    *,
+    inspect: bool,
+    use_server_measure: bool = False,
+):
+    if not client_scale_dir.exists():
+        print(f"[SKIP] {client_scale_dir} (missing)")
+        return
+    if not global_data_dir.exists():
+        print(f"[SKIP] {global_data_dir} (missing)")
+        return
+    if not diff_server_nets_dir.exists():
+        print(f"[SKIP] {diff_server_nets_dir} (missing)")
+        return
+
+    # ============================================================
+    # (a) LEFT: client_scale runs
+    # ============================================================
+    df_all = _load_any_jsons_under(client_scale_dir, inspect=inspect)
+    if df_all.empty:
+        print(f"[WARN] No data under {client_scale_dir}")
+        return
+
+    mask_cifar = df_all["dataset"].astype(str).str.lower() == "cifar100"
+    if mask_cifar.any():
+        df_all = df_all[mask_cifar]
+
+    df_all = _apply_measure_filter_for_comparison(df_all)
+    if df_all.empty:
+        print(f"[WARN] No usable rows (policy-filtered) under {client_scale_dir}")
+        return
+
+    if "num_clients" not in df_all.columns or df_all["num_clients"].isna().all():
+        print(f"[WARN] No summary[num_clients] detected in {client_scale_dir}")
+        return
+
+    df_all = df_all.copy()
+    df_all["num_clients"] = pd.to_numeric(df_all["num_clients"], errors="coerce")
+    df_all = df_all.dropna(subset=["num_clients"])
+
+    run_rows_cs = []
+    for (path, nc, seed), d in df_all.groupby(["_path", "num_clients", "seed"], dropna=False):
+        s = _aggregate_run_mean_over_clients(d[["iteration", "client_id", "accuracy"]].copy())
+        if s.empty:
+            continue
+        run_rows_cs.append(pd.DataFrame({
+            "iter": s.index.astype(int),
+            "run_value": _maybe_scale_to_percent(s.values.astype(float)),
+            "num_clients": int(nc),
+            "seed": seed,
+            "_path": path,
+        }))
+    if not run_rows_cs:
+        print(f"[WARN] No per-run curves produced for {client_scale_dir}")
+        return
+
+    runs_cs = pd.concat(run_rows_cs, ignore_index=True)
+    df_final_cs = _final_stats_for_client_scale_from_iter(runs_cs)
+    _save_df_csv(df_final_cs, out_root / "client_scale_and_global_data_size_client_scale_final.csv")
+
+    df_iter_cs = (
+        runs_cs.groupby(["num_clients", "iter"], dropna=False)["run_value"]
+               .mean()
+               .reset_index()
+               .rename(columns={"run_value": "mean"})
+               .sort_values(["num_clients", "iter"])
+    )
+
+    # ============================================================
+    # (b) MIDDLE: global_data_size curves
+    # ============================================================
+    curve_dirs = [d for d in sorted(global_data_dir.iterdir()) if d.is_dir()]
+    if not curve_dirs:
+        print(f"[WARN] No curve folders under {global_data_dir}")
+        return
+
+    ratio_curves: List[Tuple[str, pd.DataFrame]] = []
+    for cd in curve_dirs:
+        df = load_rows_from_dir(cd, inspect=inspect, alg_hint=None)
+        if df.empty:
+            continue
+
+        mask_cifar_g = df["dataset"].astype(str).str.lower() == "cifar100"
+        if mask_cifar_g.any():
+            df = df[mask_cifar_g]
+        if df.empty:
+            continue
+
+        is_mapl = df["algorithm"].astype(str).str.lower().str.contains("mapl") | \
+                  df["algorithm_display"].astype(str).str.lower().str.contains("mapl")
+        df_mapl = df[is_mapl]
+        if not df_mapl.empty:
+            df = df_mapl
+
+        target_measure = "server" if use_server_measure else "client"
+        if "measure" in df.columns:
+            df = df[df["measure"].astype(str) == target_measure]
+        if df.empty:
+            continue
+
+        r = df.get("server_data_ratio", pd.Series([], dtype=float)).dropna()
+        if len(r) > 0:
+            ratio = float(r.iloc[0])
+            label = f"{ratio:g}"
+        else:
+            ratio, _ = find_server_data_ratio({}, fallback_from=cd.name)
+            label = f"{ratio:g}" if ratio is not None else cd.name
+
+        g = (
+            df.groupby(["iteration"], dropna=False)["accuracy"]
+              .mean()
+              .reset_index()
+              .rename(columns={"accuracy": "avg_accuracy"})
+              .sort_values(["iteration"])
+        )
+        if not g.empty:
+            ratio_curves.append((label, g))
+
+    if not ratio_curves:
+        print(f"[WARN] No usable rows with server_data_ratio in {global_data_dir}")
+        return
+
+    def _ratio_key(lbl: str):
+        try:
+            return float(lbl)
+        except Exception:
+            return float("inf")
+    ratio_curves.sort(key=lambda t: _ratio_key(t[0]))
+
+    final_gd_rows = []
+    for lab, g in ratio_curves:
+        g_it = pd.to_numeric(g["iteration"], errors="coerce").dropna()
+        if g_it.empty:
+            continue
+        it = FINAL_ITER if (g_it == FINAL_ITER).any() else int(g_it.max())
+        row = g[g["iteration"] == it]
+        if row.empty:
+            continue
+        final_gd_rows.append({
+            "server_data_ratio": lab,
+            "iteration": int(it),
+            "mean": float(row["avg_accuracy"].iloc[0]),
+        })
+    df_global_final = pd.DataFrame(final_gd_rows, columns=["server_data_ratio", "iteration", "mean"])
+    _save_df_csv(df_global_final, out_root / "client_scale_and_global_data_size_global_data_final.csv")
+
+    # ============================================================
+    # (c) RIGHT: diff_server_nets (new)
+    # ============================================================
+    df_srv = _normalize_diff_server_nets_df(_load_any_jsons_under(diff_server_nets_dir, inspect=inspect))
+    if df_srv is None or df_srv.empty:
+        print(f"[WARN] No usable MAPL diff_server_nets rows under {diff_server_nets_dir}")
+        return
+
+    runs_srv = (
+        df_srv.groupby(["server_net_type_value", "_path", "seed", "iteration"], dropna=False)["accuracy"]
+              .mean()
+              .reset_index()
+              .rename(columns={"iteration": "iter", "accuracy": "run_value"})
+    )
+    runs_srv["run_value"] = _maybe_scale_to_percent(runs_srv["run_value"].to_numpy(dtype=float))
+
+    srv_final = _final_stats_for_diff_server_nets_from_runs(runs_srv, final_iter=FINAL_ITER)
+    _save_df_csv(srv_final, out_root / "client_scale_and_global_data_size_diff_server_nets_final.csv")
+
+    srv_iter = (
+        runs_srv.groupby(["server_net_type_value", "iter"], dropna=False)["run_value"]
+                .mean()
+                .reset_index()
+                .rename(columns={"run_value": "mean"})
+                .sort_values(["server_net_type_value", "iter"])
+    )
+
+    # ============================================================
+    # Plot 3-panel combined
+    # ============================================================
+    fig, (ax_cs, ax_gd, ax_srv) = plt.subplots(1, 3, figsize=(18.0, 4.8), constrained_layout=False)
+
+    # (a) client_scale
+    for nc in sorted(df_iter_cs["num_clients"].unique().tolist()):
+        d = df_iter_cs[df_iter_cs["num_clients"] == nc].sort_values("iter")
+        ax_cs.plot(d["iter"], d["mean"], linewidth=3.0, label=f"{int(nc)} clients")
+    ax_cs.set_xlabel("Iteration")
+    ax_cs.set_ylabel("Top-1 Accuracy")
+    ax_cs.grid(False)
+    h_cs, l_cs = ax_cs.get_legend_handles_labels()
+    if h_cs:
+        ax_cs.legend(h_cs, l_cs, loc="center left", bbox_to_anchor=(1.02, 0.5),
+                     frameon=False, fontsize=LEGEND_FONT_SIZE, title="# Clients")
+
+    # (b) global_data_size
+    cmap = plt.get_cmap("tab10")
+    for i, (lab, g) in enumerate(ratio_curves):
+        override = _color_override_global_data_ratio(lab)
+        ax_gd.plot(
+            g["iteration"], g["avg_accuracy"],
+            linewidth=3.0,
+            label=lab,
+            color=(override if override is not None else cmap(i % 10)),
+        )
+
+    ax_gd.set_xlabel("Iteration")
+    ax_gd.set_ylabel("Top-1 Accuracy")
+    ax_gd.grid(False)
+    h_gd, l_gd = ax_gd.get_legend_handles_labels()
+    if h_gd:
+        ax_gd.legend(h_gd, l_gd, loc="center left", bbox_to_anchor=(1.02, 0.5),
+                     frameon=False, fontsize=LEGEND_FONT_SIZE, title="Server Data Ratio")
+
+    # (c) diff_server_nets
+    keys = sorted(srv_iter["server_net_type_value"].astype(str).unique().tolist())
+    for i, sn in enumerate(keys):
+        d = srv_iter[srv_iter["server_net_type_value"].astype(str) == str(sn)].sort_values("iter")
+        override = _color_override_server_net(sn)
+        ax_srv.plot(
+            d["iter"], d["mean"],
+            linewidth=3.0,
+            label=str(sn),
+            color=(override if override is not None else cmap(i % 10)),
+        )
+    ax_srv.set_xlabel("Iteration")
+    ax_srv.set_ylabel("Top-1 Accuracy")
+    ax_srv.grid(False)
+    h_s, l_s = ax_srv.get_legend_handles_labels()
+    if h_s:
+        ax_srv.legend(h_s, l_s, loc="center left", bbox_to_anchor=(1.02, 0.5),
+                      frameon=False, fontsize=LEGEND_FONT_SIZE, title="Server Net")
+
+    # shared cosmetics
+    for ax in (ax_cs, ax_gd, ax_srv):
+        ax.set_ylim(19, 50)
+
+    ax_cs.text(0.02, 0.98, "(a)", transform=ax_cs.transAxes, ha="left", va="top",
+               fontsize=LEGEND_FONT_SIZE, fontweight="bold")
+    ax_gd.text(0.02, 0.98, "(b)", transform=ax_gd.transAxes, ha="left", va="top",
+               fontsize=LEGEND_FONT_SIZE, fontweight="bold")
+    ax_srv.text(0.02, 0.98, "(c)", transform=ax_srv.transAxes, ha="left", va="top",
+                fontsize=LEGEND_FONT_SIZE, fontweight="bold")
+
+    _force_x_axes_0_to_9(fig)
+    fig.tight_layout(rect=[0.0, 0.0, 0.86, 1.0])  # space for legends
+
+    suffix = "server" if use_server_measure else "client"
+    out_pdf = out_root / f"client_scale_and_global_data_size_{suffix}.pdf"
+    _savefig_longpath(fig, out_pdf)
+    plt.close(fig)
+    print(f"[OK] Saved: {out_pdf}")
+
 # --------------------- CLI ---------------------
 
 def main():
@@ -2053,6 +2569,8 @@ def main():
                     help="Folder under --root where each immediate subfolder represents one curve/ratio.")
     ap.add_argument("--client_scale_folder", type=str, default="client_scale",
                     help="Folder under --root containing runs with different summary[num_clients].")
+    ap.add_argument("--diff_server_nets_folder", type=str, default="diff_server_nets",
+                    help="Folder under --root containing MAPL runs with different server_net_type_value.")
 
     args = ap.parse_args()
     args.figdir.mkdir(parents=True, exist_ok=True)
@@ -2094,6 +2612,13 @@ def main():
         inspect=args.inspect,
     )
 
+    # NEW: diff_server_nets (MAPL server only): final CSV only
+    figure_diff_server_nets_oneplot(
+        args.root / args.diff_server_nets_folder,
+        args.figdir,
+        inspect=args.inspect,
+    )
+
     # combined MAPL lambda+temp: final CSVs only
     figure_mapl_lambda_and_temp_two_panel(
         lambda_dir=args.root / "mapl_lambda",
@@ -2103,9 +2628,10 @@ def main():
     )
 
     # Combined client_scale + global_data_size: final CSVs only
-    figure_client_scale_and_global_data_size_two_panel(
+    figure_client_scale_and_global_data_size_three_panel(
         client_scale_dir=args.root / "client_scale",
         global_data_dir=args.root / "global_data_size",
+        diff_server_nets_dir=args.root / "diff_server_nets",
         out_root=args.figdir,
         inspect=args.inspect,
         use_server_measure=True,
