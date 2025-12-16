@@ -104,14 +104,52 @@ TITLE_NET_MAP = {
     "SqueezeNet": "SqueezeNet",
 }
 
+NONBLUE_PALETTE = [
+    "tab:orange", "tab:green", "tab:red", "tab:purple", "tab:brown",
+    "tab:pink", "tab:gray", "tab:olive", "tab:cyan",
+]
+
+
+# ============================================================
+# Display name override (appendix/figures only)
+# ============================================================
+DISPLAY_NAME_MAP = {
+    "MAPL": "COSMOS",
+}
+
+def _display_name(label: str) -> str:
+    s = str(label).strip()
+    return DISPLAY_NAME_MAP.get(s, s)
+
 def _tab10_colors_excluding_blue():
+    """Legacy helper (kept for compatibility). Prefer NONBLUE_PALETTE."""
     cmap = plt.get_cmap("tab10")
     colors = [cmap(i) for i in range(10)]
-    # tab10[0] is the default blue — exclude it
     return colors[1:]
 
+def _assign_colors_nonblue(keys, *, special_keys=None, special_color="tab:pink"):
+    """Assign a color to *every* key.
 
-def _make_color_map(keys, *, special_key=None, special_color="tab:blue"):
+    - Keys in special_keys get special_color.
+    - All others get colors from NONBLUE_PALETTE (never blue).
+    - Keys are normalized with str(...).strip() for stable lookup.
+    """
+    special_keys = set(str(k).strip() for k in (special_keys or []))
+    keys_norm = [str(k).strip() for k in keys]
+    cmap = {}
+    for k in keys_norm:
+        if k in special_keys:
+            cmap[k] = special_color
+    j = 0
+    for k in keys_norm:
+        if k in special_keys:
+            continue
+        cmap[k] = NONBLUE_PALETTE[j % len(NONBLUE_PALETTE)]
+        j += 1
+    return cmap
+
+
+def _make_color_map(keys, *, special_key=None, special_color="tab:pink"):
     """
     Build a mapping key -> color such that:
       - special_key (if provided and present) gets special_color (blue)
@@ -139,7 +177,7 @@ def _color_override_global_data_ratio(label: str):
     """
     try:
         if float(label) == 1.0:
-            return "tab:blue"
+            return "tab:pink"
     except Exception:
         pass
     return None
@@ -153,7 +191,7 @@ def _color_override_server_net(sn: str):
     if sn is None:
         return None
     if "vgg" in str(sn).strip().lower():
-        return "tab:blue"
+        return "tab:pink"
     return None
 
 def _net_title_from_map(*candidates: str) -> str:
@@ -206,6 +244,8 @@ def _get_color_for_label(label: str) -> Any:
     if not label:
         return None
     base = _canon_algo_name(label)
+    if base == "COSMOS":
+        base = "MAPL"
     if base in GLOBAL_ALG_COLOR_MAP:
         return GLOBAL_ALG_COLOR_MAP[base]
     if label in GLOBAL_ALG_COLOR_MAP:
@@ -848,7 +888,7 @@ def _final_stats_for_panel(df_panel: pd.DataFrame, *, subfigure: str, final_iter
         sem = float(std / np.sqrt(n)) if n > 1 else 0.0
         out_rows.append({
             "subfigure": subfigure,
-            "algorithm": str(alg),
+            "algorithm": _display_name(alg),
             "iteration": int(final_iter),
             "mean": mean,
             "std": std,
@@ -969,7 +1009,7 @@ def figure_diff_benchmarks(figset_dir: Path, out_root: Path, *, alpha_value: int
         for lab in sorted(g["algorithm_display"].astype(str).unique().tolist()):
             sub_lab = g[g["algorithm_display"].astype(str) == lab]
             ax.plot(sub_lab["iteration"], sub_lab["avg_accuracy"],
-                    marker=None, linewidth=3.0, label=str(lab),
+                    marker=None, linewidth=3.0, label=_display_name(lab),
                     color=_get_color_for_label(lab),
                     linestyle=_linestyle_for(lab))
         ax.set_title(subfigure_label)
@@ -1097,7 +1137,7 @@ def figure_diff_clients_nets(figset_dir: Path, out_root: Path, *, inspect: bool,
                 sub_lab["avg_accuracy"],
                 marker=None,
                 linewidth=3.0,
-                label=str(lab),
+                label=_display_name(lab),
                 color=_get_color_for_label(lab),
                 linestyle=_linestyle_for(lab),
             )
@@ -1216,7 +1256,7 @@ def figure_by_client_net_type_value(figset_dir: Path, out_root: Path, *, inspect
                 sub_lab["avg_accuracy"],
                 marker=None,
                 linewidth=3.0,
-                label=str(lab),
+                label=_display_name(lab),
                 color=_get_color_for_label(lab),
                 linestyle=_linestyle_for(lab),
             )
@@ -1307,7 +1347,6 @@ def figure_global_data_size_oneplot(figset_dir: Path, out_root: Path, *, inspect
         print(f"[WARN] No usable rows with server_data_ratio in {figset_dir}"); return
 
     fig, ax = plt.subplots(1, 1, figsize=(6.5, 4.8))
-    cmap = plt.get_cmap("tab10")
 
     def _ratio_key(lbl: str):
         try:
@@ -1317,13 +1356,23 @@ def figure_global_data_size_oneplot(figset_dir: Path, out_root: Path, *, inspect
 
     curves.sort(key=lambda t: _ratio_key(t[0]))
 
-    for i, (lab, g) in enumerate(curves):
-        override = _color_override_global_data_ratio(lab)
+    labels_sorted = [lab for lab, _ in curves]
+    special_labels = []
+    for lab in labels_sorted:
+        try:
+            if abs(float(str(lab).strip()) - 1.0) < 1e-12:
+                special_labels.append(str(lab).strip())
+        except Exception:
+            pass
+
+    color_map = _assign_colors_nonblue(labels_sorted, special_keys=special_labels, special_color="tab:pink")
+
+    for lab, g in curves:
         ax.plot(
             g["iteration"], g["avg_accuracy"],
             linewidth=3.0, marker=None,
             label=lab,
-            color=(override if override is not None else cmap(i % 10)),
+            color=color_map[str(lab).strip()],
         )
 
     ax.set_xlabel("Iteration")
@@ -1455,9 +1504,13 @@ def figure_client_scale_oneplot(figset_dir: Path, out_root: Path, *, inspect: bo
 
     # Plot
     fig, ax = plt.subplots(1, 1, figsize=(7.2, 4.8))
+    ncs_sorted = sorted(df_iter["num_clients"].unique().tolist())
+    ncs_keys = [str(int(nc)) for nc in ncs_sorted]
+    special_clients = ["25"] if "25" in ncs_keys else []
+    color_map_cs = _assign_colors_nonblue(ncs_keys, special_keys=special_clients, special_color="tab:pink")
     for nc in sorted(df_iter["num_clients"].unique().tolist()):
         d = df_iter[df_iter["num_clients"] == nc].sort_values("iter")
-        ax.plot(d["iter"], d["mean"], linewidth=3.0, label=f"{int(nc)} clients")
+        ax.plot(d["iter"], d["mean"], linewidth=3.0, label=f"{int(nc)} clients", color=color_map_cs[str(int(nc))])
 
     ax.set_xlabel("Iteration")
     ax.set_ylabel("Top-1 Accuracy")
@@ -1898,17 +1951,19 @@ def figure_diff_server_nets_oneplot(figset_dir: Path, out_root: Path, *, inspect
     )
 
     fig, ax = plt.subplots(1, 1, figsize=(7.2, 4.8))
-    keys = sorted(df_iter["server_net_type_value"].unique().tolist())
+    keys_raw = sorted(df_iter["server_net_type_value"].unique().tolist())
+    keys = [str(k).strip() for k in keys_raw if str(k).strip() and str(k).strip().lower() not in {"none","nan"}]
 
-    cmap = plt.get_cmap("tab10")
-    for i, sn in enumerate(keys):
+    special_keys = [str(k).strip() for k in keys if _color_override_server_net(str(k).strip()) is not None]
+    color_map = _assign_colors_nonblue(keys, special_keys=special_keys, special_color="tab:pink")
+
+    for sn in keys:
         d = df_iter[df_iter["server_net_type_value"] == sn].sort_values("iter")
-        override = _color_override_server_net(sn)
         ax.plot(
             d["iter"], d["mean"],
             linewidth=3.0, marker=None,
             label=str(sn),
-            color=(override if override is not None else cmap(i % 10)),
+            color=color_map[str(sn).strip()],
         )
 
     ax.set_xlabel("Iteration")
@@ -2049,193 +2104,7 @@ def figure_mapl_lambda_and_temp_two_panel(lambda_dir: Path, temp_dir: Path, out_
 
 # --------------------- Combined: client_scale + global_data_size (two panel) + FINAL CSVs only ---------------------
 
-def figure_client_scale_and_global_data_size_two_panel(
-    client_scale_dir: Path,
-    global_data_dir: Path,
-    out_root: Path,
-    *,
-    inspect: bool,
-    use_server_measure: bool = False,
-):
-    if not client_scale_dir.exists():
-        print(f"[SKIP] {client_scale_dir} (missing)")
-        return
-    if not global_data_dir.exists():
-        print(f"[SKIP] {global_data_dir} (missing)")
-        return
 
-    # LEFT: client_scale runs
-    df_all = _load_any_jsons_under(client_scale_dir, inspect=inspect)
-    if df_all.empty:
-        print(f"[WARN] No data under {client_scale_dir}")
-        return
-
-    mask_cifar = df_all["dataset"].astype(str).str.lower() == "cifar100"
-    if mask_cifar.any():
-        df_all = df_all[mask_cifar]
-
-    df_all = _apply_measure_filter_for_comparison(df_all)
-    if df_all.empty:
-        print(f"[WARN] No usable rows (policy-filtered) under {client_scale_dir}")
-        return
-
-    if "num_clients" not in df_all.columns or df_all["num_clients"].isna().all():
-        print(f"[WARN] No summary[num_clients] detected in {client_scale_dir}")
-        return
-
-    df_all = df_all.copy()
-    df_all["num_clients"] = pd.to_numeric(df_all["num_clients"], errors="coerce")
-    df_all = df_all.dropna(subset=["num_clients"])
-
-    run_rows_cs = []
-    for (path, nc, seed), d in df_all.groupby(["_path", "num_clients", "seed"], dropna=False):
-        s = _aggregate_run_mean_over_clients(d[["iteration","client_id","accuracy"]].copy())
-        if s.empty:
-            continue
-        run_rows_cs.append(pd.DataFrame({
-            "iter": s.index.astype(int),
-            "run_value": _maybe_scale_to_percent(s.values.astype(float)),
-            "num_clients": int(nc),
-            "seed": seed,
-            "_path": path,
-        }))
-    if not run_rows_cs:
-        print(f"[WARN] No per-run curves produced for {client_scale_dir}")
-        return
-
-    runs_cs = pd.concat(run_rows_cs, ignore_index=True)
-    df_final_cs = _final_stats_for_client_scale_from_iter(runs_cs)
-
-    _save_df_csv(df_final_cs, out_root / "client_scale_and_global_data_size_client_scale_final.csv")
-
-    df_iter_cs = (
-        runs_cs.groupby(["num_clients","iter"], dropna=False)["run_value"]
-               .mean().reset_index().rename(columns={"run_value":"mean"})
-               .sort_values(["num_clients","iter"])
-    )
-
-    # RIGHT: global_data_size curves
-    curve_dirs = [d for d in sorted(global_data_dir.iterdir()) if d.is_dir()]
-    if not curve_dirs:
-        print(f"[WARN] No curve folders under {global_data_dir}")
-        return
-
-    ratio_curves: List[Tuple[str, pd.DataFrame]] = []
-    for cd in curve_dirs:
-        df = load_rows_from_dir(cd, inspect=inspect, alg_hint=None)
-        if df.empty:
-            continue
-        mask_cifar_g = df["dataset"].astype(str).str.lower() == "cifar100"
-        if mask_cifar_g.any():
-            df = df[mask_cifar_g]
-        if df.empty:
-            continue
-
-        is_mapl = df["algorithm"].astype(str).str.lower().str.contains("mapl") | \
-                  df["algorithm_display"].astype(str).str.lower().str.contains("mapl")
-        df_mapl = df[is_mapl]
-        if not df_mapl.empty:
-            df = df_mapl
-
-        target_measure = "server" if use_server_measure else "client"
-        if "measure" in df.columns:
-            df = df[df["measure"].astype(str) == target_measure]
-        if df.empty:
-            continue
-
-        r = df.get("server_data_ratio", pd.Series([], dtype=float)).dropna()
-        if len(r) > 0:
-            ratio = float(r.iloc[0])
-            label = f"{ratio:g}"
-        else:
-            ratio, _ = find_server_data_ratio({}, fallback_from=cd.name)
-            label = f"{ratio:g}" if ratio is not None else cd.name
-
-        g = (
-            df.groupby(["iteration"], dropna=False)["accuracy"]
-              .mean()
-              .reset_index()
-              .rename(columns={"accuracy": "avg_accuracy"})
-              .sort_values(["iteration"])
-        )
-        if not g.empty:
-            ratio_curves.append((label, g))
-
-    if not ratio_curves:
-        print(f"[WARN] No usable rows with server_data_ratio in {global_data_dir}")
-        return
-
-    def _ratio_key(lbl: str):
-        try:
-            return float(lbl)
-        except Exception:
-            return float("inf")
-    ratio_curves.sort(key=lambda t: _ratio_key(t[0]))
-
-    # Final CSV for global data size (at iteration==FINAL_ITER if exists, else max iteration per curve)
-    final_gd_rows = []
-    for lab, g in ratio_curves:
-        g_it = pd.to_numeric(g["iteration"], errors="coerce").dropna()
-        if g_it.empty:
-            continue
-        if (g_it == FINAL_ITER).any():
-            it = FINAL_ITER
-        else:
-            it = int(g_it.max())
-        row = g[g["iteration"] == it]
-        if row.empty:
-            continue
-        final_gd_rows.append({
-            "server_data_ratio": lab,
-            "iteration": int(it),
-            "mean": float(row["avg_accuracy"].iloc[0]),
-        })
-    df_global_final = pd.DataFrame(final_gd_rows, columns=["server_data_ratio","iteration","mean"])
-    _save_df_csv(df_global_final, out_root / "client_scale_and_global_data_size_global_data_final.csv")
-
-    # Plot combined
-    fig, (ax_cs, ax_gd) = plt.subplots(1, 2, figsize=(13.0, 4.8), constrained_layout=False)
-
-    for nc in sorted(df_iter_cs["num_clients"].unique().tolist()):
-        d = df_iter_cs[df_iter_cs["num_clients"] == nc].sort_values("iter")
-        ax_cs.plot(d["iter"], d["mean"], linewidth=3.0, label=f"{int(nc)} clients")
-
-    ax_cs.set_xlabel("Iteration")
-    ax_cs.set_ylabel("Top-1 Accuracy")
-    ax_cs.grid(False)
-    h_cs, l_cs = ax_cs.get_legend_handles_labels()
-    if h_cs:
-        ax_cs.legend(h_cs, l_cs, loc="center left", bbox_to_anchor=(1.02, 0.5),
-                     frameon=False, fontsize=LEGEND_FONT_SIZE, title="# Clients")
-
-    cmap = plt.get_cmap("tab10")
-    for i, (lab, g) in enumerate(ratio_curves):
-        ax_gd.plot(g["iteration"], g["avg_accuracy"], linewidth=3.0, label=lab, color=cmap(i % 10))
-
-    ax_gd.set_xlabel("Iteration")
-    ax_gd.set_ylabel("Top-1 Accuracy")
-    ax_gd.grid(False)
-    h_gd, l_gd = ax_gd.get_legend_handles_labels()
-    if h_gd:
-        ax_gd.legend(h_gd, l_gd, loc="center left", bbox_to_anchor=(1.02, 0.5),
-                     frameon=False, fontsize=LEGEND_FONT_SIZE, title="Server Data Ratio")
-
-    for ax in (ax_cs, ax_gd):
-        ax.set_ylim(19, 50)
-
-    ax_cs.text(0.02, 0.98, "(a)", transform=ax_cs.transAxes, ha="left", va="top",
-               fontsize=LEGEND_FONT_SIZE, fontweight="bold")
-    ax_gd.text(0.02, 0.98, "(b)", transform=ax_gd.transAxes, ha="left", va="top",
-               fontsize=LEGEND_FONT_SIZE, fontweight="bold")
-
-    _force_x_axes_0_to_9(fig)
-    fig.tight_layout(rect=[0.0, 0.0, 0.90, 1.0])
-
-    suffix = "server" if use_server_measure else "client"
-    out_pdf = out_root / f"client_scale_and_global_data_size_{suffix}.pdf"
-    _savefig_longpath(fig, out_pdf)
-    plt.close(fig)
-    print(f"[OK] Saved: {out_pdf}")
 
 
 
@@ -2489,9 +2358,13 @@ def figure_client_scale_and_global_data_size_three_panel(
     fig, (ax_cs, ax_gd, ax_srv) = plt.subplots(1, 3, figsize=(18.0, 4.8), constrained_layout=False)
 
     # (a) client_scale
+    ncs_sorted = sorted(df_iter_cs["num_clients"].unique().tolist())
+    ncs_keys = [str(int(nc)) for nc in ncs_sorted]
+    special_clients = ["25"] if "25" in ncs_keys else []
+    color_map_cs3 = _assign_colors_nonblue(ncs_keys, special_keys=special_clients, special_color="tab:pink")
     for nc in sorted(df_iter_cs["num_clients"].unique().tolist()):
         d = df_iter_cs[df_iter_cs["num_clients"] == nc].sort_values("iter")
-        ax_cs.plot(d["iter"], d["mean"], linewidth=3.0, label=f"{int(nc)} clients")
+        ax_cs.plot(d["iter"], d["mean"], linewidth=3.0, label=f"{int(nc)} clients", color=color_map_cs3[str(int(nc))])
     ax_cs.set_xlabel("Iteration")
     ax_cs.set_ylabel("Top-1 Accuracy")
     ax_cs.grid(False)
@@ -2501,14 +2374,21 @@ def figure_client_scale_and_global_data_size_three_panel(
                      frameon=False, fontsize=LEGEND_FONT_SIZE, title="# Clients")
 
     # (b) global_data_size
-    cmap = plt.get_cmap("tab10")
-    for i, (lab, g) in enumerate(ratio_curves):
-        override = _color_override_global_data_ratio(lab)
+    labels_sorted = [lab for lab, _ in ratio_curves]
+    special_labels = []
+    for lab in labels_sorted:
+        try:
+            if abs(float(str(lab).strip()) - 1.0) < 1e-12:
+                special_labels.append(str(lab).strip())
+        except Exception:
+            pass
+    color_map_gd = _assign_colors_nonblue(labels_sorted, special_keys=special_labels, special_color="tab:pink")
+    for lab, g in ratio_curves:
         ax_gd.plot(
             g["iteration"], g["avg_accuracy"],
             linewidth=3.0,
             label=lab,
-            color=(override if override is not None else cmap(i % 10)),
+            color=color_map_gd[str(lab).strip()],
         )
 
     ax_gd.set_xlabel("Iteration")
@@ -2520,15 +2400,17 @@ def figure_client_scale_and_global_data_size_three_panel(
                      frameon=False, fontsize=LEGEND_FONT_SIZE, title="Server Data Ratio")
 
     # (c) diff_server_nets
-    keys = sorted(srv_iter["server_net_type_value"].astype(str).unique().tolist())
-    for i, sn in enumerate(keys):
+    keys_raw = sorted(srv_iter["server_net_type_value"].astype(str).unique().tolist())
+    keys = [str(k).strip() for k in keys_raw if str(k).strip() and str(k).strip().lower() not in {"none","nan"}]
+    special_keys = [str(k).strip() for k in keys if _color_override_server_net(str(k).strip()) is not None]
+    color_map_srv = _assign_colors_nonblue(keys, special_keys=special_keys, special_color="tab:pink")
+    for sn in keys:
         d = srv_iter[srv_iter["server_net_type_value"].astype(str) == str(sn)].sort_values("iter")
-        override = _color_override_server_net(sn)
         ax_srv.plot(
             d["iter"], d["mean"],
             linewidth=3.0,
             label=str(sn),
-            color=(override if override is not None else cmap(i % 10)),
+            color=color_map_srv[str(sn).strip()],
         )
     ax_srv.set_xlabel("Iteration")
     ax_srv.set_ylabel("Top-1 Accuracy")
