@@ -149,6 +149,8 @@ Json = Union[Dict[str, Any], List[Any], str, int, float, bool, None]
 BASE_FONT_SIZE = 16
 TITLE_FONT_SIZE = 16
 LEGEND_FONT_SIZE = 15
+# Smaller legend size for legends placed on the side of each subplot.
+LEGEND_FONT_SIZE_SIDE = 12
 
 plt.rcParams.update({
     "font.size": BASE_FONT_SIZE,
@@ -2451,15 +2453,27 @@ def figure_client_scale_and_global_data_size_two_panel(
 
     for nc in sorted(df_iter_cs["num_clients"].unique().tolist()):
         d = df_iter_cs[df_iter_cs["num_clients"] == nc].sort_values("iter")
-        ax_cs.plot(d["iter"], d["mean"], linewidth=3.0, label=f"{int(nc)} clients")
+
+        # Color override: make the 25-clients curve pink (requested).
+        if int(nc) == 25:
+            ax_cs.plot(d["iter"], d["mean"], linewidth=3.0, label=f"{int(nc)} clients", color="tab:pink")
+        else:
+            ax_cs.plot(d["iter"], d["mean"], linewidth=3.0, label=f"{int(nc)} clients")
 
     ax_cs.set_xlabel("Iteration")
     ax_cs.set_ylabel("Top-1 Accuracy")
     ax_cs.grid(False)
     h_cs, l_cs = ax_cs.get_legend_handles_labels()
     if h_cs:
-        ax_cs.legend(h_cs, l_cs, loc="center left", bbox_to_anchor=(1.02, 0.5),
-                     frameon=False, fontsize=LEGEND_FONT_SIZE, title="# Clients")
+        ax_cs.legend(
+            h_cs, l_cs,
+            loc="center left",
+            bbox_to_anchor=(1.02, 0.5),
+            frameon=False,
+            fontsize=LEGEND_FONT_SIZE_SIDE,
+            title="# Clients",
+            title_fontsize=LEGEND_FONT_SIZE_SIDE,
+        )
 
     cmap = plt.get_cmap("tab10")
     for i, (lab, g) in enumerate(ratio_curves):
@@ -2470,8 +2484,15 @@ def figure_client_scale_and_global_data_size_two_panel(
     ax_gd.grid(False)
     h_gd, l_gd = ax_gd.get_legend_handles_labels()
     if h_gd:
-        ax_gd.legend(h_gd, l_gd, loc="center left", bbox_to_anchor=(1.02, 0.5),
-                     frameon=False, fontsize=LEGEND_FONT_SIZE, title="Server Data Ratio")
+        ax_gd.legend(
+            h_gd, l_gd,
+            loc="center left",
+            bbox_to_anchor=(1.02, 0.5),
+            frameon=False,
+            fontsize=LEGEND_FONT_SIZE_SIDE,
+            title="Data Ratio",
+            title_fontsize=LEGEND_FONT_SIZE_SIDE,
+        )
 
     for ax in (ax_cs, ax_gd):
         ax.set_ylim(19, 50)
@@ -2482,7 +2503,9 @@ def figure_client_scale_and_global_data_size_two_panel(
                fontsize=LEGEND_FONT_SIZE, fontweight="bold")
 
     _force_x_axes_0_to_9(fig)
-    fig.tight_layout(rect=[0.0, 0.0, 0.90, 1.0])
+    # Leave room between subplots for the side legends.
+    fig.subplots_adjust(wspace=0.85)
+    fig.tight_layout()
 
     suffix = "server" if use_server_measure else "client"
     out_pdf = out_root / f"client_scale_and_global_data_size_{suffix}.pdf"
@@ -2744,14 +2767,26 @@ def figure_client_scale_and_global_data_size_three_panel(
     # (a) client_scale
     for nc in sorted(df_iter_cs["num_clients"].unique().tolist()):
         d = df_iter_cs[df_iter_cs["num_clients"] == nc].sort_values("iter")
-        ax_cs.plot(d["iter"], d["mean"], linewidth=3.0, label=f"{int(nc)} clients")
+
+        # Color override: make the 25-clients curve pink (requested).
+        if int(nc) == 25:
+            ax_cs.plot(d["iter"], d["mean"], linewidth=3.0, label=f"{int(nc)}", color="tab:pink")
+        else:
+            ax_cs.plot(d["iter"], d["mean"], linewidth=3.0, label=f"{int(nc)}")
     ax_cs.set_xlabel("Iteration")
     ax_cs.set_ylabel("Top-1 Accuracy")
     ax_cs.grid(False)
     h_cs, l_cs = ax_cs.get_legend_handles_labels()
     if h_cs:
-        ax_cs.legend(h_cs, l_cs, loc="center left", bbox_to_anchor=(1.02, 0.5),
-                     frameon=False, fontsize=LEGEND_FONT_SIZE, title="# Clients")
+        ax_cs.legend(
+            h_cs, l_cs,
+            loc="center left",
+            bbox_to_anchor=(1.02, 0.5),
+            frameon=False,
+            fontsize=LEGEND_FONT_SIZE_SIDE,
+            title="# Clients",
+            title_fontsize=LEGEND_FONT_SIZE_SIDE,
+        )
 
     # (b) global_data_size
     cmap = plt.get_cmap("tab10")
@@ -2769,8 +2804,15 @@ def figure_client_scale_and_global_data_size_three_panel(
     ax_gd.grid(False)
     h_gd, l_gd = ax_gd.get_legend_handles_labels()
     if h_gd:
-        ax_gd.legend(h_gd, l_gd, loc="center left", bbox_to_anchor=(1.02, 0.5),
-                     frameon=False, fontsize=LEGEND_FONT_SIZE, title="Server Data Ratio")
+        ax_gd.legend(
+            h_gd, l_gd,
+            loc="center left",
+            bbox_to_anchor=(1.02, 0.5),
+            frameon=False,
+            fontsize=LEGEND_FONT_SIZE_SIDE,
+            title="Data Ratio",
+            title_fontsize=LEGEND_FONT_SIZE_SIDE,
+        )
 
     # (c) diff_server_nets
     keys = sorted(srv_iter["server_net_type_value"].astype(str).unique().tolist())
@@ -2788,8 +2830,15 @@ def figure_client_scale_and_global_data_size_three_panel(
     ax_srv.grid(False)
     h_s, l_s = ax_srv.get_legend_handles_labels()
     if h_s:
-        ax_srv.legend(h_s, l_s, loc="center left", bbox_to_anchor=(1.02, 0.5),
-                      frameon=False, fontsize=LEGEND_FONT_SIZE, title="Server Net")
+        ax_srv.legend(
+            h_s, l_s,
+            loc="center left",
+            bbox_to_anchor=(1.02, 0.5),
+            frameon=False,
+            fontsize=LEGEND_FONT_SIZE_SIDE,
+            title="Server Net",
+            title_fontsize=LEGEND_FONT_SIZE_SIDE,
+        )
 
     # shared cosmetics
     for ax in (ax_cs, ax_gd, ax_srv):
@@ -2803,7 +2852,9 @@ def figure_client_scale_and_global_data_size_three_panel(
                 fontsize=LEGEND_FONT_SIZE, fontweight="bold")
 
     _force_x_axes_0_to_9(fig)
-    fig.tight_layout(rect=[0.0, 0.0, 0.86, 1.0])  # space for legends
+    # Leave room between subplots for the side legends.
+    fig.subplots_adjust(wspace=1.05)
+    fig.tight_layout()
 
     suffix = "server" if use_server_measure else "client"
     out_pdf = out_root / f"client_scale_and_global_data_size_{suffix}.pdf"
