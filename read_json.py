@@ -202,7 +202,7 @@ def _tab10_colors_excluding_blue():
     return colors[1:]
 
 
-def _make_color_map(keys, *, special_key=None, special_color="tab:blue"):
+def _make_color_map(keys, *, special_key=None, special_color="tab:pink"):
     """
     Build a mapping key -> color such that:
       - special_key (if provided and present) gets special_color (blue)
@@ -226,11 +226,11 @@ def _make_color_map(keys, *, special_key=None, special_color="tab:blue"):
 def _color_override_global_data_ratio(label: str):
     """
     global_data_size color override:
-      - ratio == 1.0 must be tab:blue
+      - ratio == 1.0 must be tab:pink
     """
     try:
         if float(label) == 1.0:
-            return "tab:blue"
+            return "tab:pink"
     except Exception:
         pass
     return None
@@ -239,12 +239,12 @@ def _color_override_global_data_ratio(label: str):
 def _color_override_server_net(sn: str):
     """
     diff_server_nets color override:
-      - any server net containing 'vgg' -> tab:blue
+      - any server net containing 'vgg' -> tab:pink
     """
     if sn is None:
         return None
     if "vgg" in str(sn).strip().lower():
-        return "tab:blue"
+        return "tab:pink"
     return None
 
 def _net_title_from_map(*candidates: str) -> str:
