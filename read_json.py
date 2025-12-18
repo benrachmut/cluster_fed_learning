@@ -295,6 +295,95 @@ def _canon_algo_name(s: str) -> str:
         return "pFedCK"
     return t
 
+
+# ============================================================
+# Display-name mapping for legends (edit values manually)
+# ============================================================
+
+from enum import Enum
+
+class AlgorithmSelected(Enum):
+    pFedHN = "pFedHN"
+    pFedMe = "pFedMe"
+    FedBABU = "FedBABU"
+    MAPL = "MAPL"
+    FedMD = "FedMD"
+    NoFederatedLearning = "NoFederatedLearning"
+    PseudoLabelsClusters_with_division = "PseudoLabelsClusters_with_division"
+    Centralized = "Centralized"
+    FedAvg = "FedAvg"
+    pFedCK = "pFedCK"
+    COMET = "COMET"
+    Ditto = "Ditto"
+    FedSelect = "FedSelect"
+    FedCT = "FedCT"
+
+# NOTE:
+# - Keys can be AlgorithmSelected or raw strings.
+# - Values are what will be shown in figures.
+# - If a key is missing OR its value is empty/None -> falls back to the JSON name.
+ALGO_DISPLAY_NAME_MAP = {
+    AlgorithmSelected.pFedHN: "",
+    AlgorithmSelected.pFedMe: "",
+    AlgorithmSelected.FedBABU: "",
+    AlgorithmSelected.MAPL: "COSMOS",  # e.g., "COSMOS"
+    AlgorithmSelected.FedMD: "",
+    AlgorithmSelected.NoFederatedLearning: "",
+    AlgorithmSelected.PseudoLabelsClusters_with_division: "",
+    AlgorithmSelected.Centralized: "",
+    AlgorithmSelected.FedAvg: "",
+    AlgorithmSelected.pFedCK: "",
+    AlgorithmSelected.COMET: "",
+    AlgorithmSelected.Ditto: "",
+    AlgorithmSelected.FedSelect: "",
+    AlgorithmSelected.FedCT: "",
+}
+
+def _pretty_algo_label(raw: str) -> str:
+    """Map algorithm names for legends; default to raw if not mapped."""
+    s = (raw or "").strip()
+    if not s:
+        return s
+
+    # Try canonical + raw exact match
+    keys_to_try = []
+    try:
+        keys_to_try.append(_canon_algo_name(s))
+    except Exception:
+        pass
+    keys_to_try.append(s)
+
+    # 1) exact matches
+    for k in keys_to_try:
+        # enum key by value
+        try:
+            ek = AlgorithmSelected(k)
+            v = ALGO_DISPLAY_NAME_MAP.get(ek, None)
+            if v:
+                return str(v)
+        except Exception:
+            pass
+
+        # string key
+        v = ALGO_DISPLAY_NAME_MAP.get(k, None)
+        if v:
+            return str(v)
+
+    # 2) prefix matches (e.g., "MAPL_C-ResNet" -> "COSMOS_C-ResNet")
+    #    Only applies when the base algorithm itself is mapped.
+    for base in AlgorithmSelected:
+        base_raw = base.value
+        mapped = ALGO_DISPLAY_NAME_MAP.get(base, None) or ALGO_DISPLAY_NAME_MAP.get(base_raw, None)
+        if not mapped:
+            continue
+        # Replace only a leading prefix "BASE_" or "BASE-" (keeps suffix)
+        if s.startswith(base_raw + "_"):
+            return str(mapped) + s[len(base_raw):]
+        if s.startswith(base_raw + "-"):
+            return str(mapped) + s[len(base_raw):]
+
+    return s
+
 def _get_color_for_label(label: str) -> Any:
     if not label:
         return None
@@ -1074,19 +1163,46 @@ def figure_diff_benchmarks(figset_dir: Path, out_root: Path, *, alpha_value: int
     if not filtered:
         print(f"[WARN] No rows for alpha={alpha_value} in {figset_dir}."); return
 
+    # Prefer a consistent dataset (panel) order across runs/papers.
+    # If a dataset isn't listed here, it will appear after the known ones.
+    DATASET_SUBFIG_ORDER = [
+        "EMNIST_balanced",
+        "CIFAR10",
+        "CIFAR100",
+        "TinyImageNet",
+    ]
+
+    def _norm_ds(s: str) -> str:
+        return (s or "").strip().lower().replace("-", "").replace("_", "")
+
+    def _pick_dataset_for_subfig(df: pd.DataFrame) -> str:
+        ds_vals = df["dataset"].astype(str)
+        # If multiple datasets are present in the same sub-figure directory,
+        # pick one deterministically.
+        preferred = ["EMNIST", "CIFAR10", "CIFAR100", "TinyImageNet", "ImageNetR"]
+        for candidate in preferred:
+            if candidate in ds_vals.values:
+                return candidate
+        return ds_vals.value_counts().index[0]
+
+    def _dataset_sort_key(item):
+        sf, df = item
+        chosen = _pick_dataset_for_subfig(df)
+        norm = _norm_ds(chosen)
+        order_norm = [_norm_ds(x) for x in DATASET_SUBFIG_ORDER]
+        if norm in order_norm:
+            return (order_norm.index(norm), chosen, sf.name)
+        return (len(order_norm), chosen, sf.name)
+
+    filtered.sort(key=_dataset_sort_key)
+
     n = len(filtered)
     fig_w = max(5.0 * n, 5.0)
     fig, axes = plt.subplots(1, n, figsize=(fig_w, 4.5), sharex=False, sharey=False, squeeze=False)
     axes = axes.flatten()
 
     for ax, (sf, df) in zip(axes, filtered):
-        ds_vals = df["dataset"].astype(str)
-        choice = None
-        for candidate in ["ImageNetR", "TinyImageNet", "CIFAR100"]:
-            if candidate in ds_vals.values:
-                choice = candidate; break
-        if choice is None:
-            choice = ds_vals.value_counts().index[0]
+        choice = _pick_dataset_for_subfig(df)
 
         dfp = df[df["dataset"].astype(str) == choice]
         dfp = _apply_measure_filter_for_comparison(dfp)
@@ -1104,7 +1220,7 @@ def figure_diff_benchmarks(figset_dir: Path, out_root: Path, *, alpha_value: int
         for lab in sorted(g["algorithm_display"].astype(str).unique().tolist()):
             sub_lab = g[g["algorithm_display"].astype(str) == lab]
             ax.plot(sub_lab["iteration"], sub_lab["avg_accuracy"],
-                    marker=None, linewidth=3.0, label=str(lab),
+                    marker=None, linewidth=3.0, label=_pretty_algo_label(str(lab)),
                     color=_get_color_for_label(lab),
                     linestyle=_linestyle_for(lab))
         ax.set_title(subfigure_label)
@@ -1232,7 +1348,7 @@ def figure_diff_clients_nets(figset_dir: Path, out_root: Path, *, inspect: bool,
                 sub_lab["avg_accuracy"],
                 marker=None,
                 linewidth=3.0,
-                label=str(lab),
+                label=_pretty_algo_label(str(lab)),
                 color=_get_color_for_label(lab),
                 linestyle=_linestyle_for(lab),
             )
@@ -1351,7 +1467,7 @@ def figure_by_client_net_type_value(figset_dir: Path, out_root: Path, *, inspect
                 sub_lab["avg_accuracy"],
                 marker=None,
                 linewidth=3.0,
-                label=str(lab),
+                label=_pretty_algo_label(str(lab)),
                 color=_get_color_for_label(lab),
                 linestyle=_linestyle_for(lab),
             )
