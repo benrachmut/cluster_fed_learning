@@ -217,6 +217,7 @@ class ExperimentConfig:
         self.seed_num = 1
         self.iterations = 10
         self.is_with_memory_load = None
+        self.beta = 0
 
         # CIFAR10/CIFAR 100
         self.data_set_selected = None # selected in main

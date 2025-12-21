@@ -2345,6 +2345,7 @@ class Server(LearningEntity):
                 break
             else:
                 epsilon_ = epsilon_+0.1
+        experiment_config.beta = epsilon_
         return epsilon_
 
         #clusters_client_id_dict = experiment_config.known_clusters
