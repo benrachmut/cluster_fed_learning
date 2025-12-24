@@ -2977,6 +2977,125 @@ def figure_client_scale_and_global_data_size_three_panel(
     _savefig_longpath(fig, out_pdf)
     plt.close(fig)
     print(f"[OK] Saved: {out_pdf}")
+# --------------------------------------------------------------------
+# clusters_by_addition  (NEW FIGURE)
+# --------------------------------------------------------------------
+
+def figure_clusters_by_addition(figset_dir: Path, out_root: Path, *, inspect: bool):
+    """
+    Plot curves grouped by summary['cluster_addition'].
+    Legend label = cluster_addition + 5.
+    Y-axis aggregation identical to MAPL (average over seeds / runs).
+    """
+
+    if not figset_dir.exists():
+        print(f"[SKIP] {figset_dir} (missing)")
+        return
+
+    # Load all JSONs under results/clusters
+    df_all = load_rows_from_dir(figset_dir, inspect=inspect, alg_hint="CLUSTERS")
+    if df_all.empty:
+        print(f"[WARN] No data under {figset_dir}")
+        return
+
+    # CIFAR100 policy (same as MAPL figures)
+    mask_cifar = df_all["dataset"].astype(str).str.lower() == "cifar100"
+    if mask_cifar.any():
+        df_all = df_all[mask_cifar]
+
+    # Apply MAPL comparison policy (server for MAPL, client otherwise)
+    df_all = _apply_measure_filter_for_comparison(df_all)
+    if df_all.empty:
+        print(f"[WARN] No usable rows after policy filter in {figset_dir}")
+        return
+
+    # Extract cluster_addition from JSON summary
+    def _extract_cluster_addition(path: str):
+        try:
+            with _open_json_win_safe(Path(path)) as fh:
+                raw = json.load(fh)
+            return raw.get("summary", {}).get("cluster_addition", None)
+        except Exception:
+            return None
+
+    df_all = df_all.copy()
+    df_all["cluster_addition"] = df_all["_path"].apply(_extract_cluster_addition)
+    df_all = df_all.dropna(subset=["cluster_addition"])
+
+    if df_all.empty:
+        print(f"[WARN] No cluster_addition values found in {figset_dir}")
+        return
+
+    # --- MAPL-style aggregation ---
+    # 1) per-run curve: mean over clients
+    run_rows = []
+    for (path, ca, seed), d in df_all.groupby(
+        ["_path", "cluster_addition", "seed"], dropna=False
+    ):
+        sub = d[["iteration", "client_id", "accuracy"]].copy()
+        s = _aggregate_run_mean_over_clients(sub)
+        if s.empty:
+            continue
+        run_rows.append(pd.DataFrame({
+            "iter": s.index.astype(int),
+            "run_value": s.values.astype(float),
+            "cluster_addition": int(ca),
+            "seed": seed,
+            "_path": path,
+        }))
+
+    if not run_rows:
+        print(f"[WARN] No per-run curves produced in {figset_dir}")
+        return
+
+    df_runs = pd.concat(run_rows, ignore_index=True)
+
+    # 2) plot-level curve = average over runs (seeds)
+    df_iter = (
+        df_runs
+        .groupby(["cluster_addition", "iter"], dropna=False)["run_value"]
+        .mean()
+        .reset_index()
+        .sort_values(["cluster_addition", "iter"])
+    )
+
+    # --- Plot ---
+    fig, ax = plt.subplots(1, 1, figsize=(7.2, 4.8))
+
+    for ca in sorted(df_iter["cluster_addition"].unique()):
+        d = df_iter[df_iter["cluster_addition"] == ca]
+        label_val = int(ca) + 5
+        ax.plot(
+            d["iter"],
+            d["run_value"],
+            linewidth=3.0,
+            label=str(label_val),
+        )
+
+    ax.set_xlabel("Iteration")
+    ax.set_ylabel("Top-1 Accuracy")
+    ax.grid(False)
+
+    _force_x_axes_0_to_9(fig)
+
+    h, l = ax.get_legend_handles_labels()
+    fig.tight_layout(rect=[0.0, 0.0, 1.0, 0.90])
+    if h:
+        fig.legend(
+            h, l,
+            loc="upper center",
+            ncol=min(6, len(h)),
+            frameon=False,
+            bbox_to_anchor=(0.5, 0.96),
+            fontsize=LEGEND_FONT_SIZE,
+            title="Clusters",
+        )
+
+    out_pdf = out_root / "clusters_by_addition.pdf"
+    _savefig_longpath(fig, out_pdf)
+    plt.close(fig)
+
+    print(f"[OK] Saved: {out_pdf}")
 
 # --------------------- CLI ---------------------
 
@@ -3043,6 +3162,13 @@ def main():
     figure_mapl_lambda_and_temp_two_panel(
         lambda_dir=args.root / "mapl_lambda",
         temp_dir=args.root / "temp_serverinput",
+        out_root=args.figdir,
+        inspect=args.inspect,
+    )
+
+    # NEW: clusters figure
+    figure_clusters_by_addition(
+        figset_dir=args.root / "clusters",
         out_root=args.figdir,
         inspect=args.inspect,
     )
