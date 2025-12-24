@@ -745,7 +745,7 @@ if __name__ == '__main__':
 
 
     net_cluster_technique_list = [NetClusterTechnique.multi_model]#,NetClusterTechnique.multi_head]
-    cluster_additions = [-4]
+    cluster_additions = [-2]
     print("epsilons:", cluster_additions)
 
     server_input_tech_list = [ServerInputTech.mean]#ServerInputTech.mean
